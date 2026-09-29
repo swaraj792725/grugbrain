@@ -93,10 +93,15 @@ export function installClaudeSaver(): { success: boolean; configPath: string; me
     config.mcpServers = {};
   }
 
-  // Inject system-wide claude-token-saver MCP server configuration
-  config.mcpServers['claude-token-saver'] = {
+  // Clean up legacy key if present
+  if (config.mcpServers['claude-token-saver']) {
+    delete config.mcpServers['claude-token-saver'];
+  }
+
+  // Inject system-wide token-diet MCP server configuration
+  config.mcpServers['token-diet'] = {
     command: 'npx',
-    args: ['-y', '@swaraj792725/claude-token-saver', 'server']
+    args: ['-y', '@swaraj792725/token-diet', 'server']
   };
 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
@@ -104,7 +109,7 @@ export function installClaudeSaver(): { success: boolean; configPath: string; me
   return {
     success: true,
     configPath,
-    message: `Successfully installed zero-touch @swaraj792725/claude-token-saver into ${configPath}. Claude Desktop will automatically load it on restart.`
+    message: `Successfully installed zero-touch @swaraj792725/token-diet into ${configPath}. Claude Desktop will automatically load it on restart.`
   };
 }
 
@@ -123,7 +128,8 @@ export function uninstallClaudeSaver(): { success: boolean; configPath: string; 
     const raw = fs.readFileSync(configPath, 'utf8');
     const config = JSON.parse(raw);
 
-    if (config.mcpServers && config.mcpServers['claude-token-saver']) {
+    if (config.mcpServers) {
+      delete config.mcpServers['token-diet'];
       delete config.mcpServers['claude-token-saver'];
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
     }
@@ -131,7 +137,7 @@ export function uninstallClaudeSaver(): { success: boolean; configPath: string; 
     return {
       success: true,
       configPath,
-      message: `Successfully uninstalled claude-token-saver from ${configPath}`
+      message: `Successfully uninstalled token-diet from ${configPath}`
     };
   } catch (err: any) {
     return {
@@ -151,7 +157,7 @@ export function getInstallStatus(): InstallStatus {
     try {
       const raw = fs.readFileSync(configPath, 'utf8');
       const config = JSON.parse(raw);
-      if (config.mcpServers && config.mcpServers['claude-token-saver']) {
+      if (config.mcpServers && (config.mcpServers['token-diet'] || config.mcpServers['claude-token-saver'])) {
         isInstalled = true;
       }
     } catch {

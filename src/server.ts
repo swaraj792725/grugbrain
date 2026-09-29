@@ -41,7 +41,7 @@ function handleRpcRequest(req: any) {
         tools: {}
       },
       serverInfo: {
-        name: 'claude-token-saver',
+        name: 'token-diet',
         version: '1.0.0'
       }
     });

@@ -15,7 +15,7 @@ async function main() {
 
   switch (command) {
     case 'install': {
-      console.log('🚀 Installing @swaraj792725/claude-token-saver into macOS Claude Desktop...');
+      console.log('🚀 Installing @swaraj792725/token-diet into macOS Claude Desktop...');
       const res = installClaudeSaver();
       if (res.success) {
         console.log(`✅ ${res.message}`);
@@ -28,7 +28,7 @@ async function main() {
     }
 
     case 'uninstall': {
-      console.log('🗑️ Removing @swaraj792725/claude-token-saver from Claude Desktop config...');
+      console.log('🗑️ Removing @swaraj792725/token-diet from Claude Desktop config...');
       const res = uninstallClaudeSaver();
       console.log(res.message);
       break;
@@ -36,13 +36,13 @@ async function main() {
 
     case 'status': {
       const status = getInstallStatus();
-      console.log('\n--- ⚡ Claude Token Saver System Status ---');
+      console.log('\n--- ⚡ Token Diet (Claude Token Saver) System Status ---');
       console.log(`Claude Config Path: ${status.configPath}`);
       console.log(`Config Exists:     ${status.configExists ? 'Yes' : 'No'}`);
-      console.log(`MCP Status:        ${status.isInstalled ? '✅ ACTIVE (Zero-Touch Installed)' : '❌ Not Installed (Run: npx @swaraj792725/claude-token-saver install)'}`);
+      console.log(`MCP Status:        ${status.isInstalled ? '✅ ACTIVE (Zero-Touch Installed)' : '❌ Not Installed (Run: npx @swaraj792725/token-diet install)'}`);
       console.log(`Total Tokens Saved: ${status.totalTokensSaved.toLocaleString()}`);
       console.log(`Sessions Optimized: ${status.totalSessionsOptimized}`);
-      console.log('-------------------------------------------\n');
+      console.log('---------------------------------------------------------\n');
       break;
     }
 
@@ -54,7 +54,7 @@ async function main() {
     case 'compress': {
       const input = args.slice(1).join(' ');
       if (!input) {
-        console.log('Usage: claude-token-saver compress <text>');
+        console.log('Usage: token-diet compress <text>');
         process.exit(1);
       }
       const res = cavemanCompress(input);
@@ -79,7 +79,7 @@ async function main() {
     case '--help':
     case '-h': {
       console.log(`
-Usage: claude-token-saver <command>
+Usage: token-diet <command>
 
 Commands:
   install       Zero-touch installation into macOS Claude Desktop config
@@ -94,7 +94,7 @@ Commands:
     }
 
     default: {
-      console.error(`Unknown command: ${command}. Run 'claude-token-saver help' for usage.`);
+      console.error(`Unknown command: ${command}. Run 'token-diet help' for usage.`);
       process.exit(1);
     }
   }

@@ -1,13 +1,14 @@
 {
-  "name": "@swaraj792725/claude-token-saver",
+  "name": "@swaraj792725/token-diet",
   "version": "1.0.0",
-  "description": "Zero-touch system-wide token optimizer and context compressor for macOS Claude Desktop (Caveman + Graphify + Symbol Skeleton + Anthropic Prompt Cache)",
+  "description": "Put Claude on a Token Diet. Zero-touch system daemon & MCP server for macOS Claude Desktop that slashes token consumption by 70%+ across all sessions automatically (Caveman + Graphify + Symbol Skeleton + Anthropic Prompt Cache)",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
   "bin": {
-    "claude-token-saver": "./dist/cli.js",
-    "claude-saver": "./dist/cli.js"
+    "token-diet": "./dist/cli.js",
+    "tokendiet": "./dist/cli.js",
+    "claude-token-saver": "./dist/cli.js"
   },
   "files": [
     "dist"
@@ -19,10 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/swaraj792725/claude-token-saver.git"
+    "url": "git+https://github.com/swaraj792725/token-diet.git"
   },
   "keywords": [
     "claude",
+    "token-diet",
     "token-saver",
     "mcp",
     "mcp-server",
