@@ -1,106 +1,275 @@
 #!/usr/bin/env node
-
 /**
- * Command-line interface for @swaraj792725/claude-token-saver.
+ * grug: command-line entry point for grugbrain.
  */
 
-import { installClaudeSaver, uninstallClaudeSaver, getInstallStatus, readStats } from './installer.js';
-import { runMcpServer } from './server.js';
-import { cavemanCompress } from './caveman.js';
-import { graphifyDirectory } from './graphify.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { loadConfig, paths, setConfigValue, VERSION } from './config.js';
+import { cavemanCompress } from './compress/caveman.js';
+import { repoMap } from './compress/repomap.js';
+import { skeletonize } from './compress/skeleton.js';
+import { runDaemon } from './daemon.js';
+import { readStdinJson, runHook, spawnDetached } from './hooks.js';
+import { health, install, Step, uninstall } from './install.js';
+import { runMcpServer } from './mcp.js';
+import { buildBrief, recall } from './memory/brief.js';
+import { maintain, withMemoryLock } from './memory/maintain.js';
+import { addNote, loadMemory, projectKey, saveMemory } from './memory/store.js';
+import { proxyHealth, startProxy } from './proxy/server.js';
+import { advice, openPath, runDashboard } from './tui/dashboard.js';
+
+const argv = process.argv.slice(2).filter((a) => a !== '--from=grugbrain');
+const flags = new Set(argv.filter((a) => a.startsWith('--')));
+const pos = argv.filter((a) => !a.startsWith('--'));
+const cmd = pos[0] || 'help';
+
+const flagValue = (name: string): string | undefined => {
+  const hit = argv.find((a) => a.startsWith(`--${name}=`));
+  if (hit) return hit.split('=').slice(1).join('=');
+  const i = argv.indexOf(`--${name}`);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : undefined;
+};
+
+function printSteps(steps: Step[]) {
+  for (const s of steps) console.log(`${s.ok ? '✅' : '⚠️ '} ${s.target.padEnd(16)} ${s.message}`);
+}
+
+async function readAllStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+const HELP = `
+🪨 grugbrain v${VERSION}: grug make Claude use few token.
+
+  grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
+                                  one-time setup; then grug works alone forever
+  grug dash [--once]              live TUI dashboard: what grug did, what it would do
+  grug doctor                     check everything, say how to fix
+  grug uninstall [--purge]        remove from Claude Code/Desktop (keeps memory unless --purge)
+
+  grug graph [--no-open]          open the interactive memory graph
+  grug vault                      rebuild + show the Obsidian-compatible memory vault
+  grug brief [dir]                show what grug would tell Claude about a project
+  grug recall <query> [--dir d]   search memory
+  grug remember <text> [--dir d]  pin a note for a project
+  grug maintain                   ingest + consolidate memory now (normally automatic)
+
+  grug map [dir] [--budget 1500]  ranked repo map under a token budget
+  grug outline <file>             skeleton of a source file
+  grug compress <text | ->        strip filler from text (stdin with -)
+
+  grug config [path | get <k> | set <k> <v>]
+  grug savings                    one-line spend/savings summary
+
+  (internal) daemon · proxy · mcp · hook <event>
+`;
 
 async function main() {
-  const args = process.argv.slice(2);
-  const command = args[0] || 'status';
-
-  switch (command) {
+  switch (cmd) {
     case 'install': {
-      console.log('🚀 Installing @swaraj792725/token-diet into macOS Claude Desktop...');
-      const res = installClaudeSaver();
-      if (res.success) {
-        console.log(`✅ ${res.message}`);
-        console.log('\nRestart Claude Desktop app to start saving 70%+ tokens automatically on all sessions!');
-      } else {
-        console.error(`❌ Installation failed: ${res.message}`);
-        process.exit(1);
+      console.log('🪨 grug install. grug set up once, then grug work alone.\n');
+      const steps = install({
+        code: !flags.has('--no-code'),
+        desktop: !flags.has('--no-desktop'),
+        proxy: !flags.has('--no-proxy'),
+        service: !flags.has('--no-service')
+      });
+      printSteps(steps);
+      if (!steps[0].ok) process.exit(1);
+      const cfg = loadConfig();
+      if (!(await proxyHealth(cfg.port, 400))) spawnDetached(['daemon']);
+      const up = await waitForProxy(cfg.port, 5000);
+      console.log(`\n${up ? '✅' : '⚠️ '} proxy            ${up ? `running on http://127.0.0.1:${cfg.port}` : 'not answering yet: run `grug doctor`'}`);
+      console.log('\nDone. Restart Claude Code / Claude Desktop once. Watch grug work: grug dash');
+      break;
+    }
+    case 'uninstall':
+      printSteps(uninstall(flags.has('--purge')));
+      break;
+
+    case 'status':
+    case 'doctor': {
+      const h = health();
+      const cfg = loadConfig();
+      const up = await proxyHealth(cfg.port);
+      const ok = (b: boolean) => (b ? '✅' : '❌');
+      console.log(`🪨 grugbrain v${VERSION}  (data: ${paths.home()})\n`);
+      console.log(`${ok(h.appInstalled)} runtime copied to ${paths.app()}`);
+      console.log(`${ok(h.nodeExists)} node binary still exists`);
+      console.log(`${ok(h.hooks)} Claude Code hooks in ${h.settingsPath}`);
+      console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
+      console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
+      console.log(`${ok(h.codeMcp)} Claude Code MCP server`);
+      console.log(`${ok(h.desktopMcp)} Claude Desktop MCP server (${h.desktopPath})`);
+      console.log(`${h.service !== 'none' ? '✅' : '➖'} background service: ${h.service}`);
+      console.log('');
+      for (const a of advice(!!up)) console.log(`${a.level === 'fix' ? '🔧' : a.level === 'save' ? '💰' : 'ℹ️ '} ${a.text}${a.cmd ? `\n     → ${a.cmd}` : ''}`);
+      break;
+    }
+
+    case 'dash':
+    case 'dashboard':
+    case 'tui':
+      await runDashboard({ once: flags.has('--once') });
+      break;
+
+    case 'daemon':
+      await runDaemon();
+      break;
+
+    case 'proxy': {
+      const cfg = loadConfig();
+      const port = Number(flagValue('port') || cfg.port);
+      const h = await startProxy(cfg, port);
+      console.log(`grugbrain proxy on http://127.0.0.1:${h.port} -> ${cfg.upstream}`);
+      break;
+    }
+
+    case 'mcp':
+    case 'server':
+      runMcpServer();
+      break;
+
+    case 'hook': {
+      let out: any = null;
+      try {
+        out = await runHook(pos[1] || '', await readStdinJson());
+      } catch {
+        out = null; // never break Claude Code
       }
-      break;
+      if (out) process.stdout.write(JSON.stringify(out));
+      process.exit(0);
     }
 
-    case 'uninstall': {
-      console.log('🗑️ Removing @swaraj792725/token-diet from Claude Desktop config...');
-      const res = uninstallClaudeSaver();
-      console.log(res.message);
-      break;
-    }
-
-    case 'status': {
-      const status = getInstallStatus();
-      console.log('\n--- ⚡ Token Diet (Claude Token Saver) System Status ---');
-      console.log(`Claude Config Path: ${status.configPath}`);
-      console.log(`Config Exists:     ${status.configExists ? 'Yes' : 'No'}`);
-      console.log(`MCP Status:        ${status.isInstalled ? '✅ ACTIVE (Zero-Touch Installed)' : '❌ Not Installed (Run: npx @swaraj792725/token-diet install)'}`);
-      console.log(`Total Tokens Saved: ${status.totalTokensSaved.toLocaleString()}`);
-      console.log(`Sessions Optimized: ${status.totalSessionsOptimized}`);
-      console.log('---------------------------------------------------------\n');
-      break;
-    }
-
-    case 'server': {
-      await runMcpServer();
-      break;
-    }
-
-    case 'compress': {
-      const input = args.slice(1).join(' ');
-      if (!input) {
-        console.log('Usage: token-diet compress <text>');
-        process.exit(1);
-      }
-      const res = cavemanCompress(input);
-      console.log(`\nOriginal Tokens:   ${res.originalTokensEst}`);
-      console.log(`Compressed Tokens: ${res.compressedTokensEst}`);
-      console.log(`Tokens Saved:      ${res.tokensSaved} (${res.percentageSaved}%)\n`);
-      console.log('--- Compressed Output ---');
-      console.log(res.compressedText);
+    case 'maintain': {
+      const r = maintain();
+      if (!r) console.log('memory busy (another maintenance is running)');
+      else if (!process.env.GRUG_QUIET)
+        console.log(`memory: +${r.ingested} sessions · folded ${r.folded} · merged ${r.merged} · pruned ${r.pruned} · ${r.nodes} nodes\ngraph: ${r.graph}\nvault: ${r.vaultDir}`);
       break;
     }
 
     case 'graph': {
-      const targetDir = args[1] || '.';
-      const res = graphifyDirectory(targetDir);
-      console.log(`\nIndexed ${res.totalFiles} files in ${res.rootPath}`);
-      console.log(`Knowledge Graph Token Est: ${res.tokensEst}\n`);
-      console.log(res.summaryMarkdown);
+      const r = maintain();
+      console.log(`memory graph: ${paths.graphHtml()}${r ? ` (${r.nodes} nodes)` : ''}`);
+      if (!flags.has('--no-open')) openPath(paths.graphHtml());
       break;
     }
+
+    case 'vault': {
+      const r = maintain();
+      console.log(`Obsidian vault: ${r?.vaultDir || path.join(loadConfig().memory.vaultDir, 'grugbrain')}`);
+      console.log('Open it in Obsidian → "Open folder as vault". Grug rewrites it automatically; no upkeep needed.');
+      console.log('Put it inside your own vault: grug config set memory.vaultDir ~/path/to/YourVault');
+      break;
+    }
+
+    case 'brief': {
+      const cfg = loadConfig();
+      const dir = path.resolve(pos[1] || process.cwd());
+      const b = buildBrief(loadMemory(), projectKey(dir), cfg.memory.briefTokens, cfg.memory.halfLifeDays);
+      console.log(b.text ? `${b.text}\n\n(${b.tokens} tokens)` : 'No memory for this project yet.');
+      break;
+    }
+
+    case 'recall': {
+      const cfg = loadConfig();
+      const dir = path.resolve(flagValue('dir') || process.cwd());
+      const q = pos.slice(1).join(' ');
+      const r = recall(loadMemory(), projectKey(dir), q, cfg.memory.recallTokens * 3, cfg.memory.halfLifeDays);
+      console.log(r.text || 'Nothing relevant in memory.');
+      break;
+    }
+
+    case 'remember': {
+      const text = pos.slice(1).join(' ');
+      if (!text) throw new Error('usage: grug remember <text>');
+      const dir = path.resolve(flagValue('dir') || process.cwd());
+      withMemoryLock(() => {
+        const db = loadMemory();
+        addNote(db, projectKey(dir), text, Date.now(), { pinned: true });
+        saveMemory(db);
+      });
+      console.log(`📌 remembered for ${path.basename(dir)}`);
+      break;
+    }
+
+    case 'map':
+    case 'graphify': {
+      const m = repoMap(pos[1] || '.', Number(flagValue('budget') || 1500));
+      console.log(m.text);
+      console.error(`(~${m.tokens} tokens for ${m.files.length} files)`);
+      break;
+    }
+
+    case 'outline': {
+      if (!pos[1]) throw new Error('usage: grug outline <file>');
+      const r = skeletonize(fs.readFileSync(pos[1], 'utf8'), pos[1]);
+      console.log(r.skeleton);
+      console.error(`(~${r.originalTokens} → ~${r.skeletonTokens} tokens, ${r.percentSaved}% smaller)`);
+      break;
+    }
+
+    case 'compress': {
+      const input = pos[1] === '-' || (!pos[1] && !process.stdin.isTTY) ? await readAllStdin() : pos.slice(1).join(' ');
+      if (!input) throw new Error('usage: grug compress <text>   (or pipe text with -)');
+      const r = cavemanCompress(input);
+      console.log(r.text);
+      console.error(`(~${r.originalTokens} → ~${r.compressedTokens} tokens, ${r.percentSaved}% saved)`);
+      break;
+    }
+
+    case 'config': {
+      const sub = pos[1];
+      if (sub === 'path') console.log(paths.config());
+      else if (sub === 'set') {
+        if (!pos[2] || pos[3] === undefined) throw new Error('usage: grug config set <key> <value>');
+        setConfigValue(pos[2], pos.slice(3).join(' '));
+        console.log(`set ${pos[2]} = ${pos.slice(3).join(' ')}`);
+      } else if (sub === 'get') {
+        const v = pos[2].split('.').reduce((o: any, k) => (o ? o[k] : undefined), loadConfig());
+        console.log(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v));
+      } else console.log(JSON.stringify(loadConfig(), null, 2));
+      break;
+    }
+
+    case 'savings': {
+      const { callTool } = await import('./mcp.js');
+      console.log(callTool('savings', {}));
+      break;
+    }
+
+    case 'version':
+    case '--version':
+    case '-v':
+      console.log(VERSION);
+      break;
 
     case 'help':
     case '--help':
-    case '-h': {
-      console.log(`
-Usage: token-diet <command>
-
-Commands:
-  install       Zero-touch installation into macOS Claude Desktop config
-  uninstall     Remove MCP server from Claude Desktop config
-  status        Check installation status and total token savings stats
-  server        Launch stdio MCP server for Claude Desktop
-  compress      Compress prompt or code text using Caveman algorithm
-  graph <dir>   Build compact knowledge graph for a project directory
-  help          Show this help message
-`);
+    case '-h':
+      console.log(HELP);
       break;
-    }
 
-    default: {
-      console.error(`Unknown command: ${command}. Run 'token-diet help' for usage.`);
+    default:
+      console.error(`Unknown command: ${cmd}\n${HELP}`);
       process.exit(1);
-    }
   }
 }
 
+async function waitForProxy(port: number, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await proxyHealth(port, 400)) return true;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return false;
+}
+
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  console.error(`grug error: ${err?.message || err}`);
   process.exit(1);
 });
