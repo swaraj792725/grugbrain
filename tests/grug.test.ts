@@ -639,3 +639,24 @@ describe('grug command on PATH', () => {
     expect(fs.readFileSync(path.join(tmp, '.zshrc'), 'utf8')).toBe('alias ll="ls -l"\n');
   });
 });
+
+describe('grug command under npx', () => {
+  it('ignores npx temporary .bin folders and links a real command', async () => {
+    const { installCommand, commandStatus } = await import('../src/install.js');
+    const npxBin = path.join(tmp, '.npm', '_npx', 'abc123', 'node_modules', '.bin');
+    const pkg = path.join(tmp, '.npm', '_npx', 'abc123', 'node_modules', 'grugbrain', 'dist');
+    fs.mkdirSync(npxBin, { recursive: true });
+    fs.mkdirSync(pkg, { recursive: true });
+    fs.writeFileSync(path.join(pkg, 'cli.js'), '#!/usr/bin/env node\n');
+    fs.chmodSync(path.join(pkg, 'cli.js'), 0o755);
+    fs.symlinkSync(path.join(pkg, 'cli.js'), path.join(npxBin, 'grug'));
+    const local = path.join(tmp, '.local', 'bin');
+    fs.mkdirSync(local, { recursive: true });
+    process.env.PATH = `${npxBin}:${local}:/usr/bin:/bin`;
+    const step = installCommand();
+    expect(step.message).toContain('linked in');
+    expect(fs.lstatSync(path.join(local, 'grug')).isSymbolicLink()).toBe(true);
+    process.env.PATH = `${local}:/usr/bin:/bin`; // after npx exits
+    expect(commandStatus()).toBe('on-path');
+  });
+});
