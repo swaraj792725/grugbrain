@@ -2,6 +2,12 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.3.0
+
+- `grug update` now installs the newest release directly (`grug update --check` only looks).
+- New-version notice at the start of every Claude Code session (shown to you only; costs no tokens), plus an update line in `grug doctor`.
+- Verified: the unversioned `npx github:swaraj792725/grugbrain install` re-checks GitHub on every run and installs the newest version.
+
 ## 2.2.1
 
 - Fix: installing via `npx` skipped creating the `grug` command, because npx's temporary copy looked like an existing install ("`grug` already on PATH (…/_npx/…)"). npx/npm temporary folders are now ignored, so `grug` is linked for real.

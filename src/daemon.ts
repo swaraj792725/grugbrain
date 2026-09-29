@@ -37,7 +37,7 @@ export async function runDaemon(): Promise<void> {
     if (!loadConfig().updateCheck) return;
     const before = cachedUpdate();
     const info = await checkForUpdate();
-    if (info.newer && before?.latest !== info.latest) recordActivity({ kind: 'update', msg: `grugbrain ${info.latest} is available (installed ${info.current}). Run: grug update --install` });
+    if (info.newer && before?.latest !== info.latest) recordActivity({ kind: 'update', msg: `grugbrain ${info.latest} is available (installed ${info.current}). Run: grug update` });
   };
   setTimeout(() => updateTick().catch(() => {}), 15000);
   const updTimer = setInterval(() => updateTick().catch(() => {}), 6 * 3600 * 1000);

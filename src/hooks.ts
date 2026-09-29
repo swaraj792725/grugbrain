@@ -15,6 +15,7 @@ import { withMemoryLock } from './memory/maintain.js';
 import { addNote, appendBuffer, BufferEvent, loadMemory, projectKey, readBuffer, saveMemory } from './memory/store.js';
 import { recordActivity } from './stats.js';
 import { estimateTokens } from './tokens.js';
+import { cachedUpdate } from './update.js';
 
 export interface HookInput {
   session_id?: string;
@@ -69,8 +70,11 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           recordActivity({ kind: 'brief', msg: `Session brief injected (${brief.tokens} tok) for ${path.basename(cwd)}`, tokens: -brief.tokens, project: path.basename(cwd) });
         }
       }
-      if (!parts.length) return null;
-      return { hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: parts.join('\n\n') } };
+      // Shown to the user only (not sent to Claude, costs no tokens).
+      const upd = cachedUpdate();
+      const systemMessage = upd?.newer ? `🪨 grugbrain ${upd.latest} is available (you have ${upd.current}). Run in a terminal: grug update` : undefined;
+      if (!parts.length) return systemMessage ? { systemMessage } : null;
+      return { ...(systemMessage ? { systemMessage } : {}), hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: parts.join('\n\n') } };
     }
 
     case 'user-prompt': {

@@ -252,7 +252,7 @@ export function advice(proxyUp: boolean | null): Advice[] {
     out.push({ level: 'save', text: `${misses.length} avoidable cache miss(es) this week re-wrote ~${fmtTokens(top[1].tok)} tokens; top cause "${top[0]}": ${top[1].example.replace(/^Cache miss \([\w-]+\): /, '').slice(0, 160)}` });
   }
   const upd = cachedUpdate();
-  if (upd?.newer) out.push({ level: 'info', text: `grugbrain ${upd.latest} is available (you have ${upd.current}).`, cmd: 'grug update --install' });
+  if (upd?.newer) out.push({ level: 'info', text: `grugbrain ${upd.latest} is available (you have ${upd.current}).`, cmd: 'grug update' });
   if (week.fallbacks > 0) out.push({ level: 'info', text: `${week.fallbacks} request(s) were rejected after optimization and resent untouched (no impact on you). If it keeps happening: grug config set proxy.dedupeReads false` });
   if (!out.length) out.push({ level: 'info', text: 'Nothing to fix. Grug happy. Grug keep working.' });
   return out;

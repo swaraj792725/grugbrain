@@ -10,7 +10,7 @@ Install once. grug sit between Claude Code and Anthropic API, trim fat, stick ca
 npx github:swaraj792725/grugbrain install
 ```
 
-That's it: one line, straight from GitHub (needs `git`, which every Mac with Xcode command-line tools has). It installs the latest `main` and puts the `grug` command on your PATH.
+That's it: one line, straight from GitHub (needs `git`, which every Mac with Xcode command-line tools has). No version needed: npx checks GitHub every run and always installs the newest version. It puts the `grug` command on your PATH. Later updates: `grug update`.
 
 Pin an exact release instead:
 
@@ -231,7 +231,7 @@ grug savings                    one-line summary
 ## grug versions live on GitHub
 
 - Every release = git tag `vX.Y.Z` + GitHub Release with installable tarball + notes from `CHANGELOG.md`.
-- `grug update` check latest release. `grug update --install` install it. Daemon check once a day and say so in `grug dash` (never auto-install).
+- `grug update` installs the newest release (`grug update --check` only looks). The background service checks GitHub every 6 hours; when a new version exists, `grug dash`, `grug doctor` and a one-line notice at the start of each Claude Code session tell you. Grug never installs on its own.
 - Install exact version:
 
 ```bash
