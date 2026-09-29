@@ -1,0 +1,49 @@
+{
+  "name": "@swaraj792725/claude-token-saver",
+  "version": "1.0.0",
+  "description": "Zero-touch system-wide token optimizer and context compressor for macOS Claude Desktop (Caveman + Graphify + Symbol Skeleton + Anthropic Prompt Cache)",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "claude-token-saver": "./dist/cli.js",
+    "claude-saver": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swaraj792725/claude-token-saver.git"
+  },
+  "keywords": [
+    "claude",
+    "token-saver",
+    "mcp",
+    "mcp-server",
+    "context-compressor",
+    "caveman",
+    "graphify",
+    "claude-desktop",
+    "anthropic",
+    "prompt-caching"
+  ],
+  "author": "swaraj792725",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://npm.pkg.github.com"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "tsup": "^8.0.2",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.2"
+  },
+  "dependencies": {}
+}
