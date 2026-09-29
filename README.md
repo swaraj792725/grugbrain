@@ -7,11 +7,18 @@
 Install once. grug sit between Claude Code and Anthropic API, trim fat, stick cache, guard big files, remember every session in small brain that never get fat. grug draw brain picture. grug write Obsidian notes. grug show cave dashboard.
 
 ```bash
-npm install -g grugbrain
-grug install
+npx github:swaraj792725/grugbrain install
 ```
 
-(or one line, no global install: `npx grugbrain install`)
+That's it: one line, straight from GitHub (needs `git`, which every Mac with Xcode command-line tools has). It installs the latest `main` and puts the `grug` command on your PATH.
+
+Pin an exact release instead:
+
+```bash
+npx --yes --package=https://github.com/swaraj792725/grugbrain/releases/download/v2.2.0/grugbrain-2.2.0.tgz grugbrain install
+```
+
+> From npm (`npm install -g grugbrain && grug install`) once the package is live on npmjs.com; until then the npm registry answers 404.
 
 Restart Claude Code (and Claude Desktop). New terminal → `grug doctor`. Done. Grug work now. Forever. No reminders.
 
@@ -228,9 +235,9 @@ grug savings                    one-line summary
 - Install exact version:
 
 ```bash
-npm install -g grugbrain@2.2.0 && grug install
-# no npm registry needed, straight from the GitHub Release:
-npx --yes --package=https://github.com/swaraj792725/grugbrain/releases/download/v2.2.0/grugbrain-2.2.0.tgz grugbrain install
+npx --yes github:swaraj792725/grugbrain#v2.2.0 install        # a release tag
+npx --yes --package=https://github.com/swaraj792725/grugbrain/releases/download/v2.2.0/grugbrain-2.2.0.tgz grugbrain install   # the release file
+npm install -g grugbrain@2.2.0 && grug install                 # npm, once published there
 ```
 
 Maintainer: `npm run release:patch` (or `release:minor`), add a `## x.y.z` section to `CHANGELOG.md`, merge to `main`. Workflow `release.yml` tag, build, test, attach tarball, create GitHub Release, and publish to npm if `NPM_TOKEN` secret exist.

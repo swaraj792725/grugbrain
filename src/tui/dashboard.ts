@@ -212,9 +212,9 @@ export function advice(proxyUp: boolean | null): Advice[] {
   const h = health();
   const week = summarize(Date.now() - 7 * DAY);
   const out: Advice[] = [];
-  if (!h.hooks) out.push({ level: 'fix', text: 'Claude Code hooks are not installed; memory and read-guard are idle.', cmd: 'npx grugbrain install' });
-  else if (!h.appInstalled) out.push({ level: 'fix', text: `Hooks are installed but the runtime at ${paths.app()} is missing.`, cmd: 'npx grugbrain install' });
-  if (h.appInstalled && !h.nodeExists) out.push({ level: 'fix', text: 'The Node binary grug was installed with is gone (nvm/brew upgrade?).', cmd: 'npx grugbrain install' });
+  if (!h.hooks) out.push({ level: 'fix', text: 'Claude Code hooks are not installed; memory and read-guard are idle.', cmd: 'npx github:swaraj792725/grugbrain install' });
+  else if (!h.appInstalled) out.push({ level: 'fix', text: `Hooks are installed but the runtime at ${paths.app()} is missing.`, cmd: 'npx github:swaraj792725/grugbrain install' });
+  if (h.appInstalled && !h.nodeExists) out.push({ level: 'fix', text: 'The Node binary grug was installed with is gone (nvm/brew upgrade?).', cmd: 'npx github:swaraj792725/grugbrain install' });
   if (h.proxyConfigured && proxyUp === false)
     out.push({ level: 'fix', text: 'Claude Code points at the proxy but it is not running. Claude Code requests will fail until it is up.', cmd: 'grug daemon &   # or: grug install' });
   if (!h.proxyConfigured && cfg.proxy.enabled) out.push({ level: 'info', text: 'Proxy not wired into Claude Code, so measured stats and in-flight trimming are off.', cmd: 'grug install' });

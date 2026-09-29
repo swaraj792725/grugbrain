@@ -2,6 +2,11 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## Unreleased
+
+- Install docs lead with `npx github:swaraj792725/grugbrain install` (works without npm). Release notes show the tag, file and npm commands.
+- A failed npm publish no longer marks the GitHub Release job as failed; it shows a warning and can be retried from the Actions tab.
+
 ## 2.2.0
 
 - **Repository renamed to `swaraj792725/grugbrain`** (old `token-diet` URLs redirect). The old GitHub Packages package `@swaraj792725/token-diet` (v1) is discontinued.
