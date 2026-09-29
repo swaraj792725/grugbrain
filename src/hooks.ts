@@ -18,6 +18,9 @@ import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
 import { buildHandoff, contextSize, costPerReply, saveHandoff, takeHandoff } from './handoff.js';
+import { autoRecall } from './recall.js';
+import { sessionCodeMap } from './graph.js';
+import { extractFacts } from './facts.js';
 
 export interface HookInput {
   session_id?: string;
@@ -84,6 +87,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           });
         }
       }
+      let hotFiles: string[] = [];
       if (cfg.memory.enabled) {
         const db = loadMemory();
         const brief = buildBrief(db, projectKey(cwd), handedOff ? Math.round(cfg.memory.briefTokens / 2) : cfg.memory.briefTokens, cfg.memory.halfLifeDays);
@@ -92,7 +96,28 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           appendBuffer(sid, { t: 'injected', ts: now, ids: brief.ids });
           recordActivity({ kind: 'brief', msg: `Session brief injected (${brief.tokens} tok) for ${path.basename(cwd)}`, tokens: -brief.tokens, project: path.basename(cwd) });
         }
+        hotFiles = hotFilesOf(db, projectKey(cwd));
       }
+      let warm = cfg.autoRecall.enabled;
+      if (cfg.graphContext.enabled) {
+        try {
+          const map = sessionCodeMap(cwd, cfg.graphContext.mapTokens, hotFiles);
+          if (map) {
+            parts.push(map.text);
+            warm = warm || map.stale;
+            recordActivity({
+              kind: 'graph',
+              msg: map.files ? `Code map injected (${map.tokens} tok, ${map.files} files) + graph-first tool guidance` : 'Graph-first tool guidance injected (map still building)',
+              tokens: -map.tokens,
+              project: path.basename(cwd)
+            });
+          }
+        } catch {
+          /* graph context is optional */
+        }
+      }
+      // Refresh the code graph + history caches in the background so prompts stay fast.
+      if (warm) spawnDetached(['warm', cwd]);
       // Shown to the user only (not sent to Claude, costs no tokens).
       const upd = cachedUpdate();
       const systemMessage = upd?.newer ? `🪨 grugbrain ${upd.latest} is available (you have ${upd.current}). Run in a terminal: grug update` : undefined;
@@ -104,26 +129,44 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const prompt = input.prompt || '';
       appendBuffer(sid, { t: 'prompt', ts: now, text: prompt.slice(0, 2000) });
       const alert = contextAlert(cfg, sid, cwd, input.transcript_path, now);
-      if (!cfg.memory.enabled) return alert ? { systemMessage: alert } : null;
+      const done = (extra?: HookOutput): HookOutput => (alert || extra ? { ...(alert ? { systemMessage: alert } : {}), ...(extra || {}) } : null);
       const project = projectKey(cwd);
-      const m = prompt.match(/^\s*(?:remember|grug remember)\s*[:,-]?\s+(.{8,400})/i);
-      if (m) {
-        withMemoryLock(() => {
-          const db = loadMemory();
-          addNote(db, project, m[1].trim(), now, { pinned: true });
-          saveMemory(db);
-        });
-        recordActivity({ kind: 'remember', msg: `Pinned note: ${m[1].slice(0, 80)}`, project: path.basename(cwd) });
-        return alert ? { systemMessage: alert } : null; // don't recall the note we just wrote
+      if (cfg.memory.enabled) {
+        const m = prompt.match(/^\s*(?:remember|grug remember)\s*[:,-]?\s+(.{8,400})/i);
+        if (m) {
+          withMemoryLock(() => {
+            const db = loadMemory();
+            addNote(db, project, m[1].trim(), now, { pinned: true });
+            saveMemory(db);
+          });
+          recordActivity({ kind: 'remember', msg: `Pinned note: ${m[1].slice(0, 80)}`, project: path.basename(cwd) });
+          return done(); // don't recall the note we just wrote
+        }
       }
-      if (prompt.trim().length < 12) return alert ? { systemMessage: alert } : null;
+      if (cfg.autoRecall.enabled) {
+        const r = autoRecall({ cfg, sessionId: sid, cwd, prompt, transcriptPath: input.transcript_path, now });
+        if (!r) return done();
+        if (r.ids.length) appendBuffer(sid, { t: 'injected', ts: now, ids: r.ids });
+        appendBuffer(sid, { t: 'recall', ts: now, keys: r.keys, tokens: r.tokens });
+        const recallTok = r.tokens - r.codeTokens;
+        if (r.counts.memory || r.counts.history)
+          recordActivity({
+            kind: 'auto-recall',
+            msg: `Auto-recall: ${r.counts.memory} memory, ${r.counts.history} earlier-session item(s) (${r.tokens} tok)`,
+            tokens: -recallTok,
+            project: path.basename(cwd)
+          });
+        if (r.counts.code) recordActivity({ kind: 'graph', msg: `Code hints for the prompt: ${r.counts.code} file(s) with symbol line ranges`, tokens: -r.codeTokens, project: path.basename(cwd) });
+        return done({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: r.text } });
+      }
+      if (!cfg.memory.enabled || prompt.trim().length < 12) return done();
       const exclude = new Set<string>();
       for (const ev of readBuffer(sid)) if (ev.t === 'injected') ev.ids.forEach((i) => exclude.add(i));
       const r = recall(loadMemory(), project, prompt, cfg.memory.recallTokens, cfg.memory.halfLifeDays, exclude);
-      if (!r.text) return alert ? { systemMessage: alert } : null;
+      if (!r.text) return done();
       appendBuffer(sid, { t: 'injected', ts: now, ids: r.ids });
       recordActivity({ kind: 'recall', msg: `Recalled ${r.ids.length} related memory item(s)`, tokens: -r.tokens, project: path.basename(cwd) });
-      return { ...(alert ? { systemMessage: alert } : {}), hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: r.text } };
+      return done({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: r.text } });
     }
 
     case 'pre-tool': {
@@ -290,6 +333,20 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           /* best-effort */
         }
       }
+      if (cfg.memory.enabled) {
+        try {
+          // Durable facts for memory (ingested by the maintain run below).
+          const facts = extractFacts(input.transcript_path);
+          const known = new Set(readBuffer(sid).flatMap((e) => (e.t === 'facts' ? e.items.map((f) => f.text) : [])));
+          const fresh = facts.filter((f) => !known.has(f.text));
+          if (fresh.length) {
+            appendBuffer(sid, { t: 'facts', ts: now, items: fresh });
+            recordActivity({ kind: 'facts', msg: `Captured ${fresh.length} durable fact(s): ${[...new Set(fresh.map((f) => f.kind))].join(', ')}`, project: path.basename(cwd) });
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
       if (event === 'session-end') appendBuffer(sid, { t: 'end', ts: now, reason: input.reason });
       else appendBuffer(sid, { t: 'compact', ts: now });
       spawnDetached(['maintain']);
@@ -330,6 +387,15 @@ function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: stri
     `🪨 grugbrain: this session's context is ${Math.round(tokens / 1000)}k tokens, so every reply re-reads it (~$${per.toFixed(2)}/reply in API terms). ` +
     `When this task is done, type /clear: grug hands the work over to the fresh session (~1k tokens) at no cost.`
   );
+}
+
+/** Files this project's past sessions touched most (memory graph), for ranking the code map. */
+function hotFilesOf(db: ReturnType<typeof loadMemory>, project: string): string[] {
+  return Object.values(db.nodes)
+    .filter((n) => n.type === 'file' && n.project === project)
+    .sort((a, b) => b.touches - a.touches)
+    .slice(0, 12)
+    .map((n) => n.label);
 }
 
 function readKey(file: string, ti: any, agent?: string): string {
@@ -381,6 +447,7 @@ function cliPath(): string {
 }
 
 export function spawnDetached(args: string[]): void {
+  if (process.env.VITEST || process.env.GRUG_NO_SPAWN === '1') return; // tests: never start background processes
   try {
     fs.mkdirSync(paths.logs(), { recursive: true });
     const out = fs.openSync(path.join(paths.logs(), `${args[0]}.log`), 'a');

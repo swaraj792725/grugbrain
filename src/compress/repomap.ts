@@ -6,7 +6,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { estimateTokens } from '../tokens.js';
-import { extractSymbols, languageOf } from './skeleton.js';
+import { extractSymbolLines, languageOf } from './skeleton.js';
 
 export const ALWAYS_IGNORE = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', '.next', '.nuxt', '.cache', 'coverage', '.turbo',
@@ -23,6 +23,8 @@ export interface RepoFile {
   bytes: number;
   mtime: number;
   symbols: string[];
+  /** 1-based declaration line of each symbol (same order as symbols). */
+  symLines?: number[];
   imports: string[];
   importedBy: number;
 }
@@ -88,12 +90,22 @@ function extractImports(code: string, lang: string | null): string[] {
   return [...out];
 }
 
-export function scanRepo(dir: string, maxFiles = 5000): RepoFile[] {
+/** Walks a repo. With a deadline (ms epoch) the walk stops early; check `complete` on the result. */
+export function scanRepo(dir: string, maxFiles = 5000, deadline = 0): RepoFile[] & { complete?: boolean } {
   const root = path.resolve(dir);
   const ignored = gitignoreMatcher(root);
-  const files: RepoFile[] = [];
+  const files: RepoFile[] & { complete?: boolean } = [];
+  let complete = true;
   const walk = (abs: string, depth: number) => {
-    if (depth > 12 || files.length >= maxFiles) return;
+    if (depth > 12) return;
+    if (files.length >= maxFiles) {
+      complete = false;
+      return;
+    }
+    if (deadline && Date.now() > deadline) {
+      complete = false;
+      return;
+    }
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(abs, { withFileTypes: true });
@@ -118,23 +130,27 @@ export function scanRepo(dir: string, maxFiles = 5000): RepoFile[] {
         }
         const lang = languageOf(e.name);
         let symbols: string[] = [];
+        let symLines: number[] = [];
         let imports: string[] = [];
         if (lang && st.size <= MAX_READ) {
           try {
             const code = fs.readFileSync(full, 'utf8');
             if (!code.slice(0, 1024).includes('\u0000')) {
-              symbols = extractSymbols(code, e.name);
+              const syms = extractSymbolLines(code, e.name);
+              symbols = syms.map((x) => x.name);
+              symLines = syms.map((x) => x.line);
               imports = extractImports(code, lang);
             }
           } catch {
             /* unreadable */
           }
         }
-        files.push({ rel, bytes: st.size, mtime: st.mtimeMs, symbols, imports, importedBy: 0 });
+        files.push({ rel, bytes: st.size, mtime: st.mtimeMs, symbols, symLines, imports, importedBy: 0 });
       }
     }
   };
   walk(root, 0);
+  files.complete = complete;
 
   // Resolve relative imports to count in-degree (importance).
   const byStem = new Map<string, RepoFile>();
@@ -157,17 +173,21 @@ export function scanRepo(dir: string, maxFiles = 5000): RepoFile[] {
 /** Builds the map text, adding the most important files first until the token budget is spent. */
 export function repoMap(dir: string, budgetTokens = 1500): RepoMap {
   const root = path.resolve(dir);
-  const files = scanRepo(root);
+  return renderRepoMap(root, scanRepo(root), budgetTokens);
+}
+
+/** Map text from already-scanned files; `boost` adds rank (e.g. files hot in memory). */
+export function renderRepoMap(root: string, files: RepoFile[], budgetTokens: number, boost: Map<string, number> = new Map(), maxSyms = 12): RepoMap {
   const newest = Math.max(1, ...files.map((f) => f.mtime));
   const score = (f: RepoFile) =>
-    f.importedBy * 3 + f.symbols.length * 0.5 + (f.mtime / newest) * 2 + (/(^|\/)(readme|index|main|app|server|cli)\./i.test(f.rel) ? 3 : 0);
+    f.importedBy * 3 + f.symbols.length * 0.5 + (f.mtime / newest) * 2 + (/(^|\/)(readme|index|main|app|server|cli)\./i.test(f.rel) ? 3 : 0) + (boost.get(f.rel) || 0);
   const ranked = [...files].sort((a, b) => score(b) - score(a));
 
   const header = `# repo map: ${path.basename(root)} (${files.length} files)\n`;
   let used = estimateTokens(header);
   const chosen = new Set<RepoFile>();
   for (const f of ranked) {
-    const line = renderFile(f);
+    const line = renderFile(f, maxSyms);
     const t = estimateTokens(line);
     if (used + t > budgetTokens) continue;
     chosen.add(f);
@@ -184,17 +204,17 @@ export function repoMap(dir: string, budgetTokens = 1500): RepoMap {
   let text = header;
   for (const [d, fs_] of [...byDir.entries()].sort()) {
     text += `${d === '.' ? './' : d + '/'}\n`;
-    for (const f of fs_) text += renderFile(f);
+    for (const f of fs_) text += renderFile(f, maxSyms);
   }
   const omitted = files.length - chosen.size;
   if (omitted > 0) text += `(+${omitted} lower-ranked files omitted to stay under ${budgetTokens} tokens)\n`;
   return { root, files, text, tokens: estimateTokens(text), omitted };
 }
 
-function renderFile(f: RepoFile): string {
+function renderFile(f: RepoFile, maxSyms = 12): string {
   const name = f.rel.split('/').pop();
   const kb = f.bytes >= 1024 ? `${Math.round(f.bytes / 1024)}k` : `${f.bytes}b`;
-  const syms = f.symbols.length ? ': ' + f.symbols.slice(0, 12).join(', ') + (f.symbols.length > 12 ? ` +${f.symbols.length - 12}` : '') : '';
+  const syms = f.symbols.length ? ': ' + f.symbols.slice(0, maxSyms).join(', ') + (f.symbols.length > maxSyms ? ` +${f.symbols.length - maxSyms}` : '') : '';
   const used = f.importedBy ? ` ←${f.importedBy}` : '';
   return `  ${name} (${kb}${used})${syms}\n`;
 }

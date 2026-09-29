@@ -39,7 +39,8 @@ function readTail(p: string, bytes: number): string {
   }
 }
 
-function entries(p: string | undefined, bytes = 1024 * 1024): any[] {
+/** Parsed JSONL entries from the tail of a transcript. */
+export function transcriptEntries(p: string | undefined, bytes = 1024 * 1024): any[] {
   if (!p) return [];
   const out: any[] = [];
   for (const l of readTail(p, bytes).split('\n')) {
@@ -55,7 +56,7 @@ function entries(p: string | undefined, bytes = 1024 * 1024): any[] {
 
 /** Tokens in context for the latest request (what the next reply will re-read) + its model. */
 export function contextSize(transcriptPath?: string): { tokens: number; model: string } {
-  const es = entries(transcriptPath, 2 * 1024 * 1024);
+  const es = transcriptEntries(transcriptPath, 2 * 1024 * 1024);
   let pending = 0; // tool results / prompts added after the last reply (not in any usage yet)
   for (let i = es.length - 1; i >= 0; i--) {
     const e = es[i];
@@ -109,7 +110,7 @@ function openTodos(es: any[]): string[] {
 export function buildHandoff(sessionId: string, transcriptPath: string | undefined, cwd: string, maxTokens = 1200): Handoff | null {
   const buf = readBuffer(sessionId);
   const prompts = buf.filter((e) => e.t === 'prompt') as Array<{ t: 'prompt'; ts: number; text: string }>;
-  const es = entries(transcriptPath);
+  const es = transcriptEntries(transcriptPath);
   const replies = es.filter((e) => e?.type === 'assistant' && !e.isSidechain).map(assistantText).filter((t) => t.trim());
   if (!prompts.length && !replies.length) return null;
 

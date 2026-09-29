@@ -2,6 +2,15 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.7.0
+
+- **Auto-recall.** On every prompt grug now looks in memory, the code graph and your earlier conversations, and adds only what clearly matches (max 800 tokens, `autoRecall.maxTokens`), labelled "possibly relevant, verify before relying". Memory notes come first, then code locations, then excerpts from earlier sessions (your requests and decisions preferred). Skipped for trivial prompts ("ok", "yes", fewer than 3 content words), when nothing clears the relevance bar, or when the same item was already injected this session (reset after compaction). The current session is never searched: it is already in context. Toggle: `autoRecall.enabled`.
+- **Better history search.** BM25-style scoring (rare words count more), user messages and decisions boosted, recent items slightly favored; grug's own injected blocks and harness noise are not indexed. Parsed transcripts are cached per file (size + mtime) and grown files are parsed incrementally, so big projects stay fast. A background `grug warm` refreshes caches at session start; hooks never block on a cold parse (80 ms budget).
+- **Graph-first code context.** For code projects, session start injects a compact repo map (about 600 tokens, `graphContext.mapTokens`, hot files from memory rank higher) plus guidance to use `search`/`repo_map`/`outline`/`read_symbol`/`read_lines` before full-file Reads. Auto-recall also names the few files/symbols matching the prompt with line ranges (no bodies). Toggle: `graphContext.enabled`.
+- **Better automatic memory.** At PreCompact/SessionEnd grug picks durable facts from the transcript by rules, no model call: decisions, root causes after failures, your standing preferences ("always/never/don't…"), and project commands that worked. Secrets are skipped. They go through the usual merge/decay, with their own cap of 60 auto facts per project (pinned notes never touched).
+- **Dashboard and doctor** show auto-recall injections (count, average tokens), graph-context usage and captured facts.
+- New settings validated by `grug config set`: `autoRecall.enabled|maxTokens` (100-4000), `graphContext.enabled|mapTokens` (100-3000). New command `grug warm [dir]`.
+
 ## 2.6.0
 
 - **grug now compacts for you, automatically.** Claude Code has no way for a tool to run `/clear`, but it has its own auto-compaction; grug sets its trigger point (`autoCompactWindow` + `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, default 200k tokens instead of near the 1M limit). Right before compacting grug saves a handoff; right after, it injects it into the fresh context. Verified in a real Claude Code session: auto-compaction fired on its own, grug restored a 120-token handoff, and the answer that depended on pre-compaction content was still correct, with each later reply at ~40k tokens instead of 100k+. `grug config set autoCompact.windowTokens 0` hands control back to Claude Code; uninstall restores your previous values.

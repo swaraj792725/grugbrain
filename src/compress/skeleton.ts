@@ -223,13 +223,24 @@ function skeletonizePython(code: string): string {
 
 /** Extracts top-level symbol names (for repo maps). */
 export function extractSymbols(code: string, fileName: string): string[] {
+  return extractSymbolLines(code, fileName).map((s) => s.name);
+}
+
+/** Top-level symbols with their 1-based declaration line (for the code graph). */
+export function extractSymbolLines(code: string, fileName: string): Array<{ name: string; line: number }> {
   const lang = languageOf(fileName);
-  const syms: string[] = [];
+  const syms: Array<{ name: string; line: number }> = [];
+  const seen = new Set<string>();
+  let lineNo = 0;
   const add = (s: string) => {
-    if (s && !syms.includes(s)) syms.push(s);
+    if (s && !seen.has(s)) {
+      seen.add(s);
+      syms.push({ name: s, line: lineNo });
+    }
   };
   const lines = code.split('\n');
   for (const line of lines) {
+    lineNo++;
     let m: RegExpMatchArray | null;
     if (lang === 'python') {
       if ((m = line.match(/^(?:async\s+)?def\s+([A-Za-z_]\w*)/))) add(m[1] + '()');
