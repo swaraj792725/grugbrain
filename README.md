@@ -231,7 +231,11 @@ Small context still need good memory, or quality drop. So grug feed Claude the r
 - **graph-first code**: session start give Claude a small repo map (~600 token) and say: find with `search` / `repo_map` / `outline`, read with `read_symbol` / `read_lines`, full-file Read last. Per prompt grug also name the few files and symbols that match, with line ranges. No bodies.
 - **better history search**: rare words count more (BM25-style), your asks and decisions count more, parsed transcripts cached by mtime.
 - **grug take notes by himself**: when session compact or end, grug pull decisions, root causes, your "always/never" rules, and commands that worked from transcript. No AI call. Secrets skipped. Merge, decay, cap 60 per project: no pile-up.
-- `grug dash` and `grug doctor` show how many injections and average token cost.
+- **session budget**: everything grug inject stay in context and get re-read each reply. So recall has total budget per session (2500 token). Budget fill up, bar go up. Budget gone, grug quiet. Compaction reset it.
+- **grug learn what help**: after a code hint, did Claude open that file? Hint mostly ignored, grug get pickier. Mostly used, grug relax. Small steps, bounded, self-adjusting.
+- **fresh map**: file Claude just wrote is found at once, and graph rescan quietly in background.
+- **notes as you go**: grug read only new transcript bytes at each stop, so early decisions in very long session not lost.
+- `grug dash` and `grug doctor` show how many injections, average token cost, and how often hints got used.
 
 ```bash
 grug config set autoRecall.maxTokens 500      # smaller recall block (100-4000)
@@ -258,7 +262,7 @@ grug config set graphContext.enabled false    # no code map / code hints
 | `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
 | `autoCompact.windowTokens` | `200000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
-| `autoRecall.enabled` / `maxTokens` | `true` / `800` | per-prompt recall from memory, code graph, old sessions |
+| `autoRecall.enabled` / `maxTokens` / `sessionTokens` | `true` / `800` / `2500` | per-prompt recall from memory, code graph, old sessions; total cap per session |
 | `graphContext.enabled` / `mapTokens` | `true` / `600` | repo map at session start + code hints per prompt |
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |

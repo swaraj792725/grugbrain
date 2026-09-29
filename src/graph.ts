@@ -13,6 +13,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { paths, userHome, writeJsonAtomic } from './config.js';
 import { RepoFile, renderRepoMap, scanRepo } from './compress/repomap.js';
+import { extractSymbolLines, languageOf } from './compress/skeleton.js';
 import { findSymbol } from './mcp.js';
 import { estimateTokens } from './tokens.js';
 import { rank } from './relevance.js';
@@ -71,6 +72,65 @@ export function graphIndexFor(cwd: string, buildMs = 120): { index: GraphIndex |
   return { index: built, stale: !built };
 }
 
+const REFRESH_DEBOUNCE_MS = 45 * 1000;
+
+/** True at most once per debounce window per project: time to rescan the graph in the background. */
+export function refreshGraphSoon(cwd: string, now = Date.now()): boolean {
+  const marker = indexPath(cwd).replace(/\.json$/, '.refresh');
+  try {
+    const last = Number(fs.readFileSync(marker, 'utf8'));
+    if (Number.isFinite(last) && now >= last && now - last < REFRESH_DEBOUNCE_MS) return false;
+  } catch {
+    /* first time */
+  }
+  try {
+    fs.mkdirSync(path.dirname(marker), { recursive: true });
+    fs.writeFileSync(marker, String(now));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The index with just-edited files rescanned from disk (so a symbol added a minute ago is
+ * findable before the background rescan lands). Cheap: at most `max` files are read.
+ */
+export function overlayFresh(index: GraphIndex, fresh: string[], max = 12): GraphIndex {
+  if (!fresh.length) return index;
+  const byRel = new Map(index.files.map((f) => [f.rel, f]));
+  const files = [...index.files];
+  for (const rel of [...new Set(fresh)].slice(-max)) {
+    const abs = path.join(index.root, rel);
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(abs);
+    } catch {
+      const gone = byRel.get(rel); // deleted or moved
+      if (gone) files.splice(files.indexOf(gone), 1);
+      continue;
+    }
+    if (!st.isFile() || st.size > 512 * 1024) continue;
+    const old = byRel.get(rel);
+    if (old && old.mtime === st.mtimeMs && old.bytes === st.size) continue;
+    let symbols: string[] = [];
+    let symLines: number[] = [];
+    if (languageOf(rel)) {
+      try {
+        const syms = extractSymbolLines(fs.readFileSync(abs, 'utf8'), rel);
+        symbols = syms.map((x) => x.name);
+        symLines = syms.map((x) => x.line);
+      } catch {
+        continue;
+      }
+    }
+    const entry: RepoFile = { rel, bytes: st.size, mtime: st.mtimeMs, symbols, symLines, imports: [], importedBy: old?.importedBy || 0 };
+    if (old) files[files.indexOf(old)] = entry;
+    else files.push(entry);
+  }
+  return { ...index, files };
+}
+
 export const GRAPH_FIRST =
   'Graph-first: before a full-file Read, locate code with the grugbrain MCP tools (search or repo_map to find it, outline for a file\'s shape), ' +
   'then read_symbol or read_lines (or Read with offset/limit) for just the part you need.';
@@ -99,6 +159,8 @@ function splitIdent(s: string): string {
 }
 
 export interface CodeHint {
+  /** Repo-relative path of the hinted file. */
+  file: string;
   /** Dedupe keys: the file and each symbol shown. */
   keys: string[];
   line: string;
@@ -108,10 +170,19 @@ export interface CodeHint {
  * Files/symbols relevant to a prompt: "- src/a.ts: foo() L10-42, class Bar L50-90". No bodies.
  * `terms` come from queryTerms(prompt); `promptLower` catches exact identifiers and file names.
  */
-export function relevantCode(cwd: string, terms: string[], promptLower: string, maxHints = 5, exclude: Set<string> = new Set()): CodeHint[] {
+export function relevantCode(
+  cwd: string,
+  terms: string[],
+  promptLower: string,
+  maxHints = 5,
+  exclude: Set<string> = new Set(),
+  opts: { fresh?: string[]; strictness?: number } = {}
+): CodeHint[] {
   if (!terms.length || !isCodeProject(cwd)) return [];
-  const index = loadGraphIndex(cwd);
-  if (!index) return [];
+  const loaded = loadGraphIndex(cwd);
+  if (!loaded) return [];
+  const index = overlayFresh(loaded, opts.fresh || []);
+  const minCoverage = 0.3 * (opts.strictness || 1);
   type Doc = { file: RepoFile; sym?: string; symLine?: number; text: string; exact: boolean };
   const docs: Doc[] = [];
   for (const f of index.files) {
@@ -134,7 +205,7 @@ export function relevantCode(cwd: string, terms: string[], promptLower: string, 
     docs.map((d) => d.text),
     terms,
     docs.map((d) => (d.exact ? 3 : d.sym ? 1 : 0.8))
-  ).filter((r) => docs[r.index].exact || (r.matched >= 2 && r.coverage >= 0.3));
+  ).filter((r) => docs[r.index].exact || (r.matched >= 2 && r.coverage >= minCoverage));
   // Group chosen symbols by file, best first.
   const byFile = new Map<string, { file: RepoFile; syms: Array<{ sym: string; line?: number }>; score: number }>();
   for (const r of ranked) {
@@ -166,6 +237,7 @@ export function relevantCode(cwd: string, terms: string[], promptLower: string, 
     if (g.syms.length && !parts.length) continue;
     const size = g.file.bytes ? ` (${Math.round(g.file.bytes / 1024) || 1}k)` : '';
     out.push({
+      file: g.file.rel,
       keys: [`g:${g.file.rel}`, ...g.syms.map((s) => `g:${g.file.rel}#${s.sym}`)],
       line: `- ${g.file.rel}${size}${parts.length ? ': ' + parts.join(', ') : ''}`
     });

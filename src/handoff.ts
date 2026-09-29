@@ -54,6 +54,50 @@ export function transcriptEntries(p: string | undefined, bytes = 1024 * 1024): a
   return out;
 }
 
+/**
+ * Complete transcript lines appended since `offset` (0 = from the start, or the last `maxBytes`
+ * of a huge file). Returns the new offset to resume from, so each byte is parsed once.
+ */
+export function transcriptEntriesFrom(p: string | undefined, offset: number, maxBytes = 4 * 1024 * 1024): { entries: any[]; offset: number; size: number } {
+  const none = { entries: [] as any[], offset, size: 0 };
+  if (!p) return none;
+  try {
+    const fd = fs.openSync(p, 'r');
+    try {
+      const size = fs.fstatSync(fd).size;
+      let from = offset > size ? 0 : offset; // truncated or replaced file: start over
+      const jumped = size - from > maxBytes;
+      if (jumped) from = size - maxBytes;
+      if (size === from) return { entries: [], offset: from, size };
+      let buf: Buffer = Buffer.alloc(size - from);
+      fs.readSync(fd, buf, 0, buf.length, from);
+      if (jumped && from > 0) {
+        // landed mid-line: skip to the next line start
+        const nl = buf.indexOf(10);
+        if (nl < 0) return { entries: [], offset: size, size };
+        from += nl + 1;
+        buf = buf.subarray(nl + 1);
+      }
+      const lastNl = buf.lastIndexOf(10);
+      if (lastNl < 0) return { entries: [], offset: from, size }; // no complete line yet
+      const out: any[] = [];
+      for (const l of buf.subarray(0, lastNl + 1).toString('utf8').split('\n')) {
+        if (!l) continue;
+        try {
+          out.push(JSON.parse(l));
+        } catch {
+          /* torn */
+        }
+      }
+      return { entries: out, offset: from + lastNl + 1, size };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return none;
+  }
+}
+
 /** Tokens in context for the latest request (what the next reply will re-read) + its model. */
 export function contextSize(transcriptPath?: string): { tokens: number; model: string } {
   const es = transcriptEntries(transcriptPath, 2 * 1024 * 1024);

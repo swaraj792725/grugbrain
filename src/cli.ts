@@ -57,7 +57,7 @@ const HELP = `
   grug recall <query> [--dir d]   search memory
   grug remember <text> [--dir d]  pin a note for a project
   grug maintain                   ingest + consolidate memory now (normally automatic)
-  grug warm [dir]                 refresh code-graph + history caches for a project (normally automatic)
+  grug warm [dir] [--graph]       refresh code-graph + history caches for a project (normally automatic)
 
   grug map [dir] [--budget 1500]  ranked repo map under a token budget
   grug outline <file>             skeleton of a source file
@@ -135,6 +135,11 @@ async function main() {
         const on = (b: boolean) => (b ? '✅' : '➖');
         console.log(`${on(cfg.autoRecall.enabled)} auto-recall ${cfg.autoRecall.enabled ? `on (≤${cfg.autoRecall.maxTokens} tok): ${r.n} injection(s) in 7 days${r.n ? `, avg ${r.avg} tok` : ''}` : 'off (grug config set autoRecall.enabled true)'}`);
         console.log(`${on(cfg.graphContext.enabled)} graph context ${cfg.graphContext.enabled ? `on: ${g.n} code map(s)/hint(s) in 7 days${g.n ? `, avg ${g.avg} tok` : ''}` : 'off (grug config set graphContext.enabled true)'}`);
+        {
+          const { loadTune } = await import('./recalltune.js');
+          const tu = loadTune();
+          if (tu.codeShown >= 1) console.log(`ℹ️  code hints used: ${Math.round((tu.codeHit / tu.codeShown) * 100)}% of recent hints (recall strictness ×${tu.strictness.toFixed(2)}, adjusts itself)`);
+        }
         if (cfg.memory.enabled) console.log(`✅ memory capture: ${f.n} handoff(s) with durable facts in 7 days`);
       }
       console.log(`${ok(h.codeMcp)} Claude Code MCP server`);
@@ -217,7 +222,7 @@ async function main() {
       const { warmHistory } = await import('./history.js');
       let files = 0;
       if (cfg.graphContext.enabled && isCodeProject(dir)) files = buildGraphIndex(dir)?.files.length || 0;
-      const items = cfg.autoRecall.enabled ? warmHistory(dir) : 0;
+      const items = cfg.autoRecall.enabled && !flags.has('--graph') ? warmHistory(dir) : 0;
       if (!process.env.GRUG_QUIET) console.log(`warm: ${files} files in code graph, ${items} history items cached for ${dir}`);
       break;
     }

@@ -6,7 +6,7 @@
  */
 
 import { similarity } from './memory/store.js';
-import { transcriptEntries } from './handoff.js';
+import { transcriptEntriesFrom } from './handoff.js';
 
 export type FactKind = 'decision' | 'cause' | 'preference' | 'command';
 
@@ -45,12 +45,27 @@ function stripCd(cmd: string): string {
   return cmd.replace(/^\s*cd\s+[^&;]+&&\s*/, '').trim();
 }
 
+export interface FactScan {
+  facts: Fact[];
+  /** Resume point: pass it back next time so each transcript byte is read once. */
+  offset: number;
+  /** Commands seen failing (so a later pass can tell "failed, then fixed"). */
+  failed: string[];
+}
+
+/** Whole transcript (or its last 4 MB) at once. */
 export function extractFacts(transcriptPath: string | undefined, max = 8): Fact[] {
-  const es = transcriptEntries(transcriptPath);
+  return scanFacts(transcriptPath, 0, [], max).facts;
+}
+
+/** Facts from what was appended since `offset`. Cheap enough for every Stop hook. */
+export function scanFacts(transcriptPath: string | undefined, offset = 0, failed: string[] = [], max = 8): FactScan {
+  const part = transcriptEntriesFrom(transcriptPath, offset);
+  const es = part.entries;
   const byKind: Record<FactKind, Fact[]> = { decision: [], cause: [], preference: [], command: [] };
   const caps: Record<FactKind, number> = { decision: 3, cause: 3, preference: 2, command: 2 };
   const pendingCmd = new Map<string, string>();
-  const failedCmds = new Set<string>();
+  const failedCmds = new Set<string>(failed);
   let lastErrorAt = -99;
   const push = (kind: FactKind, text: string, ts: number): boolean => {
     const list = byKind[kind];
@@ -108,5 +123,5 @@ export function extractFacts(transcriptPath: string | undefined, max = 8): Fact[
   // Latest decisions/causes/preferences win; commands keep "failed, then fixed" ones first.
   for (const k of ['preference', 'cause', 'decision'] as FactKind[]) out.push(...byKind[k].slice(-caps[k]));
   out.push(...byKind.command.slice(0, caps.command));
-  return out.slice(0, max);
+  return { facts: out.slice(0, max), offset: part.offset, failed: [...failedCmds].slice(-20) };
 }

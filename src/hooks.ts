@@ -19,8 +19,9 @@ import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
 import { buildHandoff, contextSize, costPerReply, saveHandoff, takeHandoff } from './handoff.js';
 import { autoRecall } from './recall.js';
-import { sessionCodeMap } from './graph.js';
-import { extractFacts } from './facts.js';
+import { isCodeProject, refreshGraphSoon, sessionCodeMap } from './graph.js';
+import { scanFacts } from './facts.js';
+import { scoreRecalls } from './recalltune.js';
 
 export interface HookInput {
   session_id?: string;
@@ -147,7 +148,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         const r = autoRecall({ cfg, sessionId: sid, cwd, prompt, transcriptPath: input.transcript_path, now });
         if (!r) return done();
         if (r.ids.length) appendBuffer(sid, { t: 'injected', ts: now, ids: r.ids });
-        appendBuffer(sid, { t: 'recall', ts: now, keys: r.keys, tokens: r.tokens });
+        appendBuffer(sid, { t: 'recall', ts: now, keys: r.keys, tokens: r.tokens, files: r.files });
         const recallTok = r.tokens - r.codeTokens;
         if (r.counts.memory || r.counts.history)
           recordActivity({
@@ -261,6 +262,13 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
             /* file vanished */
           }
         }
+        if (cfg.graphContext.enabled && tool !== 'Read' && isCodeProject(cwd) && path.resolve(ti.file_path).startsWith(path.resolve(cwd) + path.sep)) {
+          // Keep the code graph current: a debounced background rescan (prompts also overlay edited files at once).
+          if (refreshGraphSoon(cwd, now)) spawnDetached(['warm', cwd, '--graph']);
+        }
+      } else if (ti.path && /grugbrain__(outline|read_symbol|read_lines)$/.test(tool)) {
+        // Reading via grug's own tools counts as a file read (recall usefulness, handoff files).
+        appendBuffer(sid, { t: 'file', ts: now, path: String(ti.path), op: 'read' });
       } else if (tool === 'Bash' && ti.command) {
         appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
       }
@@ -309,6 +317,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       }
       const text = lastAssistantText(input.transcript_path);
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
+      // Pick durable facts as the session goes (only new bytes), so a long session loses none to the tail window.
+      if (cfg.memory.enabled) captureFacts(sid, input.transcript_path, cwd, now, false);
       return null;
     }
 
@@ -333,19 +343,11 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           /* best-effort */
         }
       }
-      if (cfg.memory.enabled) {
-        try {
-          // Durable facts for memory (ingested by the maintain run below).
-          const facts = extractFacts(input.transcript_path);
-          const known = new Set(readBuffer(sid).flatMap((e) => (e.t === 'facts' ? e.items.map((f) => f.text) : [])));
-          const fresh = facts.filter((f) => !known.has(f.text));
-          if (fresh.length) {
-            appendBuffer(sid, { t: 'facts', ts: now, items: fresh });
-            recordActivity({ kind: 'facts', msg: `Captured ${fresh.length} durable fact(s): ${[...new Set(fresh.map((f) => f.kind))].join(', ')}`, project: path.basename(cwd) });
-          }
-        } catch {
-          /* best-effort */
-        }
+      if (cfg.memory.enabled) captureFacts(sid, input.transcript_path, cwd, now, true);
+      try {
+        scoreRecalls(sid, cwd);
+      } catch {
+        /* best-effort */
       }
       if (event === 'session-end') appendBuffer(sid, { t: 'end', ts: now, reason: input.reason });
       else appendBuffer(sid, { t: 'compact', ts: now });
@@ -354,6 +356,55 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     }
   }
   return null;
+}
+
+const MIN_SCAN_BYTES = 24 * 1024;
+const MAX_FACTS_PER_SESSION = 30;
+
+/**
+ * Durable facts from the transcript bytes not seen yet. At Stop it runs only once enough new
+ * transcript has piled up; at PreCompact/SessionEnd (`force`) it always runs. Facts are appended
+ * to the session buffer and become notes when the session is ingested.
+ */
+function captureFacts(sid: string, transcript: string | undefined, cwd: string, now: number, force: boolean): void {
+  if (!transcript) return;
+  try {
+    let offset = 0;
+    let failed: string[] = [];
+    let stored = 0;
+    const known = new Set<string>();
+    for (const e of readBuffer(sid)) {
+      if (e.t === 'facts') {
+        stored += e.items.length;
+        e.items.forEach((f) => known.add(f.text));
+        if (e.offset !== undefined) {
+          offset = e.offset;
+          failed = e.failed || failed;
+        }
+      } else if (e.t === 'factscan') {
+        offset = e.offset;
+        failed = e.failed;
+      }
+    }
+    if (!force) {
+      let size = 0;
+      try {
+        size = fs.statSync(transcript).size;
+      } catch {
+        return;
+      }
+      if (size >= offset && size - offset < MIN_SCAN_BYTES) return;
+    }
+    const scan = scanFacts(transcript, offset, failed, force ? 8 : 4);
+    const room = Math.max(0, MAX_FACTS_PER_SESSION - stored);
+    const fresh = scan.facts.filter((f) => !known.has(f.text)).slice(0, room);
+    if (fresh.length) {
+      appendBuffer(sid, { t: 'facts', ts: now, items: fresh, offset: scan.offset, failed: scan.failed });
+      recordActivity({ kind: 'facts', msg: `Captured ${fresh.length} durable fact(s): ${[...new Set(fresh.map((f) => f.kind))].join(', ')}`, project: path.basename(cwd) });
+    } else if (scan.offset !== offset) appendBuffer(sid, { t: 'factscan', ts: now, offset: scan.offset, failed: scan.failed });
+  } catch {
+    /* best-effort */
+  }
 }
 
 /** One-line, user-only notice when the context passes 150k, 300k, 600k... tokens (once per level). */

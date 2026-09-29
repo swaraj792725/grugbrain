@@ -11,6 +11,7 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - hooks.ts: SessionStart (terse style, handoff restore, memory brief), UserPromptSubmit (context alert, remember:/recall), PreToolUse (read guards), PostToolUse (test summary, output trim via updatedToolOutput `{stdout,stderr}`), Stop (meterTranscript), PreCompact/SessionEnd (handoff + maintain).
 - handoff.ts: builds a model-free handoff from the session log and transcript tail. history.ts: keyword search over past transcripts (MCP tool `history`).
 - meter.ts: measures real usage from ~/.claude/projects transcripts, because the Code tab bypasses the proxy (ANTHROPIC_BASE_URL is not honored there).
+- recall.ts (auto-recall: session budget, tuned bar), recalltune.ts (scores whether code hints were used), graph.ts (code graph cache, fresh-file overlay), facts.ts (incremental durable-fact scan), relevance.ts (BM25-ish ranking).
 - proxy/ (port 4747), mcp.ts (tools), install.ts (hooks, MCP, launchd/systemd, PATH launchers, applyTuning for autoCompactWindow / CLAUDE_CODE_AUTO_COMPACT_WINDOW / CLAUDE_CODE_SUBAGENT_MODEL), update.ts, tui/dashboard.ts, bench.ts.
 
 ## Facts learned
