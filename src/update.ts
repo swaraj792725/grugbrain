@@ -63,28 +63,65 @@ export function cachedUpdate(): UpdateInfo | null {
   return { ...v, current: VERSION, newer: !!v.latest && compareVersions(v.latest, VERSION) > 0 };
 }
 
+/** Fallback when the GitHub API is rate-limited: the web URL /releases/latest redirects to /releases/tag/<tag>. */
+function latestTagViaWeb(timeoutMs = 6000): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      `https://github.com/${REPO}/releases/latest`,
+      { method: 'HEAD', headers: { 'user-agent': `grugbrain/${VERSION}` }, timeout: timeoutMs },
+      (res) => {
+        res.resume();
+        const m = String(res.headers.location || '').match(/\/releases\/tag\/([^/?#]+)/);
+        if (m) resolve(decodeURIComponent(m[1]));
+        else reject(new Error(`no release redirect (HTTP ${res.statusCode})`));
+      }
+    );
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.end();
+  });
+}
+
+async function latestRelease(): Promise<{ tag: string; url: string; tarball?: string }> {
+  try {
+    const rel = await getJson(`https://api.github.com/repos/${REPO}/releases/latest`);
+    if (!rel.tag_name) throw new Error('no releases found');
+    const asset = (rel.assets || []).find((a: any) => /\.tgz$/.test(a.name));
+    return { tag: rel.tag_name, url: rel.html_url, tarball: asset?.browser_download_url };
+  } catch (apiErr) {
+    const tag = await latestTagViaWeb().catch(() => {
+      throw apiErr;
+    });
+    const v = tag.replace(/^v/, '');
+    return {
+      tag,
+      url: `https://github.com/${REPO}/releases/tag/${tag}`,
+      tarball: `https://github.com/${REPO}/releases/download/${tag}/grugbrain-${v}.tgz`
+    };
+  }
+}
+
 export async function checkForUpdate(force = false): Promise<UpdateInfo> {
   const cached = cachedUpdate();
   if (!force && cached && Date.now() - cached.checkedAt < DAY) return cached;
   try {
-    const rel = await getJson(`https://api.github.com/repos/${REPO}/releases/latest`);
-    const tag: string = rel.tag_name;
-    if (!tag) throw new Error('no releases found');
+    const rel = await latestRelease();
+    const tag = rel.tag;
     const latest = tag.replace(/^v/, '');
-    const asset = (rel.assets || []).find((a: any) => /\.tgz$/.test(a.name));
     const info: UpdateInfo = {
       current: VERSION,
       latest,
       newer: compareVersions(latest, VERSION) > 0,
       tag,
-      url: rel.html_url,
-      tarball: asset?.browser_download_url,
+      url: rel.url,
+      tarball: rel.tarball,
       checkedAt: Date.now()
     };
     writeJsonAtomic(file(), info);
     return info;
   } catch (err: any) {
-    const info: UpdateInfo = { current: VERSION, latest: cached?.latest ?? null, newer: false, checkedAt: Date.now(), error: err.message };
+    // Failed checks retry after an hour instead of a day.
+    const info: UpdateInfo = { current: VERSION, latest: cached?.latest ?? null, newer: false, checkedAt: Date.now() - DAY + 3600000, error: err.message };
     writeJsonAtomic(file(), info);
     return info;
   }
