@@ -73,6 +73,12 @@ export interface GrugConfig {
     enabled: boolean;
     firstTokens: number;
   };
+  /** Tell the user (not the model) when the prompt cache expired on a big session, so the next reply re-writes it all. */
+  idleAlert: {
+    enabled: boolean;
+    /** Only when the extra cost of that cold reply is at least this many dollars (API-equivalent). */
+    minExtraUsd: number;
+  };
   /** Let Claude Code compact on its own at this context size (0 = leave Claude Code's default). grug restores its handoff afterwards. */
   autoCompact: {
     windowTokens: number;
@@ -148,6 +154,10 @@ export function defaultConfig(): GrugConfig {
     contextAlert: {
       enabled: true,
       firstTokens: 150000
+    },
+    idleAlert: {
+      enabled: true,
+      minExtraUsd: 0.25
     },
     autoCompact: {
       windowTokens: 200000

@@ -20,6 +20,11 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - Evaluated and rejected: a local LLM that summarizes the context every turn (too slow on entry-level hardware, and it can't hook into the Code tab). Worth doing later: a tiny local embedding model to rank history/recall results.
 - Never put `#` comments in shell commands given to the user (zsh saves them into the config).
 
+## Matching quality rules (v2.9)
+- Any change to relevance.ts / recall gates must keep `npm test` green including tests/recall-eval.test.ts (tuning set + hold-out + compound prompts). Never tune against the hold-out; if you must, write a new hold-out first.
+- Live check of hooks in a real Claude Code: `claude -p "<q>" --model haiku --max-turns 1 --settings <file with hooks> --session-id $(uuidgen) --output-format json < /dev/null`, with GRUG_HOME sandboxed and GRUG_NO_SPAWN=1. Always pass a fresh --session-id: nested claude inherits the outer session id, and recall dedupes per session (looks like "no recall").
+- Idle cache expiry: cold reply re-writes context at 1.25x (5m tier) / 2x (1h tier) input price; grug warns the user (idleAlert), never the model.
+
 ## Open items
-- Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction").
+- Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.

@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.9.0
+
+- **Recall finds paraphrases.** Prompt words with no direct hit can match through small concept groups of developer vocabulary (authentication~login, slow~latency, webhook~callback, cache~invalidate, ~30 groups) at 0.6 credit each; the relevance gate is unchanged, and unknown words invent nothing. Measured on an offline eval (`tests/recall-eval.test.ts`, corpus in `tests/recall-corpus.ts`): recall of paraphrased questions 25% → 90% on the tuning set and 50% → 60% on a hold-out written afterwards, false positives unchanged (1/16 and 0/12).
+- **Long, multi-part prompts recall too.** A question followed by other instructions ("why does X expire? also tidy the docs…") used to score 0% because the extra words diluted the match. Each clause is now scored on its own as well as the whole prompt (each must clear the same gate by itself; counts are shared so it costs ~16 ms). Back to 90%/60% on compound prompts with no added noise; unrelated prompts with the same trailing instruction stay silent.
+- **Cache-expiry notice.** When you return to a big session after the prompt cache expired (5 minutes, or an hour when Claude Code uses the long tier), the next reply re-writes the whole context at 1.25-2x the input price instead of reading it at 0.1x. grug tells you (user-only, never sent to Claude), with the cost, and has the handoff ready so `/clear` costs ~1k tokens instead. Only when the extra cost is at least `idleAlert.minExtraUsd` (default $0.25), once per idle gap. Toggle: `idleAlert.enabled`. Shown in `grug dash`.
+- **Fix:** `grug remember <text> --dir <path>` (and `--port`, `--budget`, ...) no longer glues the flag's value onto the text.
+- Verified end to end against a real Claude Code 2.1 session: hook context from SessionStart (code map) and UserPromptSubmit (recall) reaches the model.
+
 ## 2.8.0
 
 - **Recall has a session budget.** Everything injected stays in context and is re-read every reply, so auto-recall now also has a per-session cap (`autoRecall.sessionTokens`, default 2500, reset after compaction). What is left caps each block, and the relevance bar rises as the budget fills: early prompts get generous recall, late ones only near-certain matches, and when it is spent grug goes quiet.

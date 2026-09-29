@@ -11,7 +11,8 @@ const STOP = new Set(
     'such only own same very really still again maybe okay yes yeah its it\'s our out use using used one two new way thing things stuff ' +
     'does did done doing been being them they him her she his who whom whose above below over under after before while because since ' +
     'i\'m i\'d i\'ll we\'re don\'t doesn\'t didn\'t isn\'t can\'t won\'t lets see look try show tell give take put keep know think go going ' +
-    'thanks thank hey hello hi ok good great nice cool fine sure right well much many lot little bit something anything everything')
+    'thanks thank hey hello hi ok good great nice cool fine sure right well much many lot little bit something anything everything ' +
+    'quickly early often sometimes actually basically exactly currently properly correctly come comes came happen happens happened')
     .split(' ')
 );
 
@@ -43,6 +44,69 @@ export function queryTerms(text: string, max = 12): string[] {
   return out.slice(0, max);
 }
 
+/**
+ * Developer vocabulary that means the same thing in a prompt and in a note ("authentication" vs
+ * "login"). A prompt word with no direct hit in a note can still match through its group, at
+ * reduced credit, so paraphrases find their note while the relevance gate stays as strict.
+ */
+const SYNONYM_GROUPS: string[][] = [
+  ['auth', 'login', 'signin', 'sign-in', 'authenticate', 'authentication', 'logon', 'sso', 'oauth'],
+  ['password', 'credential', 'passphrase'],
+  ['hash', 'argon', 'bcrypt', 'encrypt', 'salt'],
+  ['expire', 'expiry', 'expiration', 'ttl', 'timeout'],
+  ['database', 'db', 'sql', 'postgres', 'postgresql', 'mysql', 'sqlite', 'schema', 'migration', 'migrate'],
+  ['webhook', 'callback', 'hook'],
+  ['duplicate', 'dedupe', 'idempotent', 'idempotency', 'twice', 'double'],
+  ['slow', 'latency', 'performance', 'speed', 'faster', 'optimize', 'optimise', 'sluggish', 'throughput'],
+  ['config', 'configuration', 'settings', 'environment', 'env', 'dotenv'],
+  ['test', 'spec', 'unittest', 'suite', 'jest', 'vitest', 'pytest'],
+  ['log', 'logs', 'logger', 'logging', 'trace', 'tracing', 'pino', 'winston'],
+  ['job', 'worker', 'queue', 'task', 'background'],
+  ['retry', 'retries', 'retried', 'backoff', 'attempt'],
+  ['deploy', 'release', 'publish', 'ship', 'rollout', 'prod', 'production'],
+  ['flag', 'toggle', 'launchdarkly', 'experiment'],
+  ['cache', 'cached', 'caching', 'refresh', 'invalidate', 'stale', 'cdn', 'bust'],
+  ['avatar', 'picture', 'image', 'photo', 'thumbnail', 'profile'],
+  ['resize', 'scale', 'shrink', 'crop'],
+  ['translation', 'translate', 'language', 'locale', 'english', 'i18n', 'l10n'],
+  ['schedule', 'scheduler', 'cron', 'nightly', 'daily', 'periodic'],
+  ['memory', 'ram', 'heap', 'leak'],
+  ['socket', 'websocket'],
+  ['server', 'gateway', 'backend'],
+  ['lint', 'eslint', 'prettier', 'warning'],
+  ['error', 'exception', 'crash', 'fail', 'failure', 'bug', 'broken'],
+  ['delete', 'remove', 'drop'],
+  ['dependency', 'package', 'library'],
+  ['api', 'endpoint', 'route', 'rest'],
+  ['email', 'mail', 'smtp', 'postmark']
+];
+
+/** Suffix-insensitive key so "pictures"/"picture", "scaled"/"scale", "retries"/"retry" meet. */
+function loose(w: string): string {
+  if (/[./_-]/.test(w)) return w;
+  return stem(w).replace(/[aeiouy]+$/, '') || w;
+}
+
+const GROUP_OF = new Map<string, number[]>();
+SYNONYM_GROUPS.forEach((g, i) => {
+  for (const w of g) {
+    const k = loose(w);
+    GROUP_OF.set(k, [...(GROUP_OF.get(k) || []), i]);
+  }
+});
+
+/** Other words of the same concept(s) as `term` (stemmed like query terms), never the term itself. */
+export function alternatives(term: string): string[] {
+  const out: string[] = [];
+  for (const gi of GROUP_OF.get(loose(term)) || []) {
+    for (const w of SYNONYM_GROUPS[gi]) {
+      const k = /[./_-]/.test(w) ? w : stem(w);
+      if (loose(k) !== loose(term) && !out.includes(k)) out.push(k);
+    }
+  }
+  return out;
+}
+
 /** "ok", "yes", "go ahead", or fewer than 3 content words: nothing worth recalling. */
 export function isTrivialPrompt(prompt: string): boolean {
   const p = prompt.trim();
@@ -66,8 +130,10 @@ function countIn(hay: string, term: string): number {
 export interface Ranked {
   index: number;
   score: number;
-  /** Distinct query terms found. */
+  /** Distinct query terms found (a synonym counts 0.6). */
   matched: number;
+  /** How many query terms the score was computed against (a clause, or the whole prompt). */
+  nTerms: number;
   /** Share of the query's total rarity (idf) that this doc covers, 0..1. */
   coverage: number;
   /** Position of the rarest matched term (for excerpts). */
@@ -78,26 +144,44 @@ export interface Ranked {
  * BM25 over `docs` (already lowercased). `weights[i]` multiplies doc i's score.
  * Returns only docs matching at least one term, best first.
  */
-export function rank(docs: string[], terms: string[], weights?: number[], phrase?: string): Ranked[] {
+const ALT_CREDIT = 0.6;
+
+export interface RankOptions {
+  /** Count synonyms of unmatched terms at reduced credit. */
+  alternatives?: boolean;
+  /** Per-term counts, shared by several rank() calls over the same docs (the clauses of one prompt). */
+  cache?: Map<string, { f: Uint8Array; df: number }>;
+}
+
+export function rank(docs: string[], terms: string[], weights?: number[], phrase?: string, opts: RankOptions | boolean = {}): Ranked[] {
+  const o: RankOptions = typeof opts === 'boolean' ? { alternatives: opts } : opts;
   const N = docs.length;
   if (!N || !terms.length) return [];
+  const alts = terms.map((t) => (o.alternatives ? alternatives(t).filter((a) => !terms.includes(a)) : []));
   const k1 = 1.2;
   const b = 0.75;
   let total = 0;
   for (const d of docs) total += d.length;
   const avg = Math.max(1, total / N);
-  const tf: number[][] = terms.map(() => []);
-  const df = terms.map(() => 0);
-  for (let t = 0; t < terms.length; t++) {
-    for (let i = 0; i < N; i++) {
-      const c = docs[i].includes(terms[t]) ? countIn(docs[i], terms[t]) : 0;
-      if (c) {
-        tf[t][i] = c;
-        df[t]++;
+  const cache = o.cache ?? new Map<string, { f: Uint8Array; df: number }>();
+  const counts = terms.map((term) => {
+    let c = cache.get(term);
+    if (!c) {
+      const f = new Uint8Array(N);
+      let df = 0;
+      for (let i = 0; i < N; i++) {
+        const n = docs[i].includes(term) ? countIn(docs[i], term) : 0;
+        if (n) {
+          f[i] = n;
+          df++;
+        }
       }
+      c = { f, df };
+      cache.set(term, c);
     }
-  }
-  const idf = df.map((d) => Math.log(1 + (N - d + 0.5) / (d + 0.5)));
+    return c;
+  });
+  const idf = counts.map((c) => Math.log(1 + (N - c.df + 0.5) / (c.df + 0.5)));
   const idfSum = idf.reduce((a, x) => a + x, 0) || 1;
   const out: Ranked[] = [];
   for (let i = 0; i < N; i++) {
@@ -108,21 +192,70 @@ export function rank(docs: string[], terms: string[], weights?: number[], phrase
     let best = -1;
     const norm = k1 * (1 - b + (b * docs[i].length) / avg);
     for (let t = 0; t < terms.length; t++) {
-      const f = tf[t][i];
+      let f = counts[t].f[i];
+      let credit = 1;
+      let hitTerm = terms[t];
+      if (!f && alts[t].length) {
+        // No direct hit: the best-matching word of the same concept counts at reduced credit.
+        for (const a of alts[t]) {
+          if (!docs[i].includes(a)) continue;
+          const c = countIn(docs[i], a);
+          if (c > f) {
+            f = c;
+            hitTerm = a;
+          }
+        }
+        credit = ALT_CREDIT;
+      }
       if (!f) continue;
-      matched++;
-      cov += idf[t];
-      score += (idf[t] * f * (k1 + 1)) / (f + norm);
-      if (idf[t] > best) {
-        best = idf[t];
-        pos = docs[i].indexOf(terms[t]);
+      matched += credit;
+      cov += idf[t] * credit;
+      score += (credit * (idf[t] * f * (k1 + 1))) / (f + norm);
+      if (idf[t] * credit > best) {
+        best = idf[t] * credit;
+        pos = docs[i].indexOf(hitTerm);
       }
     }
     if (!matched) continue;
     if (phrase && phrase.length > 8 && docs[i].includes(phrase)) score += idfSum / terms.length;
-    out.push({ index: i, score: score * (weights ? weights[i] ?? 1 : 1), matched, coverage: cov / idfSum, pos });
+    out.push({ index: i, score: score * (weights ? weights[i] ?? 1 : 1), matched, nTerms: terms.length, coverage: cov / idfSum, pos });
   }
   return out.sort((a, c) => c.score - a.score);
+}
+
+/**
+ * The whole prompt's terms, plus each clause's when the prompt has several parts ("why does X
+ * expire? also tidy the docs"). Extra words dilute a relevance score, so a question buried in a
+ * long prompt is also scored on its own; every clause must still clear the same gate by itself.
+ */
+export function promptSegments(prompt: string, maxSegments = 4): string[][] {
+  const whole = queryTerms(prompt);
+  const out: string[][] = [whole];
+  const clauses = prompt
+    .replace(/```[\s\S]*?```/g, ' ')
+    .split(/(?<=[.?!;:])\s+|\n+/)
+    .map((c) => queryTerms(c))
+    .filter((t) => t.length >= 2 && t.length < whole.length);
+  for (const t of clauses) {
+    if (out.length >= maxSegments) break;
+    if (!out.some((o) => o.length === t.length && o.every((x, i) => x === t[i]))) out.push(t);
+  }
+  return out;
+}
+
+/** rank() over every segment of the prompt; each doc keeps the segment that explains it best. */
+export function rankPrompt(docs: string[], prompt: string, weights?: number[]): Ranked[] {
+  const segs = promptSegments(prompt);
+  const phrase = prompt.toLowerCase().trim();
+  const best = new Map<number, Ranked>();
+  const cache = new Map<string, { f: Uint8Array; df: number }>();
+  segs.forEach((terms, k) => {
+    for (const r of rank(docs, terms, weights, k === 0 ? phrase : undefined, { alternatives: true, cache })) {
+      const cur = best.get(r.index);
+      if (!cur || r.coverage * Math.min(2, r.matched) > cur.coverage * Math.min(2, cur.matched)) best.set(r.index, r);
+    }
+  });
+  return [...best.values()].sort((a, c) => c.score - a.score);
 }
 
 /**
@@ -131,6 +264,7 @@ export function rank(docs: string[], terms: string[], weights?: number[], phrase
  * noisy, so a doc sharing at least a third of the prompt's content words also qualifies.
  */
 export function isRelevant(r: Ranked, nTerms: number, minCoverage = 0.4, minShare = 0.34): boolean {
-  if (r.matched >= 2 && (r.coverage >= minCoverage || r.matched / nTerms >= minShare)) return true;
+  // 1.5+ = at least two concepts matched, one of them directly (a synonym alone is worth 0.6).
+  if (r.matched >= 1.5 && (r.coverage >= minCoverage || r.matched / nTerms >= minShare)) return true;
   return nTerms <= 3 && r.matched >= 1 && r.coverage >= 0.6;
 }

@@ -12,7 +12,7 @@ import { BufferEvent, loadMemory, MemNode, projectKey, projectNodes, readBuffer,
 import { excerpt, historyHits, ago } from './history.js';
 import { relevantCode } from './graph.js';
 import { loadTune } from './recalltune.js';
-import { isRelevant, isTrivialPrompt, queryTerms, rank } from './relevance.js';
+import { isRelevant, isTrivialPrompt, promptSegments, queryTerms, rankPrompt } from './relevance.js';
 import { estimateTokens } from './tokens.js';
 
 export const RECALL_HEADER = '[grugbrain recall: possibly relevant notes from memory/earlier sessions; verify before relying]';
@@ -117,10 +117,10 @@ export function autoRecall(opts: {
       const base = n.type === 'note' ? (n.data?.pinned ? 2.2 : n.data?.kind === 'preference' ? 2 : 1.8) : n.type === 'session' ? 1 : 0.8;
       return base * (0.7 + 0.3 * Math.min(1, score(n, cfg.memory.halfLifeDays, now) / 3));
     });
-    const ranked = rank(nodes.map((n) => memoryText(n).toLowerCase()), terms, weights, promptLower.trim());
+    const ranked = rankPrompt(nodes.map((n) => memoryText(n).toLowerCase()), prompt, weights);
     for (const r of ranked) {
       const n = nodes[r.index];
-      if (seen.has(n.id) || !isRelevant(r, terms.length, (n.type === 'note' ? 0.35 : 0.45) * bar, share)) continue;
+      if (seen.has(n.id) || !isRelevant(r, r.nTerms, (n.type === 'note' ? 0.35 : 0.45) * bar, share)) continue;
       if (sections.memory.length >= 4) break;
       const line = memoryLine(n, now);
       const t = fits(line, Math.round(max * 0.45), memTok);
@@ -139,14 +139,19 @@ export function autoRecall(opts: {
   const files: string[] = [];
   if (cfg.graphContext.enabled) {
     try {
-      for (const h of relevantCode(cwd, terms, promptLower, 4, seen, { fresh, strictness: strict })) {
-        const t = fits(h.line, Math.round(max * 0.25), codeTok);
-        if (!t) continue;
-        sections.code.push(h.line);
-        keys.push(...h.keys);
-        files.push(h.file);
-        used += t;
-        codeTok += t;
+      const hinted = new Set<string>();
+      for (const seg of promptSegments(prompt)) {
+        for (const h of relevantCode(cwd, seg, promptLower, 4, seen, { fresh, strictness: strict })) {
+          if (hinted.has(h.file) || hinted.size >= 4) continue;
+          const t = fits(h.line, Math.round(max * 0.25), codeTok);
+          if (!t) continue;
+          hinted.add(h.file);
+          sections.code.push(h.line);
+          keys.push(...h.keys);
+          files.push(h.file);
+          used += t;
+          codeTok += t;
+        }
       }
     } catch {
       /* graph is optional */
@@ -164,7 +169,7 @@ export function autoRecall(opts: {
     const shown: string[] = [];
     for (const h of hits.slice(0, 60)) {
       if (sections.history.length >= 3) break;
-      if (!isRelevant(h, terms.length, Math.min(0.95, 0.5 * strict), share)) continue;
+      if (!isRelevant(h, h.nTerms, Math.min(0.95, 0.5 * strict), share)) continue;
       if (h.item.who.startsWith('Claude →')) continue; // raw tool calls rarely help
       if (similarity(h.item.text.slice(0, 400), prompt) >= 0.7) continue; // the same question asked before
       const ex = excerpt(h, 320);

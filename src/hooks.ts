@@ -17,7 +17,7 @@ import { recordActivity } from './stats.js';
 import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
-import { buildHandoff, contextSize, costPerReply, saveHandoff, takeHandoff } from './handoff.js';
+import { buildHandoff, coldCacheCost, contextSize, costPerReply, saveHandoff, takeHandoff } from './handoff.js';
 import { autoRecall } from './recall.js';
 import { isCodeProject, refreshGraphSoon, sessionCodeMap } from './graph.js';
 import { scanFacts } from './facts.js';
@@ -129,7 +129,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     case 'user-prompt': {
       const prompt = input.prompt || '';
       appendBuffer(sid, { t: 'prompt', ts: now, text: prompt.slice(0, 2000) });
-      const alert = contextAlert(cfg, sid, cwd, input.transcript_path, now);
+      const alert = [contextAlert(cfg, sid, cwd, input.transcript_path, now), idleAlert(cfg, sid, cwd, input.transcript_path, now)].filter(Boolean).join('\n') || undefined;
       const done = (extra?: HookOutput): HookOutput => (alert || extra ? { ...(alert ? { systemMessage: alert } : {}), ...(extra || {}) } : null);
       const project = projectKey(cwd);
       if (cfg.memory.enabled) {
@@ -405,6 +405,44 @@ function captureFacts(sid: string, transcript: string | undefined, cwd: string, 
   } catch {
     /* best-effort */
   }
+}
+
+/**
+ * User-only notice when the prompt cache has expired on a big session. Cache lifetime is 5 minutes
+ * (1 hour when Claude Code writes the long tier); after that gap the next reply re-writes the whole
+ * context at 1.25-2x the input price instead of reading it at 0.1x. If the user is switching tasks,
+ * /clear plus grug's handoff (saved right here so it is ready) avoids that bill. Never sent to Claude.
+ */
+function idleAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: string, transcript: string | undefined, now: number): string | undefined {
+  if (!cfg.idleAlert.enabled || !transcript) return undefined;
+  const c = contextSize(transcript);
+  if (!c.lastReplyTs || !c.tokens) return undefined;
+  const ttlMs = (c.oneHourCache ? 60 : 5) * 60000;
+  const idle = now - c.lastReplyTs;
+  if (idle <= ttlMs) return undefined;
+  const { cold, warm } = coldCacheCost(c.tokens, c.model, c.oneHourCache);
+  if (cold - warm < cfg.idleAlert.minExtraUsd) return undefined;
+  if (readBuffer(sid).some((e) => e.t === 'idle' && e.since === c.lastReplyTs)) return undefined; // once per gap
+  appendBuffer(sid, { t: 'idle', ts: now, since: c.lastReplyTs });
+  if (cfg.handoff.enabled) {
+    try {
+      const h = buildHandoff(sid, transcript, cwd, cfg.handoff.maxTokens);
+      if (h) saveHandoff(h);
+    } catch {
+      /* best-effort */
+    }
+  }
+  const mins = Math.round(idle / 60000);
+  const when = mins >= 120 ? `${Math.round(mins / 60)} h` : `${mins} min`;
+  recordActivity({ kind: 'idle-alert', msg: `Cache expired after ${when} idle at ${Math.round(c.tokens / 1000)}k tokens (this reply ~${fmtUsdShort(cold)} vs ~${fmtUsdShort(warm)} warm)`, project: path.basename(cwd) });
+  return (
+    `🪨 grugbrain: idle ${when}, so the prompt cache expired: this reply re-writes ~${Math.round(c.tokens / 1000)}k tokens (~${fmtUsdShort(cold)} instead of ~${fmtUsdShort(warm)}). ` +
+    `Switching to something else? Type /clear first: grug hands the work to the fresh session (~1k tokens).`
+  );
+}
+
+function fmtUsdShort(n: number): string {
+  return n >= 10 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`;
 }
 
 /** One-line, user-only notice when the context passes 150k, 300k, 600k... tokens (once per level). */

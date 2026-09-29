@@ -942,6 +942,22 @@ describe('relevance', () => {
     const docs = ['the test passed', 'the test failed', 'the test ran', 'ECONNRESET in the test'].map((d) => d.toLowerCase());
     expect(rank(docs, ['test', 'econnreset'])[0].index).toBe(3);
   });
+
+  it('matches paraphrases through concept groups at reduced credit, direct words still win', async () => {
+    const { alternatives, rank, queryTerms } = await import('../src/relevance.js');
+    expect(alternatives('pictur')).toContain('avatar'); // "pictures" ~ "avatar", despite different stems
+    expect(alternatives('login')).toContain('authenticate');
+    expect(alternatives('login')).not.toContain('login');
+    const docs = ['login sessions expire after thirty minutes', 'authentication settings page'];
+    const terms = queryTerms('why does authentication expire');
+    const plain = rank(docs, terms);
+    const withAlts = rank(docs, terms, undefined, undefined, true);
+    expect(plain[0].index).toBe(1); // direct word only
+    expect(withAlts.find((r) => r.index === 0)!.matched).toBeCloseTo(1.6, 5); // "expire" direct (1.0) + "authentication" via "login" (0.6)
+    expect(withAlts.find((r) => r.index === 1)!.matched).toBeGreaterThanOrEqual(1);
+    // Unknown words get no alternatives, so nothing is invented.
+    expect(alternatives('fibonacci')).toEqual([]);
+  });
 });
 
 describe('history cache + ranking', () => {
@@ -1339,5 +1355,56 @@ describe('incremental fact capture', () => {
     }
     const total = (readBuffer('i3') as any[]).filter((e) => e.t === 'facts').reduce((s, e) => s + e.items.length, 0);
     expect(total).toBeLessThanOrEqual(30);
+  });
+});
+
+// ---------------------------------------------------------------- v2.9 features
+describe('cache-expiry notice', () => {
+  const reply = (id: string, minutesAgo: number, ctx: number, tier: '1h' | '5m') =>
+    JSON.stringify({
+      type: 'assistant',
+      timestamp: new Date(Date.now() - minutesAgo * 60000).toISOString(),
+      message: {
+        id,
+        model: 'claude-opus-5-5',
+        content: [{ type: 'text', text: 'done' }],
+        usage: { input_tokens: 5, cache_read_input_tokens: ctx - 5000, cache_creation_input_tokens: 5000, cache_creation: tier === '1h' ? { ephemeral_1h_input_tokens: 5000 } : { ephemeral_5m_input_tokens: 5000 }, output_tokens: 10 }
+      }
+    });
+  const ask = (sid: string, cwd: string, t: string, prompt = 'now add the refund endpoint to the orders api') => runHook('user-prompt', { session_id: sid, cwd, transcript_path: t, prompt }) as Promise<any>;
+
+  it('warns the user (only) once per idle gap when a big session went cold, and readies a handoff', async () => {
+    const cwd = path.join(tmp, 'idle');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'idle.jsonl');
+    fs.writeFileSync(t, reply('a1', 120, 200000, '1h') + '\n'); // 2 h ago, 1-hour tier: expired
+    await runHook('session-start', { session_id: 'c1', cwd, source: 'startup' });
+    const out = await ask('c1', cwd, t);
+    expect(out.systemMessage).toMatch(/idle 2 h.*cache expired.*200k tokens/);
+    expect(out.systemMessage).toMatch(/\$1\.6\d instead of ~\$0\.\d+/); // 200k x $4 x 2 vs x 0.1
+    expect(out.systemMessage).toContain('/clear');
+    expect(JSON.stringify(out.hookSpecificOutput || {})).not.toMatch(/expired/); // never sent to Claude
+    const { loadHandoff } = await import('../src/handoff.js');
+    expect(loadHandoff(projectKey(cwd))?.text).toContain('now add the refund endpoint');
+    expect((await ask('c1', cwd, t, 'and also update the docs for it'))?.systemMessage).toBeUndefined(); // same gap: once
+    fs.appendFileSync(t, reply('a2', 90, 205000, '1h') + '\n'); // a new, later gap
+    expect((await ask('c1', cwd, t, 'why does the checkout total look wrong'))?.systemMessage).toMatch(/idle 90 min/);
+    expect(readActivity().some((a: any) => a.kind === 'idle-alert')).toBe(true);
+  });
+
+  it('stays quiet while the cache is warm, when the session is small, or when it is switched off', async () => {
+    const cwd = path.join(tmp, 'idle2');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'idle2.jsonl');
+    fs.writeFileSync(t, reply('b1', 30, 200000, '1h') + '\n'); // 30 min on the 1-hour tier: still warm
+    expect((await ask('c2', cwd, t))?.systemMessage).toBeUndefined();
+    fs.writeFileSync(t, reply('b2', 10, 200000, '5m') + '\n'); // 10 min on the 5-minute tier: expired
+    expect((await ask('c3', cwd, t))?.systemMessage).toMatch(/cache expired/);
+    fs.writeFileSync(t, reply('b3', 600, 20000, '1h') + '\n'); // long idle but tiny context: not worth a notice
+    expect((await ask('c4', cwd, t))?.systemMessage).toBeUndefined();
+    const { setConfigValue } = await import('../src/config.js');
+    setConfigValue('idleAlert.enabled', 'false');
+    fs.writeFileSync(t, reply('b4', 600, 200000, '1h') + '\n');
+    expect((await ask('c5', cwd, t))?.systemMessage).toBeUndefined();
   });
 });

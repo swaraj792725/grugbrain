@@ -54,6 +54,7 @@ export type BufferEvent =
   | { t: 'skip'; ts: number; key: string }
   | { t: 'compact'; ts: number }
   | { t: 'alert'; ts: number; level: number }
+  | { t: 'idle'; ts: number; since: number }
   | { t: 'facts'; ts: number; items: Array<{ kind: string; text: string; ts: number }>; offset?: number; failed?: string[] }
   | { t: 'factscan'; ts: number; offset: number; failed: string[] }
   | { t: 'recall'; ts: number; keys: string[]; tokens: number; files?: string[] }

@@ -11,7 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { paths, readJson, writeJsonAtomic } from './config.js';
 import { projectKey, readBuffer } from './memory/store.js';
-import { estimateTokens, priceFor, CACHE_READ_MULT } from './tokens.js';
+import { estimateTokens, priceFor, CACHE_READ_MULT, CACHE_WRITE_MULT, CACHE_WRITE_1H_MULT } from './tokens.js';
 
 export interface Handoff {
   ts: number;
@@ -99,8 +99,10 @@ export function transcriptEntriesFrom(p: string | undefined, offset: number, max
 }
 
 /** Tokens in context for the latest request (what the next reply will re-read) + its model. */
-export function contextSize(transcriptPath?: string): { tokens: number; model: string } {
+export function contextSize(transcriptPath?: string): { tokens: number; model: string; lastReplyTs: number; oneHourCache: boolean } {
   const es = transcriptEntries(transcriptPath, 2 * 1024 * 1024);
+  // Did any recent reply write the 1-hour cache tier? Then an idle gap under an hour keeps the cache warm.
+  const oneHourCache = es.some((e) => e?.type === 'assistant' && (e.message?.usage?.cache_creation?.ephemeral_1h_input_tokens || 0) > 0);
   let pending = 0; // tool results / prompts added after the last reply (not in any usage yet)
   for (let i = es.length - 1; i >= 0; i--) {
     const e = es[i];
@@ -110,17 +112,25 @@ export function contextSize(transcriptPath?: string): { tokens: number; model: s
       const u = m.usage;
       return {
         tokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0) + pending,
-        model: m.model || ''
+        model: m.model || '',
+        lastReplyTs: Date.parse(e.timestamp) || 0,
+        oneHourCache
       };
     }
     if (e?.type === 'user' && m?.content) pending += estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
   }
-  return { tokens: pending, model: '' };
+  return { tokens: pending, model: '', lastReplyTs: 0, oneHourCache };
 }
 
 /** Rough $ per reply at this context size (mostly cache reads) — shown to the user only. */
 export function costPerReply(tokens: number, model: string): number {
   return (tokens * priceFor(model).input * CACHE_READ_MULT) / 1e6;
+}
+
+/** What an idle gap costs: the reply after the cache expired re-writes the whole context instead of reading it. */
+export function coldCacheCost(tokens: number, model: string, oneHour: boolean): { cold: number; warm: number } {
+  const p = priceFor(model).input;
+  return { cold: (tokens * p * (oneHour ? CACHE_WRITE_1H_MULT : CACHE_WRITE_MULT)) / 1e6, warm: (tokens * p * CACHE_READ_MULT) / 1e6 };
 }
 
 function oneLine(s: string, n: number): string {
