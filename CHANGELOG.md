@@ -2,6 +2,11 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.1.1
+
+- **`grug` command now lands on your PATH** after install (it only ran through `npx` before). The installer links `grug`/`grugbrain` into a writable PATH folder (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/bin`) or adds `~/.grug/bin` to `~/.zshrc`/`~/.bashrc` with a marked line. Foreign files are never overwritten; `grug uninstall` removes it all.
+- `grug doctor` shows the command status and whether the upstream (e.g. a chained gateway) is reachable.
+
 ## 2.1.0
 
 - **Test/build output summarizer**: jest, vitest, mocha, pytest, go test, cargo, TAP, rspec, phpunit and tsc output collapses to every failure (assertion, diff, code frame) plus the summary; passing noise is dropped. Runs at the source (PostToolUse) and in the proxy.

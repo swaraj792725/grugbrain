@@ -260,6 +260,138 @@ WantedBy=default.target
   return { target: 'service', ok: false, message: 'No service manager support on this OS; daemon starts on demand from hooks.' };
 }
 
+// ---------- `grug` command on PATH ----------
+
+const RC_MARK = '# added by grugbrain';
+const binDir = () => path.join(paths.home(), 'bin');
+
+function pathDirs(): string[] {
+  return (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+}
+
+function writable(dir: string): boolean {
+  try {
+    fs.accessSync(dir, fs.constants.W_OK);
+    return fs.statSync(dir).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function rcFiles(): string[] {
+  const home = userHome();
+  const shell = path.basename(process.env.SHELL || (process.platform === 'darwin' ? 'zsh' : 'bash'));
+  const files: string[] = [];
+  if (shell === 'zsh' || fs.existsSync(path.join(home, '.zshrc'))) files.push(path.join(home, '.zshrc'));
+  if (shell === 'bash' || fs.existsSync(path.join(home, '.bashrc'))) files.push(path.join(home, '.bashrc'));
+  if (process.platform === 'darwin' && fs.existsSync(path.join(home, '.bash_profile'))) files.push(path.join(home, '.bash_profile'));
+  return [...new Set(files)];
+}
+
+/** Put `grug` / `grugbrain` on PATH: symlink into a writable PATH dir, else add ~/.grug/bin to shell rc files. */
+export function installCommand(): Step {
+  if (process.platform === 'win32') return { target: 'command', ok: false, message: 'On Windows run: node %USERPROFILE%\\.grug\\app\\cli.js <command>' };
+  ensureDir(binDir());
+  const names = ['grug', 'grugbrain'];
+  for (const n of names) {
+    const f = path.join(binDir(), n);
+    fs.writeFileSync(f, `#!/bin/sh\n# grugbrain launcher\nexec ${q(process.execPath)} ${q(installedCli())} "$@"\n`);
+    fs.chmodSync(f, 0o755);
+  }
+  const home = userHome();
+  const preferred = ['/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, 'bin')];
+  const onPath = pathDirs();
+  for (const dir of preferred) {
+    if (!onPath.includes(dir) || !writable(dir)) continue;
+    let linked = 0;
+    for (const n of names) {
+      const link = path.join(dir, n);
+      const target = path.join(binDir(), n);
+      try {
+        const cur = fs.lstatSync(link);
+        if (cur.isSymbolicLink() && fs.readlinkSync(link) === target) {
+          linked++;
+          continue;
+        }
+        continue; // someone else's file: never overwrite
+      } catch {
+        /* free */
+      }
+      fs.symlinkSync(target, link);
+      linked++;
+    }
+    if (linked) return { target: 'command', ok: true, message: `\`grug\` command linked in ${dir}` };
+  }
+  // Fallback: add ~/.grug/bin to PATH in shell startup files.
+  const line = `export PATH="${binDir()}:$PATH" ${RC_MARK}`;
+  const touched: string[] = [];
+  for (const rc of rcFiles()) {
+    let text = '';
+    try {
+      text = fs.readFileSync(rc, 'utf8');
+    } catch {
+      /* new file */
+    }
+    if (text.includes(RC_MARK)) {
+      touched.push(rc);
+      continue;
+    }
+    if (text) backupFile(rc);
+    fs.appendFileSync(rc, `${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`);
+    touched.push(rc);
+  }
+  return {
+    target: 'command',
+    ok: touched.length > 0,
+    message: touched.length
+      ? `Added ${binDir()} to PATH in ${touched.map((f) => path.basename(f)).join(', ')}. Open a new terminal (or run: source ${touched[0]})`
+      : `Run grug with: ${binDir()}/grug`
+  };
+}
+
+function uninstallCommand(): void {
+  const home = userHome();
+  for (const dir of ['/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, 'bin')]) {
+    for (const n of ['grug', 'grugbrain']) {
+      const link = path.join(dir, n);
+      try {
+        if (fs.lstatSync(link).isSymbolicLink() && fs.readlinkSync(link) === path.join(binDir(), n)) fs.unlinkSync(link);
+      } catch {
+        /* not there */
+      }
+    }
+  }
+  for (const rc of [path.join(home, '.zshrc'), path.join(home, '.bashrc'), path.join(home, '.bash_profile')]) {
+    try {
+      const text = fs.readFileSync(rc, 'utf8');
+      if (!text.includes(RC_MARK)) continue;
+      fs.writeFileSync(rc, text.split('\n').filter((l) => !l.includes(RC_MARK)).join('\n'));
+    } catch {
+      /* no file */
+    }
+  }
+}
+
+/** Is a `grug` launcher reachable on PATH (or queued via a shell rc file)? */
+export function commandStatus(): 'on-path' | 'rc' | 'missing' {
+  for (const dir of pathDirs()) {
+    try {
+      fs.accessSync(path.join(dir, 'grug'), fs.constants.X_OK);
+      return 'on-path';
+    } catch {
+      /* next */
+    }
+  }
+  for (const rc of rcFiles()) {
+    try {
+      if (fs.readFileSync(rc, 'utf8').includes(RC_MARK)) return 'rc';
+    } catch {
+      /* next */
+    }
+  }
+  return 'missing';
+}
+
 export function install(opts: InstallOptions = {}): Step[] {
   const o = { code: true, desktop: true, proxy: true, service: true, ...opts };
   ensureDir(paths.home());
@@ -270,6 +402,7 @@ export function install(opts: InstallOptions = {}): Step[] {
   if (o.code) steps.push(...installClaudeCode(o.proxy));
   if (o.desktop) steps.push(installDesktop());
   if (o.service) steps.push(installService());
+  steps.push(installCommand());
   const state = loadState();
   state.installedAt = new Date().toISOString();
   state.node = process.execPath;
@@ -312,6 +445,8 @@ export function uninstall(purge = false): Step[] {
     }
   }
   steps.push({ target: 'claude-code-mcp', ok: true, message: 'MCP server removed' });
+  uninstallCommand();
+  steps.push({ target: 'command', ok: true, message: '`grug` command removed' });
 
   const desk = claudeDesktopConfigPath();
   if (fs.existsSync(desk)) {
@@ -358,6 +493,7 @@ export interface Health {
   desktopMcp: boolean;
   codeMcp: boolean;
   service: string;
+  command: 'on-path' | 'rc' | 'missing';
   settingsPath: string;
   desktopPath: string;
 }
@@ -378,6 +514,7 @@ export function health(): Health {
     desktopMcp: !!(desk.ok && desk.value?.mcpServers?.grugbrain),
     codeMcp: !!(user.ok && user.value?.mcpServers?.grugbrain),
     service: state.service || 'none',
+    command: commandStatus(),
     settingsPath: claudeCodeSettingsPath(),
     desktopPath: claudeDesktopConfigPath()
   };

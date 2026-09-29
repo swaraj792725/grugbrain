@@ -607,3 +607,35 @@ describe('versions', () => {
     expect(compareVersions('2.1.0', '2.10.0')).toBeLessThan(0);
   });
 });
+
+describe('grug command on PATH', () => {
+  it('links into a writable PATH dir and removes it on uninstall', async () => {
+    const { installCommand, commandStatus } = await import('../src/install.js');
+    const local = path.join(tmp, '.local', 'bin');
+    fs.mkdirSync(local, { recursive: true });
+    process.env.PATH = `${local}:/usr/bin:/bin`;
+    const step = installCommand();
+    expect(step.ok).toBe(true);
+    expect(fs.lstatSync(path.join(local, 'grug')).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(paths.home(), 'bin', 'grug'), 'utf8')).toContain('cli.js" "$@"');
+    expect(commandStatus()).toBe('on-path');
+    uninstall();
+    expect(fs.existsSync(path.join(local, 'grug'))).toBe(false);
+  });
+
+  it('falls back to a marked line in the shell rc file, never overwriting foreign files', async () => {
+    const { installCommand, commandStatus } = await import('../src/install.js');
+    process.env.SHELL = '/bin/zsh';
+    fs.writeFileSync(path.join(tmp, '.zshrc'), 'alias ll="ls -l"\n');
+    const step = installCommand();
+    expect(step.ok).toBe(true);
+    const rc = fs.readFileSync(path.join(tmp, '.zshrc'), 'utf8');
+    expect(rc).toContain('alias ll="ls -l"');
+    expect(rc).toContain('.grug/bin:$PATH" # added by grugbrain');
+    installCommand(); // idempotent
+    expect(fs.readFileSync(path.join(tmp, '.zshrc'), 'utf8').split('added by grugbrain').length).toBe(2);
+    expect(commandStatus()).toBe('rc');
+    uninstall();
+    expect(fs.readFileSync(path.join(tmp, '.zshrc'), 'utf8')).toBe('alias ll="ls -l"\n');
+  });
+});
