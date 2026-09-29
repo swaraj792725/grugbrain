@@ -7,7 +7,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-export const VERSION = '2.0.0';
+declare const __GRUG_VERSION__: string | undefined;
+/** Injected from package.json at build time (see tsup.config.ts). */
+export const VERSION: string = typeof __GRUG_VERSION__ !== 'undefined' ? __GRUG_VERSION__ : '0.0.0-dev';
 
 /** $HOME first (honoured everywhere, including worker threads), then the OS answer. */
 export function userHome(): string {
@@ -52,6 +54,19 @@ export interface GrugConfig {
     /** Full-file Read calls on files bigger than this (bytes) are redirected to a ranged read. */
     maxBytes: number;
   };
+  /** Skip re-reading a file range that is unchanged and still in context (asked once; a repeat is allowed). */
+  rereadGuard: {
+    enabled: boolean;
+    /** Only skip when the earlier read happened within this many minutes. */
+    windowMinutes: number;
+  };
+  /** Collapse test-runner / compiler output to failures + summary. */
+  testSummary: {
+    enabled: boolean;
+    minChars: number;
+  };
+  /** Check GitHub releases for a newer grugbrain (once a day, notify only). */
+  updateCheck: boolean;
   memory: {
     enabled: boolean;
     /** Token budget for the brief injected at session start. */
@@ -85,6 +100,17 @@ export function defaultConfig(): GrugConfig {
       enabled: true,
       maxBytes: 60000
     },
+    rereadGuard: {
+      // Claude Code >= 2.1 already answers unchanged re-reads with a short "file unchanged" stub,
+      // so this is off by default; useful for older versions and other clients.
+      enabled: false,
+      windowMinutes: 45
+    },
+    testSummary: {
+      enabled: true,
+      minChars: 3000
+    },
+    updateCheck: true,
     memory: {
       enabled: true,
       briefTokens: 700,

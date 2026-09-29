@@ -9,6 +9,7 @@
 
 import { createHash } from 'node:crypto';
 import { trimToolOutput, TrimOptions } from '../compress/trim.js';
+import { summarizeTestOutput } from '../compress/testsum.js';
 import { estimateTokens } from '../tokens.js';
 
 export interface TransformOptions {
@@ -16,6 +17,8 @@ export interface TransformOptions {
   trimToolResults: boolean;
   dedupeReads: boolean;
   trim: TrimOptions;
+  /** Collapse Bash test/build output to failures + summary (min chars). 0 = off. */
+  testSummaryMinChars?: number;
 }
 
 export interface TransformReport {
@@ -62,6 +65,13 @@ export function transformRequest(body: any, opts: TransformOptions): TransformRe
   };
   if (!body || !Array.isArray(body.messages)) return report;
 
+  // Which tool produced each tool_result (so test summarizing only touches Bash output).
+  const toolNames = new Map<string, string>();
+  for (const m of body.messages) {
+    if (m.role === 'assistant' && Array.isArray(m.content))
+      for (const b of m.content) if (b && b.type === 'tool_use' && b.id) toolNames.set(b.id, b.name);
+  }
+
   // 1+2. Trim and dedupe tool results in user turns.
   const seen = new Map<string, number>();
   body.messages.forEach((msg: any, mi: number) => {
@@ -83,8 +93,18 @@ export function transformRequest(body: any, opts: TransformOptions): TransformRe
           }
           if (first === undefined) seen.set(h, mi);
         }
+        let current = original;
+        if (opts.testSummaryMinChars && toolNames.get(block.tool_use_id) === 'Bash') {
+          const t = summarizeTestOutput(current, opts.testSummaryMinChars);
+          if (t.changed) {
+            set(t.text);
+            report.trimmedResults++;
+            report.trimmedChars += current.length - t.text.length;
+            current = t.text;
+          }
+        }
         if (opts.trimToolResults) {
-          const r = trimToolOutput(original, opts.trim);
+          const r = trimToolOutput(current, opts.trim);
           if (r.changed) {
             set(r.text);
             report.trimmedResults++;

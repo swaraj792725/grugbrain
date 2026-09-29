@@ -10,10 +10,12 @@
 import * as http from 'node:http';
 import * as https from 'node:https';
 import { URL } from 'node:url';
+import * as zlib from 'node:zlib';
 import { GrugConfig, VERSION } from '../config.js';
 import { recordActivity, recordRequest } from '../stats.js';
 import { Usage } from '../tokens.js';
 import { guessProject, transformRequest, TransformReport } from './transform.js';
+import { CacheWatch } from './cachewatch.js';
 
 const HOP_BY_HOP = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
@@ -31,12 +33,23 @@ export function startProxy(cfg: GrugConfig, port = cfg.port, host = '127.0.0.1')
   const client = upstream.protocol === 'http:' ? http : https;
   const started = Date.now();
   let served = 0;
+  const watch = new CacheWatch();
 
   const server = http.createServer((req, res) => {
     if (req.url === '/__grug/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, name: 'grugbrain', version: VERSION, uptimeMs: Date.now() - started, served }));
       return;
+    }
+    // Route prefixes (used by `grug bench`): /__grug/raw/... = untouched pass-through,
+    // /__grug/tag/<name>/... = normal optimization, stats tagged so dashboards can exclude them.
+    let raw = false;
+    let tag: string | undefined;
+    const m = (req.url || '').match(/^\/__grug\/(raw|tag\/([\w-]+))(\/.*)?$/);
+    if (m) {
+      raw = m[1] === 'raw';
+      tag = raw ? 'raw' : m[2];
+      req.url = m[3] || '/';
     }
     const chunks: Buffer[] = [];
     req.on('data', (c) => chunks.push(c));
@@ -47,10 +60,19 @@ export function startProxy(cfg: GrugConfig, port = cfg.port, host = '127.0.0.1')
       let report: TransformReport | null = null;
       let model = '';
       let project: string | undefined;
+      let sentJson: any = null;
+      const encoding = String(req.headers['content-encoding'] || '').toLowerCase();
       const isMessages = req.method === 'POST' && /^\/v1\/messages(\?|$)/.test(req.url || '');
-      if (isMessages && cfg.proxy.enabled) {
+      if (isMessages) {
         try {
-          const json = JSON.parse(original.toString('utf8'));
+          // Claude Code may gzip request bodies; decode to inspect/transform.
+          const plain =
+            encoding === 'gzip' ? zlib.gunzipSync(original) : encoding === 'br' ? zlib.brotliDecompressSync(original) : encoding === 'deflate' ? zlib.inflateSync(original) : original;
+          const json = JSON.parse(plain.toString('utf8'));
+          sentJson = json;
+          model = json.model || '';
+          project = guessProject(json);
+          if (!cfg.proxy.enabled || raw) throw new Error('passthrough');
           model = json.model || '';
           project = guessProject(json);
           report = transformRequest(json, {
@@ -61,7 +83,8 @@ export function startProxy(cfg: GrugConfig, port = cfg.port, host = '127.0.0.1')
               thresholdChars: cfg.proxy.trimThresholdChars,
               keepHeadChars: cfg.proxy.trimKeepHeadChars,
               keepTailChars: cfg.proxy.trimKeepTailChars
-            }
+            },
+            testSummaryMinChars: cfg.testSummary.enabled ? cfg.testSummary.minChars : 0
           });
           if (report.changed) body = Buffer.from(JSON.stringify(json), 'utf8');
         } catch {
@@ -74,6 +97,8 @@ export function startProxy(cfg: GrugConfig, port = cfg.port, host = '127.0.0.1')
       function forward(payload: Buffer, transformed: boolean) {
         const headers: http.OutgoingHttpHeaders = {};
         for (const [k, v] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(k.toLowerCase())) headers[k] = v;
+        // A transformed body is re-serialized as plain JSON.
+        if (transformed) delete headers['content-encoding'];
         headers['host'] = upstream.host;
         headers['accept-encoding'] = 'identity';
         if (payload.length || req.method === 'POST') headers['content-length'] = String(payload.length);
@@ -137,9 +162,25 @@ export function startProxy(cfg: GrugConfig, port = cfg.port, host = '127.0.0.1')
                 trimmedTokens: transformed && report ? report.trimmedTokens : 0,
                 cacheBreakpointsAdded: transformed && report ? report.breakpointsAdded : 0,
                 fallback: !transformed && report?.changed ? true : undefined,
-                project
+                project,
+                tag
               });
-              if (transformed && report && status < 400) {
+              if (sentJson && status < 400 && !tag) {
+                try {
+                  const miss = watch.observe(sentJson, usage);
+                  if (miss) {
+                    recordActivity({
+                      kind: 'cache-miss',
+                      msg: `Cache miss (${miss.culprit}): ${miss.detail}`.slice(0, 400),
+                      tokens: -miss.tokens,
+                      project
+                    });
+                  }
+                } catch {
+                  /* diagnostics only */
+                }
+              }
+              if (transformed && report && status < 400 && !tag) {
                 if (report.trimmedResults)
                   recordActivity({ kind: 'trim', msg: `Trimmed ${report.trimmedResults} long tool output(s)`, tokens: report.trimmedTokens, project });
                 if (report.dedupedResults)

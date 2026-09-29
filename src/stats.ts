@@ -20,6 +20,8 @@ export interface RequestEvent {
   cacheBreakpointsAdded: number;
   fallback?: boolean;
   project?: string;
+  /** Set for synthetic traffic (e.g. `grug bench`); excluded from dashboard totals. */
+  tag?: string;
 }
 
 export type ActivityKind =
@@ -27,6 +29,11 @@ export type ActivityKind =
   | 'dedupe'
   | 'cache'
   | 'read-guard'
+  | 'reread'
+  | 'testsum'
+  | 'cache-miss'
+  | 'bench'
+  | 'update'
   | 'brief'
   | 'recall'
   | 'remember'
@@ -43,6 +50,7 @@ export interface Activity {
   /** Estimated tokens saved (positive) or spent (negative, e.g. a memory brief). */
   tokens?: number;
   project?: string;
+  tag?: string;
 }
 
 function appendLine(file: string, obj: unknown): void {
@@ -64,7 +72,8 @@ export function recordRequest(ev: RequestEvent): void {
 }
 
 export function recordActivity(a: Omit<Activity, 'ts'> & { ts?: number }): void {
-  appendLine(paths.activity(), { ts: Date.now(), ...a });
+  const tag = process.env.GRUG_TAG;
+  appendLine(paths.activity(), { ts: Date.now(), ...a, ...(tag && a.kind !== 'bench' ? { tag } : {}) });
 }
 
 function readLines<T>(file: string, limit = 50000): T[] {
@@ -118,8 +127,8 @@ export interface Summary {
 }
 
 export function summarize(sinceMs = 0): Summary {
-  const reqs = readRequests().filter((r) => r.ts >= sinceMs);
-  const acts = readActivity(50000).filter((a) => a.ts >= sinceMs);
+  const reqs = readRequests().filter((r) => r.ts >= sinceMs && !r.tag);
+  const acts = readActivity(50000).filter((a) => a.ts >= sinceMs && !a.tag);
   const s: Summary = {
     requests: reqs.length,
     inputTokens: 0,

@@ -9,9 +9,10 @@ import { spawn } from 'node:child_process';
 import { loadConfig, paths } from './config.js';
 import { terseStyle } from './compress/caveman.js';
 import { trimToolOutput } from './compress/trim.js';
+import { summarizeTestOutput } from './compress/testsum.js';
 import { buildBrief, recall } from './memory/brief.js';
 import { withMemoryLock } from './memory/maintain.js';
-import { addNote, appendBuffer, loadMemory, projectKey, readBuffer, saveMemory } from './memory/store.js';
+import { addNote, appendBuffer, BufferEvent, loadMemory, projectKey, readBuffer, saveMemory } from './memory/store.js';
 import { recordActivity } from './stats.js';
 import { estimateTokens } from './tokens.js';
 
@@ -27,6 +28,7 @@ export interface HookInput {
   tool_response?: any;
   tool_output?: any;
   reason?: string;
+  agent_id?: string;
 }
 
 type HookOutput = Record<string, any> | null;
@@ -34,6 +36,16 @@ type HookOutput = Record<string, any> | null;
 const TEXT_READ_SKIP = /\.(png|jpe?g|gif|webp|pdf|ipynb|svg|ico|bmp|tiff?)$/i;
 
 export async function runHook(event: string, input: HookInput): Promise<HookOutput> {
+  // A/B switch used by `grug bench` (and handy for debugging): hooks become no-ops.
+  if (process.env.GRUG_DISABLE === '1') return null;
+  if (process.env.GRUG_DEBUG === '1') {
+    try {
+      fs.mkdirSync(paths.logs(), { recursive: true });
+      fs.appendFileSync(path.join(paths.logs(), 'hook-input.jsonl'), JSON.stringify({ event, input }).slice(0, 20000) + '\n');
+    } catch {
+      /* ignore */
+    }
+  }
   const cfg = loadConfig();
   const sid = input.session_id || 'unknown';
   const cwd = input.cwd || process.cwd();
@@ -42,6 +54,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
   switch (event) {
     case 'session-start': {
       appendBuffer(sid, { t: 'start', ts: now, cwd, source: input.source });
+      // After compaction/resume/clear, earlier file reads are no longer in context.
+      if (input.source && input.source !== 'startup') appendBuffer(sid, { t: 'compact', ts: now });
       ensureDaemon();
       const parts: string[] = [];
       const style = terseStyle(cfg.terse);
@@ -85,16 +99,58 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     }
 
     case 'pre-tool': {
-      if (input.tool_name !== 'Read' || !cfg.readGuard.enabled) return null;
+      if (input.tool_name !== 'Read') return null;
       const ti = input.tool_input || {};
       const file: string | undefined = ti.file_path;
-      if (!file || ti.offset !== undefined || ti.limit !== undefined || TEXT_READ_SKIP.test(file)) return null;
-      let size = 0;
+      if (!file || TEXT_READ_SKIP.test(file)) return null;
+      let st: fs.Stats;
       try {
-        size = fs.statSync(file).size;
+        st = fs.statSync(file);
       } catch {
         return null;
       }
+
+      // Re-read guard: same file, same range, unchanged, still in context -> skip once.
+      if (cfg.rereadGuard.enabled) {
+        const key = readKey(file, ti, input.agent_id);
+        const events = readBuffer(sid);
+        let lastRead: Extract<BufferEvent, { t: 'read' }> | undefined;
+        let invalidated = false;
+        let skipped = false;
+        for (const ev of events) {
+          if (ev.t === 'compact') {
+            lastRead = undefined;
+            invalidated = false;
+            skipped = false;
+          } else if (ev.t === 'read' && ev.key === key) {
+            lastRead = ev;
+            invalidated = false;
+            skipped = false;
+          } else if (ev.t === 'file' && ev.op === 'edit' && path.resolve(ev.path) === path.resolve(file)) invalidated = true;
+          else if (ev.t === 'skip' && ev.key === key) skipped = true;
+        }
+        const fresh = lastRead && now - lastRead.ts < cfg.rereadGuard.windowMinutes * 60000;
+        if (lastRead && fresh && !invalidated && !skipped && lastRead.mtime === st.mtimeMs && lastRead.size === st.size) {
+          appendBuffer(sid, { t: 'skip', ts: now, key });
+          const est = estimateTokens('x'.repeat(Math.min(st.size, 200_000)));
+          recordActivity({ kind: 'reread', msg: `Skipped unchanged re-read of ${path.basename(file)}`, tokens: est, project: path.basename(cwd) });
+          const mins = Math.max(1, Math.round((now - lastRead.ts) / 60000));
+          return {
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny',
+              permissionDecisionReason:
+                `grugbrain: ${path.basename(file)} is unchanged since you read ${ti.offset || ti.limit ? 'this same range' : 'it'} ${mins} min ago, ` +
+                `so its content is already in your context above. Use that. ` +
+                `If it is no longer visible to you (e.g. context was cleared), repeat the same Read and it will be allowed.`
+            }
+          };
+        }
+      }
+
+      // Read guard: huge full-file reads -> find first, then read a range.
+      if (!cfg.readGuard.enabled || ti.offset !== undefined || ti.limit !== undefined) return null;
+      const size = st.size;
       if (size <= cfg.readGuard.maxBytes) return null;
       // Claude Code reads up to 2000 lines by default; estimate what that would have cost.
       let wouldRead = size;
@@ -126,22 +182,52 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const tool = input.tool_name || '';
       if (ti.file_path && /^(Read|Edit|Write|MultiEdit|NotebookEdit)$/.test(tool)) {
         appendBuffer(sid, { t: 'file', ts: now, path: ti.file_path, op: tool === 'Read' ? 'read' : 'edit' });
+        if (tool === 'Read') {
+          try {
+            const st = fs.statSync(ti.file_path);
+            appendBuffer(sid, { t: 'read', ts: now, path: ti.file_path, key: readKey(ti.file_path, ti, input.agent_id), mtime: st.mtimeMs, size: st.size });
+          } catch {
+            /* file vanished */
+          }
+        }
       } else if (tool === 'Bash' && ti.command) {
         appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
       }
-      // Trim long plain-text output at the source (Claude Code >= 2.1.121 honours updatedToolOutput).
-      if (cfg.proxy.trimToolResults && (tool === 'Bash' || tool === 'Grep') && typeof input.tool_output === 'string') {
-        const r = trimToolOutput(input.tool_output, {
+      if (tool !== 'Bash' && tool !== 'Grep') return null;
+      const original = toolOutputText(input);
+      if (original === null) return null;
+      let text = original;
+      let kind: 'testsum' | 'trim' | null = null;
+      if (cfg.testSummary.enabled && tool === 'Bash') {
+        const s = summarizeTestOutput(text, cfg.testSummary.minChars);
+        if (s.changed) {
+          text = s.text;
+          kind = 'testsum';
+        }
+      }
+      if (cfg.proxy.trimToolResults) {
+        const r = trimToolOutput(text, {
           thresholdChars: cfg.proxy.trimThresholdChars,
           keepHeadChars: cfg.proxy.trimKeepHeadChars,
           keepTailChars: cfg.proxy.trimKeepTailChars
         });
-        if (r.changed && r.removedChars > 200) {
-          recordActivity({ kind: 'trim', msg: `Trimmed ${tool} output at source`, tokens: Math.round(r.removedChars / 3.6), project: path.basename(cwd) });
-          return { hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: r.text } };
+        if (r.changed) {
+          text = r.text;
+          kind = kind || 'trim';
         }
       }
-      return null;
+      const removed = original.length - text.length;
+      if (!kind || removed < 200) return null;
+      recordActivity({
+        kind,
+        msg: kind === 'testsum' ? `Summarized test/build output (${Math.round((removed / original.length) * 100)}% smaller)` : `Trimmed ${tool} output at source`,
+        tokens: Math.round(removed / 3.6),
+        project: path.basename(cwd)
+      });
+      // Reply in the same shape the tool produced (Bash gives {stdout, stderr, ...}).
+      const r = input.tool_response;
+      const updated = r && typeof r === 'object' && typeof r.stdout === 'string' ? { ...r, stdout: text, stderr: '' } : text;
+      return { hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: updated } };
     }
 
     case 'stop': {
@@ -155,10 +241,24 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const text = lastAssistantText(input.transcript_path);
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
       if (event === 'session-end') appendBuffer(sid, { t: 'end', ts: now, reason: input.reason });
+      else appendBuffer(sid, { t: 'compact', ts: now });
       spawnDetached(['maintain']);
       return null;
     }
   }
+  return null;
+}
+
+function readKey(file: string, ti: any, agent?: string): string {
+  return `${agent || 'main'}|${path.resolve(file)}|${ti.offset ?? ''}|${ti.limit ?? ''}|${ti.pages ?? ''}`;
+}
+
+/** Plain-text tool output from a PostToolUse payload (string, or Bash's {stdout, stderr}). */
+export function toolOutputText(input: HookInput): string | null {
+  if (typeof input.tool_output === 'string') return input.tool_output;
+  const r = input.tool_response;
+  if (typeof r === 'string') return r;
+  if (r && typeof r === 'object' && typeof r.stdout === 'string') return r.stdout + (r.stderr ? `\n${r.stderr}` : '');
   return null;
 }
 

@@ -1,0 +1,64 @@
+name: Release
+
+# Versions live on GitHub. Bump "version" in package.json (npm run release:patch / release:minor),
+# merge to main, and this workflow tags vX.Y.Z, builds, attaches the installable tarball to a
+# GitHub Release and (if the NPM_TOKEN secret exists) publishes to npm.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+      - name: Read version
+        id: v
+        run: |
+          V=$(node -p "require('./package.json').version")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$V" >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Build and test
+        if: steps.v.outputs.exists == 'false'
+        run: |
+          npm ci
+          npm run typecheck
+          npm test
+          npm run build
+          npm pack
+      - name: Tag and create GitHub Release
+        if: steps.v.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ steps.v.outputs.version }}
+        run: |
+          NOTES=$(awk -v v="## $V" 'index($0,v)==1{f=1;next} /^## /{if(f)exit} f' CHANGELOG.md)
+          [ -z "$NOTES" ] && NOTES="Release v$V"
+          gh release create "v$V" "grugbrain-$V.tgz" --title "grugbrain v$V" --notes "$NOTES
+          
+          **Install this version:**
+          \`\`\`
+          npx --yes --package=https://github.com/${{ github.repository }}/releases/download/v$V/grugbrain-$V.tgz grugbrain install
+          \`\`\`"
+      - name: Publish to npm
+        if: steps.v.outputs.exists == 'false' && env.NPM_TOKEN != ''
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -36,13 +36,24 @@ export function priceFor(model: string | undefined): ModelPrice {
 }
 
 export const CACHE_READ_MULT = 0.1;
-export const CACHE_WRITE_MULT = 1.25;
+export const CACHE_WRITE_MULT = 1.25; // 5-minute TTL
+export const CACHE_WRITE_1H_MULT = 2; // 1-hour TTL
 
 export interface Usage {
   input_tokens?: number;
   output_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
+  cache_creation?: { ephemeral_5m_input_tokens?: number; ephemeral_1h_input_tokens?: number };
+}
+
+/** Cache-write cost multiplier weighted by TTL mix (1h writes cost 2x, 5m writes 1.25x). */
+export function cacheWriteMult(u: Usage): number {
+  const total = u.cache_creation_input_tokens || 0;
+  const h1 = u.cache_creation?.ephemeral_1h_input_tokens || 0;
+  if (!total || !h1) return CACHE_WRITE_MULT;
+  const m5 = Math.max(0, total - h1);
+  return (h1 * CACHE_WRITE_1H_MULT + m5 * CACHE_WRITE_MULT) / total;
 }
 
 /** Actual $ cost of a request. */
@@ -50,7 +61,7 @@ export function costOf(model: string | undefined, u: Usage): number {
   const p = priceFor(model);
   const inp = (u.input_tokens || 0) * p.input;
   const read = (u.cache_read_input_tokens || 0) * p.input * CACHE_READ_MULT;
-  const write = (u.cache_creation_input_tokens || 0) * p.input * CACHE_WRITE_MULT;
+  const write = (u.cache_creation_input_tokens || 0) * p.input * cacheWriteMult(u);
   const out = (u.output_tokens || 0) * p.output;
   return (inp + read + write + out) / 1e6;
 }

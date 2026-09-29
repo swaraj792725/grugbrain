@@ -10,6 +10,9 @@ import { loadMemory, projectName, score } from '../memory/store.js';
 import { proxyHealth } from '../proxy/server.js';
 import { readActivity, summarize, Summary } from '../stats.js';
 import { fmtTokens, fmtUsd, priceFor } from '../tokens.js';
+import { cachedUpdate } from '../update.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const useColor = !process.env.NO_COLOR && process.stdout.isTTY;
 const esc = (code: string) => (s: string | number) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : String(s));
@@ -61,7 +64,8 @@ function header(st: State, width: number): string[] {
   const cfg = loadConfig();
   const ok = (b: boolean) => (b ? green('✓') : red('✗'));
   const proxy = st.proxyUp === null ? dim('…') : st.proxyUp ? green(`● up :${cfg.port}`) : red('● down');
-  const line1 = `${orange(bold(' 🪨 grugbrain'))} ${dim('v' + VERSION)}   proxy ${proxy}  hooks ${ok(h.hooks)}  code-mcp ${ok(h.codeMcp)}  desktop ${ok(h.desktopMcp)}  terse ${cyan(cfg.terse)}`;
+  const upd = cachedUpdate();
+  const line1 = `${orange(bold(' 🪨 grugbrain'))} ${dim('v' + VERSION)}${upd?.newer ? ' ' + yellow(`⬆ ${upd.latest}`) : ''}   proxy ${proxy}  hooks ${ok(h.hooks)}  code-mcp ${ok(h.codeMcp)}  desktop ${ok(h.desktopMcp)}  terse ${cyan(cfg.terse)}`;
   const tabs = TABS.map((t, i) => (i === st.tab ? inverse(` ${i + 1} ${t} `) : dim(` ${i + 1} ${t} `))).join('');
   const clock = dim(new Date().toLocaleTimeString());
   return [line1, pad(tabs, width - visible(clock).length - 1) + clock, dim('─'.repeat(width))];
@@ -91,7 +95,10 @@ function overview(width: number): string[] {
     `  ${pad(label, 34)}${pad(tokens ? (tokens > 0 ? green('~' + fmtTokens(tokens) + ' tok') : yellow(fmtTokens(tokens) + ' tok')) : dim('—'), 16)}${dim(count + '×')} ${dim(extra)}`;
   L.push(did('trimmed long tool output', all.trimmedTokens + t('trim'), k('trim'), all.trimSavedUsd > 0 ? `≈ ${fmtUsd(all.trimSavedUsd)} of input` : ''));
   L.push(did('deduped repeated tool results', 0, k('dedupe')));
+  L.push(did('summarized test/build output', t('testsum'), k('testsum'), 'failures kept, passing noise dropped'));
   L.push(did('redirected huge full-file reads', t('read-guard'), k('read-guard')));
+  L.push(did('skipped unchanged re-reads', t('reread'), k('reread')));
+  L.push(did('cache misses diagnosed (cost)', t('cache-miss'), k('cache-miss'), 'see Advice for culprits'));
   L.push(did('outlines instead of full files', t('outline'), k('outline')));
   L.push(did('prompt-cache breakpoints added', 0, k('cache')));
   L.push(did('memory briefs + recalls (cost)', t('brief') + t('recall'), k('brief') + k('recall'), 'context carried over instead of re-exploring'));
@@ -114,19 +121,30 @@ function overview(width: number): string[] {
     `${bold('PROJECTION')}  at 7-day pace: ${bold(fmtUsd(monthly))}/mo` +
       (without > monthly ? `, without grug's changes ≈ ${fmtUsd(without)}/mo (${green('-' + fmtUsd(without - monthly))})` : '')
   );
+  const bench = latestBench();
+  if (bench) {
+    const on = bench.results.filter((r: any) => r.arm === 'on');
+    const off = bench.results.filter((r: any) => r.arm === 'off');
+    const sum = (xs: any[], f: (r: any) => number) => xs.reduce((a, r) => a + f(r), 0);
+    const oc = sum(off, (r) => r.costUsd);
+    const saved = oc > 0 ? Math.round((1 - sum(on, (r) => r.costUsd) / oc) * 100) : 0;
+    L.push(
+      `${bold('LAST BENCH')}  (${bench.model}, ${ago(bench.ts)} ago) quality ${green(`${sum(on, (r) => +r.pass)}/${on.length}`)} vs baseline ${sum(off, (r) => +r.pass)}/${off.length} · cost ${saved >= 0 ? green(`-${saved}%`) : red(`+${-saved}%`)}`
+    );
+  }
   if (!all.requests) {
     L.push('');
     L.push(yellow('  No API traffic recorded yet. Grug sees requests from Claude Code once the proxy is running'));
-    L.push(yellow('  (Claude Desktop and claude.ai do not expose their API calls; there grug helps via MCP tools + memory).'));
+    L.push(yellow('  (the Claude Desktop chat tab does not expose its API calls; there grug helps via MCP tools + memory).'));
   }
   return L.map((l) => l.slice(0, width * 3));
 }
 
 function activity(height: number): string[] {
-  const acts = readActivity(500).slice(-Math.max(5, height)).reverse();
+  const acts = readActivity(500).filter((a) => !a.tag).slice(-Math.max(5, height)).reverse();
   if (!acts.length) return [dim('  Nothing yet. Grug waits for Claude to do something.')];
   const color: Record<string, (s: string) => string> = {
-    trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, brief: cyan, recall: cyan, remember: cyan,
+    trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
     consolidate: cyan, fallback: yellow, error: red, install: orange
   };
   return acts.map((a) => {
@@ -170,6 +188,19 @@ function memory(width: number): string[] {
   return L;
 }
 
+function latestBench(): any | null {
+  try {
+    const dir = path.join(paths.home(), 'bench');
+    const f = fs.readdirSync(dir).filter((x) => x.endsWith('.json')).sort().pop();
+    if (!f) return null;
+    const full = path.join(dir, f);
+    const j = JSON.parse(fs.readFileSync(full, 'utf8'));
+    return { ...j, ts: fs.statSync(full).mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
 export interface Advice {
   level: 'fix' | 'save' | 'info';
   text: string;
@@ -207,6 +238,21 @@ export function advice(proxyUp: boolean | null): Advice[] {
     out.push({ level: 'save', text: `Output is ${Math.round(outShare * 100)}% of fresh tokens. Caveman mode cuts prose further (code untouched).`, cmd: 'grug config set terse full' });
   if (!cfg.readGuard.enabled) out.push({ level: 'save', text: 'Read-guard is off; huge files get read whole.', cmd: 'grug config set readGuard.enabled true' });
   if (!cfg.memory.enabled) out.push({ level: 'save', text: 'Memory is off; every session re-explores the project from zero.', cmd: 'grug config set memory.enabled true' });
+  const misses = readActivity(5000).filter((a) => a.kind === 'cache-miss' && !a.tag && a.ts > Date.now() - 7 * DAY);
+  if (misses.length) {
+    const byCulprit = new Map<string, { n: number; tok: number; example: string }>();
+    for (const m of misses) {
+      const c = (m.msg.match(/\(([\w-]+)\)/) || [])[1] || 'unknown';
+      const e = byCulprit.get(c) || { n: 0, tok: 0, example: m.msg };
+      e.n++;
+      e.tok += -(m.tokens || 0);
+      byCulprit.set(c, e);
+    }
+    const top = [...byCulprit.entries()].sort((a, b) => b[1].tok - a[1].tok)[0];
+    out.push({ level: 'save', text: `${misses.length} avoidable cache miss(es) this week re-wrote ~${fmtTokens(top[1].tok)} tokens; top cause "${top[0]}": ${top[1].example.replace(/^Cache miss \([\w-]+\): /, '').slice(0, 160)}` });
+  }
+  const upd = cachedUpdate();
+  if (upd?.newer) out.push({ level: 'info', text: `grugbrain ${upd.latest} is available (you have ${upd.current}).`, cmd: 'grug update --install' });
   if (week.fallbacks > 0) out.push({ level: 'info', text: `${week.fallbacks} request(s) were rejected after optimization and resent untouched (no impact on you). If it keeps happening: grug config set proxy.dedupeReads false` });
   if (!out.length) out.push({ level: 'info', text: 'Nothing to fix. Grug happy. Grug keep working.' });
   return out;
