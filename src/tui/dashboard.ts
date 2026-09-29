@@ -8,7 +8,7 @@ import { loadConfig, paths, VERSION } from '../config.js';
 import { health } from '../install.js';
 import { loadMemory, projectName, score } from '../memory/store.js';
 import { proxyHealth } from '../proxy/server.js';
-import { readActivity, summarize, Summary } from '../stats.js';
+import { readActivity, summarize, Summary, trafficCheck } from '../stats.js';
 import { fmtTokens, fmtUsd, priceFor } from '../tokens.js';
 import { cachedUpdate } from '../update.js';
 import * as fs from 'node:fs';
@@ -217,6 +217,9 @@ export function advice(proxyUp: boolean | null): Advice[] {
   if (h.appInstalled && !h.nodeExists) out.push({ level: 'fix', text: 'The Node binary grug was installed with is gone (nvm/brew upgrade?).', cmd: 'npx github:swaraj792725/grugbrain install' });
   if (h.proxyConfigured && proxyUp === false)
     out.push({ level: 'fix', text: 'Claude Code points at the proxy but it is not running. Claude Code requests will fail until it is up.', cmd: 'grug daemon &   # or: grug install' });
+  const traffic = trafficCheck();
+  if (h.proxyConfigured && traffic.sessions > 0 && traffic.requests === 0)
+    out.push({ level: 'fix', text: `Claude Code ran ${traffic.sessions} session(s) today but no API calls reached grug's proxy: something else (another proxy tool?) sets its base URL. Measured stats stay at 0 until fixed.`, cmd: 'in Claude Code: /status (look at the base URL)' });
   if (!h.proxyConfigured && cfg.proxy.enabled) out.push({ level: 'info', text: 'Proxy not wired into Claude Code, so measured stats and in-flight trimming are off.', cmd: 'grug install' });
   if (week.requests >= 20 && week.cacheHitRate < 0.5)
     out.push({ level: 'save', text: `Cache hit rate only ${Math.round(week.cacheHitRate * 100)}% this week. Something changes the prompt prefix each turn (timestamps, reordered tools, switching models).` });

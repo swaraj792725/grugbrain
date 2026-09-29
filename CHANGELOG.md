@@ -2,6 +2,11 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.3.2
+
+- `grug doctor` and the dashboard warn when Claude Code sessions run but none of their API calls reach grug's proxy (e.g. another proxy tool owns `ANTHROPIC_BASE_URL`), instead of showing all green.
+- The update check ignores a cached "latest" that is older than the installed version (left by an earlier version), so updates are never hidden.
+
 ## 2.3.1
 
 - Update check survives GitHub API rate limits (HTTP 403): falls back to the `github.com/…/releases/latest` redirect to find the newest tag and its release file. Failed checks retry after an hour, not a day.

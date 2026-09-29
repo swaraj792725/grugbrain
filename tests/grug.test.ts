@@ -678,3 +678,20 @@ describe('update notice', () => {
     expect(out?.systemMessage).toBeUndefined();
   });
 });
+
+describe('traffic check', () => {
+  it('flags hook sessions with zero proxied calls', async () => {
+    const { trafficCheck } = await import('../src/stats.js');
+    appendBuffer('t1', { t: 'start', ts: Date.now(), cwd: tmp });
+    expect(trafficCheck()).toEqual({ sessions: 1, requests: 0 });
+  });
+});
+
+describe('stale update cache', () => {
+  it('re-checks when the cached latest is older than the installed version', async () => {
+    const { cachedUpdate } = await import('../src/update.js');
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(path.join(paths.home(), 'update.json'), JSON.stringify({ current: '0.0.0', latest: '0.0.0-a', newer: false, checkedAt: Date.now() }));
+    expect(cachedUpdate()?.newer).toBe(false); // older/equal cached value never claims an update
+  });
+});

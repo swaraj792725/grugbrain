@@ -18,6 +18,7 @@ import { maintain, withMemoryLock } from './memory/maintain.js';
 import { addNote, loadMemory, projectKey, saveMemory } from './memory/store.js';
 import { proxyHealth, startProxy } from './proxy/server.js';
 import { advice, openPath, runDashboard } from './tui/dashboard.js';
+import { trafficCheck } from './stats.js';
 
 const argv = process.argv.slice(2).filter((a) => a !== '--from=grugbrain');
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
@@ -106,6 +107,12 @@ async function main() {
       console.log(`${ok(h.hooks)} Claude Code hooks in ${h.settingsPath}`);
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
+      {
+        const t = trafficCheck();
+        if (h.proxyConfigured && t.sessions > 0 && t.requests === 0)
+          console.log(`❌ Claude Code ran ${t.sessions} session(s) in the last 24h but none of their API calls went through grug's proxy.\n   Something else points Claude Code at another URL (e.g. another proxy tool). In Claude Code run /status to see it.`);
+        else if (t.requests > 0) console.log(`✅ ${t.requests} Claude API call(s) went through grug in the last 24h`);
+      }
       console.log(`${ok(h.codeMcp)} Claude Code MCP server`);
       console.log(`${ok(h.desktopMcp)} Claude Desktop MCP server (${h.desktopPath})`);
       console.log(`${h.service !== 'none' ? '✅' : '➖'} background service: ${h.service}`);
