@@ -109,6 +109,9 @@ async function main() {
       console.log(`${ok(h.codeMcp)} Claude Code MCP server`);
       console.log(`${ok(h.desktopMcp)} Claude Desktop MCP server (${h.desktopPath})`);
       console.log(`${h.service !== 'none' ? '✅' : '➖'} background service: ${h.service}`);
+      console.log(`${h.command === 'missing' ? '❌' : '✅'} \`grug\` command ${h.command === 'on-path' ? 'on PATH' : h.command === 'rc' ? 'added to shell startup (open a new terminal)' : 'not on PATH (re-run install)'}`);
+      const upOk = await reachable(cfg.upstream);
+      console.log(`${upOk ? '✅' : '❌'} upstream ${cfg.upstream} ${upOk ? 'reachable' : 'NOT reachable (Claude Code requests will fail until it is up)'}`);
       console.log('');
       for (const a of advice(!!up)) console.log(`${a.level === 'fix' ? '🔧' : a.level === 'save' ? '💰' : 'ℹ️ '} ${a.text}${a.cmd ? `\n     → ${a.cmd}` : ''}`);
       break;
@@ -303,6 +306,27 @@ async function main() {
       console.error(`Unknown command: ${cmd}\n${HELP}`);
       process.exit(1);
   }
+}
+
+function reachable(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const u = new URL(url);
+      const mod = u.protocol === 'http:' ? require('node:http') : require('node:https');
+      const req = mod.request({ hostname: u.hostname, port: u.port || undefined, path: u.pathname || '/', method: 'HEAD', timeout: 3000 }, (res: any) => {
+        res.resume();
+        resolve(true); // any HTTP answer means the gateway is up
+      });
+      req.on('error', () => resolve(false));
+      req.on('timeout', () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.end();
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 async function waitForProxy(port: number, ms: number): Promise<boolean> {

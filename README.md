@@ -10,7 +10,7 @@ Install once. grug sit between Claude Code and Anthropic API, trim fat, stick ca
 npx grugbrain install
 ```
 
-Restart Claude Code (and Claude Desktop). Done. Grug work now. Forever. No reminders.
+Restart Claude Code (and Claude Desktop). New terminal → `grug doctor`. Done. Grug work now. Forever. No reminders.
 
 > Not on npm yet? Grug also install straight from GitHub:
 > `npx github:swaraj792725/token-diet install`
