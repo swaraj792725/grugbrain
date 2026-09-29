@@ -53,6 +53,7 @@ export type BufferEvent =
   | { t: 'read'; ts: number; path: string; key: string; mtime: number; size: number }
   | { t: 'skip'; ts: number; key: string }
   | { t: 'compact'; ts: number }
+  | { t: 'alert'; ts: number; level: number }
   | { t: 'end'; ts: number; reason?: string };
 
 const DAY = 86400000;

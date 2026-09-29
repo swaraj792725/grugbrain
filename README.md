@@ -49,6 +49,19 @@ grug **measure**, not guess. Proxy read real `usage` from every API reply (input
 
 ---
 
+## grug hand off (skip `/compact`)
+
+Long session = big context = every reply re-read all of it. Real install: **~500k tokens re-read per reply.** `/compact` make it worse first: it send whole conversation to Claude again just to write summary.
+
+grug way:
+
+1. Context pass 150k → Claude Code show you one line: `context 480k tokens · ~$0.19/reply · type /clear` (only you see it, zero tokens).
+2. You type `/clear` (free, instant).
+3. grug already wrote a **handoff**: goal, latest asks, open todos, where it got to, files changed, recent commands. No AI call, no tokens to make.
+4. Fresh session start from the handoff: **~1k tokens instead of 500k.** Same work continue.
+
+Measured on a real 711k-token session: handoff = 173 tokens.
+
 ## grug brain (memory that never get fat)
 
 Normal memory file grow, grow, grow. Every session pay for all of it. Bad.
@@ -221,7 +234,9 @@ grug savings                    one-line summary
 | `readGuard.enabled` / `maxBytes` | `true` / `60000` | redirect full reads of bigger files |
 | `rereadGuard.enabled` / `windowMinutes` | `true` / `45` | skip unchanged re-reads (once) |
 | `testSummary.enabled` / `minChars` | `true` / `3000` | collapse test/build output |
-| `updateCheck` | `true` | daily notify-only GitHub release check |
+| `updateCheck` | `true` | GitHub release check every 6h, notify only |
+| `contextAlert.enabled` / `firstTokens` | `true` / `150000` | one-line notice when context passes 150k, 300k, 600k… |
+| `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work to the next session on `/clear` or session end |
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
 | `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |

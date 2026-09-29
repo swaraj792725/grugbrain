@@ -84,6 +84,8 @@ function overview(width: number): string[] {
   L.push(row('requests', (s) => s.requests.toLocaleString()));
   L.push(row('spend', (s) => fmtUsd(s.costUsd)));
   L.push(row('input / output tokens', (s) => `${fmtTokens(s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens)}/${fmtTokens(s.outputTokens)}`));
+  L.push(row('cost per reply', (s) => (s.requests ? fmtUsd(s.costUsd / s.requests) : '—')));
+  L.push(row('avg context per reply', (s) => (s.requests ? fmtTokens((s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens) / s.requests) : '—')));
   L.push(row('saved by prompt cache (all)', (s) => green(fmtUsd(s.cacheSavedUsd))));
   L.push(row('  …where grug added the cache', (s) => green(fmtUsd(s.grugCacheSavedUsd))));
   L.push(`  ${pad('cache hit rate (7d)', 30)}${bar(week.cacheHitRate, 24)} ${Math.round(week.cacheHitRate * 100)}%`);
@@ -101,6 +103,8 @@ function overview(width: number): string[] {
   L.push(did('cache misses diagnosed (cost)', t('cache-miss'), k('cache-miss'), 'see Advice for culprits'));
   L.push(did('outlines instead of full files', t('outline'), k('outline')));
   L.push(did('prompt-cache breakpoints added', 0, k('cache')));
+  L.push(did('handoffs to a fresh session', t('handoff'), k('handoff'), 'old context not re-read'));
+  L.push(did('context-size alerts', 0, k('context-alert')));
   L.push(did('memory briefs + recalls (cost)', t('brief') + t('recall'), k('brief') + k('recall'), 'context carried over instead of re-exploring'));
   L.push(did('notes remembered', 0, k('remember')));
   L.push(did('memory consolidations', 0, k('consolidate')));
@@ -145,7 +149,7 @@ function activity(height: number): string[] {
   if (!acts.length) return [dim('  Nothing yet. Grug waits for Claude to do something.')];
   const color: Record<string, (s: string) => string> = {
     trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
-    consolidate: cyan, fallback: yellow, error: red, install: orange
+    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow
   };
   return acts.map((a) => {
     const c = color[a.kind] || ((s: string) => s);
@@ -232,6 +236,15 @@ export function advice(proxyUp: boolean | null): Advice[] {
       level: 'save',
       text: `${Math.round((opusCost / week.costUsd) * 100)}% of spend is top-tier models. Moving ~30% of that work (subagents, simple edits, search) to Sonnet 5.5 / Haiku 4.5 would save ≈ ${fmtUsd(est)}/week.`,
       cmd: 'in Claude Code: /model sonnet for routine work'
+    });
+  }
+  const avgCtx = week.requests ? (week.inputTokens + week.cacheReadTokens + week.cacheWriteTokens) / week.requests : 0;
+  if (week.requests >= 20 && avgCtx > 150000) {
+    const perReply = week.costUsd / week.requests;
+    out.push({
+      level: 'save',
+      text: `Average context is ${fmtTokens(avgCtx)} tokens per reply (${fmtUsd(perReply)}/reply). Every reply re-reads it. Cost scales with context: halving it roughly halves the bill (≈ ${fmtUsd(week.costUsd / 2)}/week here).`,
+      cmd: 'type /clear when a task is done: grug hands off to the fresh session for free (skip /compact, it re-reads everything)'
     });
   }
   const outShare = week.outputTokens / Math.max(1, week.inputTokens + week.outputTokens);

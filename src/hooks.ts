@@ -17,6 +17,7 @@ import { recordActivity } from './stats.js';
 import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
+import { buildHandoff, contextSize, costPerReply, saveHandoff, takeHandoff } from './handoff.js';
 
 export interface HookInput {
   session_id?: string;
@@ -62,9 +63,24 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const parts: string[] = [];
       const style = terseStyle(cfg.terse);
       if (style) parts.push(style);
+      let handedOff = false;
+      if (cfg.handoff.enabled) {
+        const h = takeHandoff(projectKey(cwd), sid, cfg.handoff.maxAgeHours);
+        if (h) {
+          parts.push(h.text);
+          handedOff = true;
+          const tok = estimateTokens(h.text);
+          recordActivity({
+            kind: 'handoff',
+            msg: `Continued from a ${Math.round(h.contextTokens / 1000)}k-token session with a ${tok}-token handoff`,
+            tokens: Math.max(0, h.contextTokens - tok),
+            project: path.basename(cwd)
+          });
+        }
+      }
       if (cfg.memory.enabled) {
         const db = loadMemory();
-        const brief = buildBrief(db, projectKey(cwd), cfg.memory.briefTokens, cfg.memory.halfLifeDays);
+        const brief = buildBrief(db, projectKey(cwd), handedOff ? Math.round(cfg.memory.briefTokens / 2) : cfg.memory.briefTokens, cfg.memory.halfLifeDays);
         if (brief.text) {
           parts.push(brief.text);
           appendBuffer(sid, { t: 'injected', ts: now, ids: brief.ids });
@@ -81,7 +97,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     case 'user-prompt': {
       const prompt = input.prompt || '';
       appendBuffer(sid, { t: 'prompt', ts: now, text: prompt.slice(0, 2000) });
-      if (!cfg.memory.enabled) return null;
+      const alert = contextAlert(cfg, sid, cwd, input.transcript_path, now);
+      if (!cfg.memory.enabled) return alert ? { systemMessage: alert } : null;
       const project = projectKey(cwd);
       const m = prompt.match(/^\s*(?:remember|grug remember)\s*[:,-]?\s+(.{8,400})/i);
       if (m) {
@@ -91,16 +108,16 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           saveMemory(db);
         });
         recordActivity({ kind: 'remember', msg: `Pinned note: ${m[1].slice(0, 80)}`, project: path.basename(cwd) });
-        return null; // don't recall the note we just wrote
+        return alert ? { systemMessage: alert } : null; // don't recall the note we just wrote
       }
-      if (prompt.trim().length < 12) return null;
+      if (prompt.trim().length < 12) return alert ? { systemMessage: alert } : null;
       const exclude = new Set<string>();
       for (const ev of readBuffer(sid)) if (ev.t === 'injected') ev.ids.forEach((i) => exclude.add(i));
       const r = recall(loadMemory(), project, prompt, cfg.memory.recallTokens, cfg.memory.halfLifeDays, exclude);
-      if (!r.text) return null;
+      if (!r.text) return alert ? { systemMessage: alert } : null;
       appendBuffer(sid, { t: 'injected', ts: now, ids: r.ids });
       recordActivity({ kind: 'recall', msg: `Recalled ${r.ids.length} related memory item(s)`, tokens: -r.tokens, project: path.basename(cwd) });
-      return { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: r.text } };
+      return { ...(alert ? { systemMessage: alert } : {}), hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: r.text } };
     }
 
     case 'pre-tool': {
@@ -255,6 +272,18 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       }
       const text = lastAssistantText(input.transcript_path);
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
+      if (cfg.handoff.enabled) {
+        try {
+          const prompts = readBuffer(sid).filter((e) => e.t === 'prompt').length;
+          // /clear, compaction, or a real session ending: leave a handoff for the next one.
+          if (event === 'pre-compact' || input.reason === 'clear' || prompts >= 2) {
+            const h = buildHandoff(sid, input.transcript_path, cwd, cfg.handoff.maxTokens);
+            if (h) saveHandoff(h);
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
       if (event === 'session-end') appendBuffer(sid, { t: 'end', ts: now, reason: input.reason });
       else appendBuffer(sid, { t: 'compact', ts: now });
       spawnDetached(['maintain']);
@@ -262,6 +291,32 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     }
   }
   return null;
+}
+
+/** One-line, user-only notice when the context passes 150k, 300k, 600k... tokens (once per level). */
+function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: string, transcript: string | undefined, now: number): string | undefined {
+  if (!cfg.contextAlert.enabled || !transcript) return undefined;
+  const { tokens, model } = contextSize(transcript);
+  const first = Math.max(10000, cfg.contextAlert.firstTokens);
+  if (tokens < first) return undefined;
+  const level = Math.floor(Math.log2(tokens / first)) + 1;
+  const done = readBuffer(sid).filter((e) => e.t === 'alert').reduce((m, e: any) => Math.max(m, e.level || 0), 0);
+  if (level <= done) return undefined;
+  appendBuffer(sid, { t: 'alert', ts: now, level } as any);
+  if (cfg.handoff.enabled) {
+    try {
+      const h = buildHandoff(sid, transcript, cwd, cfg.handoff.maxTokens);
+      if (h) saveHandoff(h);
+    } catch {
+      /* best-effort */
+    }
+  }
+  const per = costPerReply(tokens, model);
+  recordActivity({ kind: 'context-alert', msg: `Context reached ${Math.round(tokens / 1000)}k tokens (~$${per.toFixed(2)}/reply)`, project: path.basename(cwd) });
+  return (
+    `🪨 grugbrain: this session's context is ${Math.round(tokens / 1000)}k tokens, so every reply re-reads it (~$${per.toFixed(2)}/reply in API terms). ` +
+    `When this task is done, type /clear: grug hands the work over to the fresh session (~1k tokens) at no cost; /compact would spend tokens re-reading everything.`
+  );
 }
 
 function readKey(file: string, ti: any, agent?: string): string {
