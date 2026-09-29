@@ -159,7 +159,8 @@ Grug read it straight: big win where output is noisy (tests, builds, logs), no l
 
 | app | what grug do |
 |---|---|
-| **Claude Code** (CLI, IDE, desktop app's Code tab) | everything: proxy (cache, trim, dedupe, real stats), hooks (memory, read guard, terse), MCP tools |
+| **Claude Code in a terminal / IDE** | everything: proxy (cache, trim, dedupe, real stats), hooks (memory, read guard, test summaries, terse), MCP tools |
+| **Claude app → Code tab** | hooks (memory, read guard, test summaries, trimming, terse) + real usage measured from session transcripts. The app manages its own API connection, so the proxy isn't in its path |
 | **Claude Desktop** chat | MCP tools (`outline`, `read_symbol`, `repo_map`, `search`, `recall`, `remember`, `project_brief`…) + shared memory. Desktop's own API calls are private, so no proxy, no measured stats. |
 | **claude.ai** in browser | nothing. grug cannot reach inside browser. grug honest. |
 | your own app on the Anthropic SDK | set `ANTHROPIC_BASE_URL=http://127.0.0.1:4747` → proxy + stats |

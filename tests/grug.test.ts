@@ -683,7 +683,7 @@ describe('traffic check', () => {
   it('flags hook sessions with zero proxied calls', async () => {
     const { trafficCheck } = await import('../src/stats.js');
     appendBuffer('t1', { t: 'start', ts: Date.now(), cwd: tmp });
-    expect(trafficCheck()).toEqual({ sessions: 1, requests: 0 });
+    expect(trafficCheck()).toEqual({ sessions: 1, requests: 0, metered: 0 });
   });
 });
 
@@ -693,5 +693,63 @@ describe('stale update cache', () => {
     fs.mkdirSync(paths.home(), { recursive: true });
     fs.writeFileSync(path.join(paths.home(), 'update.json'), JSON.stringify({ current: '0.0.0', latest: '0.0.0-a', newer: false, checkedAt: Date.now() }));
     expect(cachedUpdate()?.newer).toBe(false); // older/equal cached value never claims an update
+  });
+});
+
+describe('transcript metering', () => {
+  const line = (id: string, out: number, ts = new Date().toISOString()) =>
+    JSON.stringify({ type: 'assistant', timestamp: ts, message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 2, cache_read_input_tokens: 40000, cache_creation_input_tokens: 1000, output_tokens: out } } });
+
+  it('records each reply once, reads only new bytes, and shows up in stats', async () => {
+    const { meterTranscript } = await import('../src/meter.js');
+    const t = path.join(tmp, 't.jsonl');
+    fs.writeFileSync(t, [line('m1', 100), line('m1', 100), line('m2', 50)].join('\n') + '\n');
+    expect(meterTranscript('s', t, 'p').recorded).toBe(2);
+    expect(meterTranscript('s', t, 'p').recorded).toBe(0); // nothing new
+    fs.appendFileSync(t, line('m3', 10) + '\n' + '{"partial":');
+    expect(meterTranscript('s', t, 'p').recorded).toBe(1);
+    const s = summarize();
+    expect(s.requests).toBe(3);
+    expect(s.outputTokens).toBe(160);
+    expect(s.cacheSavedUsd).toBeGreaterThan(0);
+  });
+
+  it('does not double count traffic the proxy already recorded', async () => {
+    const { meterTranscript } = await import('../src/meter.js');
+    const { recordRequest } = await import('../src/stats.js');
+    recordRequest({ ts: Date.now() - 1000, model: 'm', usage: {}, status: 200, trimmedTokens: 0, cacheBreakpointsAdded: 0 });
+    const t = path.join(tmp, 't2.jsonl');
+    fs.writeFileSync(t, line('x1', 5) + '\n');
+    const r = meterTranscript('s2', t, 'p');
+    expect(r.recorded).toBe(0);
+    expect(r.skippedProxy).toBe(1);
+  });
+});
+
+describe('leftover cleanup', () => {
+  it('finds and removes hooks/MCP of uninstalled tools, keeping everything else', async () => {
+    const { brokenIntegrations, fixBrokenIntegrations } = await import('../src/install.js');
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    const dead = `'${tmp}/.caveman/bin/caveman-proxy' native-hook claude --adapter '/x/native-hook-fast.js'`;
+    fs.writeFileSync(settings, JSON.stringify({
+      hooks: {
+        SessionEnd: [{ hooks: [{ type: 'command', command: dead }, { type: 'command', command: `"/bin/sh" -c true ${MARK}` }] }],
+        Stop: [{ hooks: [{ type: 'command', command: 'echo mine' }] }]
+      },
+      statusLine: { type: 'command', command: `${tmp}/.caveman/bin/caveman-proxy statusline` }
+    }));
+    const userCfg = path.join(tmp, '.claude.json');
+    fs.writeFileSync(userCfg, JSON.stringify({ mcpServers: { caveman: { command: `${tmp}/.caveman/bin/caveman-mcp` }, ok: { command: 'npx' } } }));
+    expect(brokenIntegrations().map((b) => b.where).sort()).toEqual(['hook', 'mcp', 'statusLine']);
+    fixBrokenIntegrations();
+    const after = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(JSON.stringify(after)).not.toContain('caveman');
+    expect(JSON.stringify(after.hooks.SessionEnd)).toContain(MARK);
+    expect(after.hooks.Stop[0].hooks[0].command).toBe('echo mine');
+    const mcp = JSON.parse(fs.readFileSync(userCfg, 'utf8')).mcpServers;
+    expect(mcp.caveman).toBeUndefined();
+    expect(mcp.ok).toBeTruthy();
+    expect(brokenIntegrations()).toHaveLength(0);
   });
 });
