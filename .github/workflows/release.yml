@@ -58,10 +58,18 @@ jobs:
           
           **Install this version:**
           \`\`\`
-          npx --yes --package=https://github.com/${{ github.repository }}/releases/download/v$V/grugbrain-$V.tgz grugbrain install
-          \`\`\`"
+          npx --yes github:${{ github.repository }}#v$V install
+          \`\`\`
+          or from the attached file: \`npx --yes --package=https://github.com/${{ github.repository }}/releases/download/v$V/grugbrain-$V.tgz grugbrain install\`
+          or from npm (when published): \`npm install -g grugbrain@$V && grug install\`"
       - name: Publish to npm
         if: steps.v.outputs.npm == 'true'
-        run: npm publish --provenance --access public
+        # A bad/expired npm token must not hide that the GitHub Release succeeded.
+        continue-on-error: true
+        run: |
+          npm publish --provenance --access public || {
+            echo "::warning title=npm publish failed::Check NPM_TOKEN (granular token, Read and write, bypass 2FA enabled), then re-run this workflow from the Actions tab."
+            exit 1
+          }
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
