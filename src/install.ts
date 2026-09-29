@@ -299,8 +299,18 @@ export function installCommand(): Step {
     fs.chmodSync(f, 0o755);
   }
   const home = userHome();
-  const preferred = ['/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, 'bin')];
   const onPath = pathDirs();
+  // Already provided (e.g. `npm install -g grugbrain`)? Leave that one in charge.
+  for (const dir of onPath) {
+    try {
+      const real = fs.realpathSync(path.join(dir, 'grug'));
+      if (/grugbrain[\\/]dist[\\/]cli\.js$/.test(real) || real === path.join(binDir(), 'grug'))
+        return { target: 'command', ok: true, message: `\`grug\` already on PATH (${path.join(dir, 'grug')})` };
+    } catch {
+      /* not in this dir */
+    }
+  }
+  const preferred = ['/opt/homebrew/bin', '/usr/local/bin', path.join(home, '.local', 'bin'), path.join(home, 'bin')];
   for (const dir of preferred) {
     if (!onPath.includes(dir) || !writable(dir)) continue;
     let linked = 0;
