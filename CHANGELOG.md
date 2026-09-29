@@ -2,6 +2,10 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.4.1
+
+- Usage appears right away: `grug doctor`, `grug dash` and the background service (every 30 min) catch up on recent Claude Code transcripts in `~/.claude/projects`, so numbers don't wait for the next reply and nothing is lost if a hook times out. Offsets are shared per transcript file with the Stop hook, so nothing is counted twice.
+
 ## 2.4.0
 
 - **Measures real usage from Claude Code session transcripts.** The Claude desktop app's Code tab manages its own API connection and never goes through grug's proxy; grug now reads each reply's exact token usage from the session transcript (via the Stop/SessionEnd/PreCompact hooks): spend, cache hits and savings show up in `grug dash` for every session. Replies are de-duplicated, only new bytes are read, and traffic the proxy already recorded is never counted twice.

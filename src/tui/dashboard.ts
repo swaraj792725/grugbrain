@@ -294,6 +294,11 @@ export function openPath(p: string): void {
 
 export async function runDashboard(opts: { once?: boolean } = {}): Promise<void> {
   const cfg = loadConfig();
+  try {
+    (await import('../meter.js')).meterRecent();
+  } catch {
+    /* best-effort */
+  }
   const st: State = { tab: 0, proxyUp: null, proxyInfo: null, lastRender: 0 };
   const probe = async () => {
     st.proxyInfo = await proxyHealth(cfg.port);

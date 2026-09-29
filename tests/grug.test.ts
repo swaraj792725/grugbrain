@@ -753,3 +753,17 @@ describe('leftover cleanup', () => {
     expect(brokenIntegrations()).toHaveLength(0);
   });
 });
+
+describe('transcript catch-up', () => {
+  it('meters recent transcripts once, shared with the Stop hook', async () => {
+    const { meterRecent, meterTranscript } = await import('../src/meter.js');
+    const dir = path.join(tmp, '.claude', 'projects', '-Users-me-code-shop');
+    fs.mkdirSync(dir, { recursive: true });
+    const t = path.join(dir, 'abc.jsonl');
+    fs.writeFileSync(t, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'r1', model: 'claude-sonnet-5-5', usage: { input_tokens: 5, output_tokens: 7 } } }) + '\n');
+    expect(meterRecent().recorded).toBe(1);
+    expect(meterTranscript('some-session-id', t, 'shop').recorded).toBe(0); // same file, already counted
+    expect(meterRecent().recorded).toBe(0);
+    expect(readRequests()[0].project).toBe('shop');
+  });
+});

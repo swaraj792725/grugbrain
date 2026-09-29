@@ -11,6 +11,8 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
+import { userHome } from './config.js';
 import { ensureDir, paths, readJson, writeJsonAtomic } from './config.js';
 import { readRequests, recordRequest } from './stats.js';
 import { Usage } from './tokens.js';
@@ -22,7 +24,9 @@ interface MeterState {
 
 const MAX_READ = 16 * 1024 * 1024;
 
-const stateFile = (sid: string) => path.join(paths.home(), 'meter', `${sid.replace(/[^\w.-]/g, '_')}.json`);
+// Keyed by transcript path, so the Stop hook and the background scan share one offset per file.
+const stateFile = (transcript: string) =>
+  path.join(paths.home(), 'meter', `${createHash('sha1').update(path.resolve(transcript)).digest('hex').slice(0, 20)}.json`);
 
 export interface MeterResult {
   replies: number;
@@ -30,7 +34,7 @@ export interface MeterResult {
   skippedProxy: number;
 }
 
-export function meterTranscript(sessionId: string, transcriptPath: string | undefined, project?: string): MeterResult {
+export function meterTranscript(_sessionId: string, transcriptPath: string | undefined, project?: string): MeterResult {
   const res: MeterResult = { replies: 0, recorded: 0, skippedProxy: 0 };
   if (!transcriptPath) return res;
   let size = 0;
@@ -39,7 +43,7 @@ export function meterTranscript(sessionId: string, transcriptPath: string | unde
   } catch {
     return res;
   }
-  const r = readJson<MeterState>(stateFile(sessionId));
+  const r = readJson<MeterState>(stateFile(transcriptPath));
   const st: MeterState = r.ok && r.value && typeof r.value.offset === 'number' ? r.value : { offset: 0, ids: [] };
   if (size < st.offset) st.offset = 0; // transcript rewritten
   if (size === st.offset) return res;
@@ -104,7 +108,43 @@ export function meterTranscript(sessionId: string, transcriptPath: string | unde
       res.recorded++;
     }
   }
-  ensureDir(path.dirname(stateFile(sessionId)));
-  writeJsonAtomic(stateFile(sessionId), { offset: st.offset, ids: [...seen].slice(-3000) });
+  ensureDir(path.dirname(stateFile(transcriptPath)));
+  writeJsonAtomic(stateFile(transcriptPath), { offset: st.offset, ids: [...seen].slice(-3000) });
   return res;
 }
+
+/** Catch up on every Claude Code transcript touched recently (covers missed or timed-out hooks). */
+export function meterRecent(maxAgeMs = 24 * 3600 * 1000): MeterResult {
+  const total: MeterResult = { replies: 0, recorded: 0, skippedProxy: 0 };
+  const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'projects');
+  let dirs: string[] = [];
+  try {
+    dirs = fs.readdirSync(root);
+  } catch {
+    return total;
+  }
+  const cutoff = Date.now() - maxAgeMs;
+  for (const d of dirs) {
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(path.join(root, d)).filter((f) => f.endsWith('.jsonl'));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      const full = path.join(root, d, f);
+      try {
+        if (fs.statSync(full).mtimeMs < cutoff) continue;
+      } catch {
+        continue;
+      }
+      // Project label: last segment of the encoded project dir (e.g. -Users-me-code-app -> app).
+      const r = meterTranscript('', full, d.split('-').filter(Boolean).pop());
+      total.replies += r.replies;
+      total.recorded += r.recorded;
+      total.skippedProxy += r.skippedProxy;
+    }
+  }
+  return total;
+}
+
