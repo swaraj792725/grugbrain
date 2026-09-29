@@ -103,7 +103,9 @@ async function latestRelease(): Promise<{ tag: string; url: string; tarball?: st
 
 export async function checkForUpdate(force = false): Promise<UpdateInfo> {
   const cached = cachedUpdate();
-  if (!force && cached && Date.now() - cached.checkedAt < DAY) return cached;
+  // A cached "latest" older than what's installed is stale (saved by an earlier version): re-check.
+  const stale = !!cached?.latest && compareVersions(cached.latest, VERSION) < 0;
+  if (!force && cached && !stale && Date.now() - cached.checkedAt < DAY) return cached;
   try {
     const rel = await latestRelease();
     const tag = rel.tag;

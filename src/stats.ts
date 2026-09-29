@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'node:fs';
+import * as nodePath from 'node:path';
 import { ensureDir, paths } from './config.js';
 import { cacheSavingsOf, costOf, priceFor, Usage } from './tokens.js';
 
@@ -180,4 +181,26 @@ export function summarize(sinceMs = 0): Summary {
   }
   s.byDay = [...days.entries()].sort().map(([day, v]) => ({ day, ...v }));
   return s;
+}
+
+/**
+ * Is Claude Code's traffic actually reaching the proxy? Hook sessions leave a buffer file per
+ * session; proxied API calls land in events.jsonl. Sessions but zero calls = something else
+ * (another proxy tool, an app-level setting) points Claude Code elsewhere.
+ */
+export function trafficCheck(sinceMs = Date.now() - 24 * 3600 * 1000): { sessions: number; requests: number } {
+  let sessions = 0;
+  try {
+    for (const f of fs.readdirSync(paths.sessions())) {
+      try {
+        if (fs.statSync(nodePath.join(paths.sessions(), f)).mtimeMs >= sinceMs) sessions++;
+      } catch {
+        /* vanished */
+      }
+    }
+  } catch {
+    /* no sessions yet */
+  }
+  const requests = readRequests().filter((r) => r.ts >= sinceMs && !r.tag).length;
+  return { sessions, requests };
 }
