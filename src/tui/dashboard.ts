@@ -106,6 +106,10 @@ function overview(width: number): string[] {
   L.push(did('handoffs to a fresh session', t('handoff'), k('handoff'), 'old context not re-read'));
   L.push(did('context-size alerts', 0, k('context-alert')));
   L.push(did('memory briefs + recalls (cost)', t('brief') + t('recall'), k('brief') + k('recall'), 'context carried over instead of re-exploring'));
+  const avg = (kind: string) => (k(kind) ? `avg ${Math.round(Math.abs(t(kind)) / k(kind))} tok` : '');
+  L.push(did('auto-recall injections (cost)', t('auto-recall'), k('auto-recall'), [avg('auto-recall'), 'only when something clearly matches'].filter(Boolean).join(', ')));
+  L.push(did('graph context: maps + code hints', t('graph'), k('graph'), [avg('graph'), 'find the symbol, skip the full read'].filter(Boolean).join(', ')));
+  L.push(did('durable facts captured', 0, k('facts'), 'decisions, root causes, preferences, commands'));
   L.push(did('notes remembered', 0, k('remember')));
   L.push(did('memory consolidations', 0, k('consolidate')));
   L.push(did('safety fallbacks (sent original)', 0, all.fallbacks));
@@ -149,12 +153,13 @@ function activity(height: number): string[] {
   if (!acts.length) return [dim('  Nothing yet. Grug waits for Claude to do something.')];
   const color: Record<string, (s: string) => string> = {
     trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
-    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow
+    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow,
+    'auto-recall': cyan, graph: cyan, facts: cyan
   };
   return acts.map((a) => {
     const c = color[a.kind] || ((s: string) => s);
     const tok = a.tokens ? (a.tokens > 0 ? green(` +${fmtTokens(a.tokens)}`) : yellow(` ${fmtTokens(a.tokens)}`)) : '';
-    return `  ${dim(pad(ago(a.ts), 4, true))}  ${c(pad(a.kind, 12))} ${a.project ? dim(`[${a.project}] `) : ''}${a.msg}${tok}`;
+    return `  ${dim(pad(ago(a.ts), 4, true))}  ${c(pad(a.kind, 13))} ${a.project ? dim(`[${a.project}] `) : ''}${a.msg}${tok}`;
   });
 }
 
@@ -244,7 +249,7 @@ export function advice(proxyUp: boolean | null): Advice[] {
     out.push({
       level: 'save',
       text: `Average context is ${fmtTokens(avgCtx)} tokens per reply (${fmtUsd(perReply)}/reply). Every reply re-reads it. Cost scales with context: halving it roughly halves the bill (≈ ${fmtUsd(week.costUsd / 2)}/week here).`,
-      cmd: 'type /clear when a task is done: grug hands off to the fresh session for free (skip /compact, it re-reads everything)'
+      cmd: 'grug auto-compacts at the autoCompact window and restores a handoff; cut deeper: grug config set autoCompact.windowTokens 120000'
     });
   }
   const outShare = week.outputTokens / Math.max(1, week.inputTokens + week.outputTokens);

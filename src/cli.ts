@@ -57,6 +57,7 @@ const HELP = `
   grug recall <query> [--dir d]   search memory
   grug remember <text> [--dir d]  pin a note for a project
   grug maintain                   ingest + consolidate memory now (normally automatic)
+  grug warm [dir]                 refresh code-graph + history caches for a project (normally automatic)
 
   grug map [dir] [--budget 1500]  ranked repo map under a token budget
   grug outline <file>             skeleton of a source file
@@ -120,6 +121,21 @@ async function main() {
           console.log(`✅ ${t.metered} Claude reply(ies) measured from session transcripts in the last 24h${t.requests === 0 ? ' (sessions that bypass the proxy, e.g. the Claude app Code tab)' : ''}`);
         if (h.proxyConfigured && t.sessions > 0 && t.requests === 0 && t.metered === 0)
           console.log(`❌ Claude Code ran ${t.sessions} session(s) in the last 24h but no usage reached grug (no proxied calls, nothing measured).\n   Update grug (grug update) and start a new session; if it persists, something else points Claude Code at another URL.`);
+      }
+      {
+        const { readActivity } = await import('./stats.js');
+        const week = readActivity(20000).filter((a) => !a.tag && a.ts > Date.now() - 7 * 86400000);
+        const stat = (kind: string) => {
+          const xs = week.filter((a) => a.kind === kind);
+          return { n: xs.length, avg: xs.length ? Math.round(xs.reduce((s, a) => s + Math.abs(a.tokens || 0), 0) / xs.length) : 0 };
+        };
+        const r = stat('auto-recall');
+        const g = stat('graph');
+        const f = stat('facts');
+        const on = (b: boolean) => (b ? '✅' : '➖');
+        console.log(`${on(cfg.autoRecall.enabled)} auto-recall ${cfg.autoRecall.enabled ? `on (≤${cfg.autoRecall.maxTokens} tok): ${r.n} injection(s) in 7 days${r.n ? `, avg ${r.avg} tok` : ''}` : 'off (grug config set autoRecall.enabled true)'}`);
+        console.log(`${on(cfg.graphContext.enabled)} graph context ${cfg.graphContext.enabled ? `on: ${g.n} code map(s)/hint(s) in 7 days${g.n ? `, avg ${g.avg} tok` : ''}` : 'off (grug config set graphContext.enabled true)'}`);
+        if (cfg.memory.enabled) console.log(`✅ memory capture: ${f.n} handoff(s) with durable facts in 7 days`);
       }
       console.log(`${ok(h.codeMcp)} Claude Code MCP server`);
       console.log(`${ok(h.desktopMcp)} Claude Desktop MCP server (${h.desktopPath})`);
@@ -190,6 +206,19 @@ async function main() {
       if (!r) console.log('memory busy (another maintenance is running)');
       else if (!process.env.GRUG_QUIET)
         console.log(`memory: +${r.ingested} sessions · folded ${r.folded} · merged ${r.merged} · pruned ${r.pruned} · ${r.nodes} nodes\ngraph: ${r.graph}\nvault: ${r.vaultDir}`);
+      break;
+    }
+
+    case 'warm': {
+      // Background refresh started by SessionStart: code graph + parsed-history caches.
+      const dir = path.resolve(pos[1] || process.cwd());
+      const cfg = loadConfig();
+      const { buildGraphIndex, isCodeProject } = await import('./graph.js');
+      const { warmHistory } = await import('./history.js');
+      let files = 0;
+      if (cfg.graphContext.enabled && isCodeProject(dir)) files = buildGraphIndex(dir)?.files.length || 0;
+      const items = cfg.autoRecall.enabled ? warmHistory(dir) : 0;
+      if (!process.env.GRUG_QUIET) console.log(`warm: ${files} files in code graph, ${items} history items cached for ${dir}`);
       break;
     }
 

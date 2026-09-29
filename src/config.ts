@@ -31,6 +31,7 @@ export const paths = {
   app: () => path.join(grugHome(), 'app'),
   graphHtml: () => path.join(grugHome(), 'graph.html'),
   logs: () => path.join(grugHome(), 'logs'),
+  cache: () => path.join(grugHome(), 'cache'),
   pid: () => path.join(grugHome(), 'daemon.pid')
 };
 
@@ -85,6 +86,18 @@ export interface GrugConfig {
     enabled: boolean;
     maxTokens: number;
     maxAgeHours: number;
+  };
+  /** Per-prompt recall of memory, earlier sessions and code (UserPromptSubmit), only when something clearly matches. */
+  autoRecall: {
+    enabled: boolean;
+    /** Hard cap for the whole injected block. */
+    maxTokens: number;
+  };
+  /** Graph-first code context: compact repo map at session start + relevant files/symbols per prompt (code projects only). */
+  graphContext: {
+    enabled: boolean;
+    /** Token budget for the repo map at session start. */
+    mapTokens: number;
   };
   memory: {
     enabled: boolean;
@@ -145,6 +158,14 @@ export function defaultConfig(): GrugConfig {
       maxTokens: 1200,
       maxAgeHours: 48
     },
+    autoRecall: {
+      enabled: true,
+      maxTokens: 800
+    },
+    graphContext: {
+      enabled: true,
+      mapTokens: 600
+    },
     memory: {
       enabled: true,
       briefTokens: 700,
@@ -168,6 +189,11 @@ function deepMerge<T>(base: T, over: any): T {
 }
 
 const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'] };
+
+const RANGES: Record<string, [number, number]> = {
+  'autoRecall.maxTokens': [100, 4000],
+  'graphContext.mapTokens': [100, 3000]
+};
 
 export function loadConfig(): GrugConfig {
   const raw = readJson(paths.config());
@@ -204,6 +230,8 @@ export function setConfigValue(key: string, value: string): GrugConfig {
     v = Number(v);
     if (key === 'autoCompact.windowTokens' && v !== 0 && (v < 100000 || v > 1000000))
       throw new Error(`${key} must be 0 (Claude Code default) or between 100000 and 1000000`);
+    const range = RANGES[key];
+    if (range && (v < range[0] || v > range[1])) throw new Error(`${key} must be between ${range[0]} and ${range[1]}, got "${value}"`);
   } else if (ENUMS[key] && !ENUMS[key].includes(v)) {
     throw new Error(`${key} must be one of: ${ENUMS[key].join(', ')}; got "${value}"${hint}`);
   } else if (kind === 'object') throw new Error(`${key} is a group; set one of its keys (see: grug config)`);

@@ -223,6 +223,22 @@ grug config set <key> <value>   e.g. terse full · readGuard.maxBytes 100000 · 
 grug savings                    one-line summary
 ```
 
+## grug remember for Claude (auto-recall + code graph)
+
+Small context still need good memory, or quality drop. So grug feed Claude the right bit at the right time. All automatic, hooks fail open and stay fast.
+
+- **auto-recall**: every prompt, grug search memory notes, code graph, and old conversations. Only clear matches go in, max **800 token**, labelled "possibly relevant, verify before relying". Memory first (decisions, root causes, your rules), then code spots, then old-session excerpts. "ok", "yes", short prompts: grug say nothing. Same thing never twice in a session. Current session never searched (already in context).
+- **graph-first code**: session start give Claude a small repo map (~600 token) and say: find with `search` / `repo_map` / `outline`, read with `read_symbol` / `read_lines`, full-file Read last. Per prompt grug also name the few files and symbols that match, with line ranges. No bodies.
+- **better history search**: rare words count more (BM25-style), your asks and decisions count more, parsed transcripts cached by mtime.
+- **grug take notes by himself**: when session compact or end, grug pull decisions, root causes, your "always/never" rules, and commands that worked from transcript. No AI call. Secrets skipped. Merge, decay, cap 60 per project: no pile-up.
+- `grug dash` and `grug doctor` show how many injections and average token cost.
+
+```bash
+grug config set autoRecall.maxTokens 500      # smaller recall block (100-4000)
+grug config set autoRecall.enabled false      # no recall
+grug config set graphContext.enabled false    # no code map / code hints
+```
+
 ### config grug understand
 
 | key | default | what |
@@ -242,6 +258,8 @@ grug savings                    one-line summary
 | `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
 | `autoCompact.windowTokens` | `200000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
+| `autoRecall.enabled` / `maxTokens` | `true` / `800` | per-prompt recall from memory, code graph, old sessions |
+| `graphContext.enabled` / `mapTokens` | `true` / `600` | repo map at session start + code hints per prompt |
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
 | `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |

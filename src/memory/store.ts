@@ -54,9 +54,12 @@ export type BufferEvent =
   | { t: 'skip'; ts: number; key: string }
   | { t: 'compact'; ts: number }
   | { t: 'alert'; ts: number; level: number }
+  | { t: 'facts'; ts: number; items: Array<{ kind: string; text: string; ts: number }> }
+  | { t: 'recall'; ts: number; keys: string[]; tokens: number }
   | { t: 'end'; ts: number; reason?: string };
 
 const DAY = 86400000;
+const MAX_FACTS_PER_PROJECT = 60;
 
 // ---------- persistence ----------
 
@@ -217,7 +220,7 @@ function oneLine(s: string, n: number): string {
 
 // ---------- ingest ----------
 
-export function addNote(db: MemoryDB, project: string, text: string, ts = Date.now(), opts: { pinned?: boolean; from?: string } = {}): MemNode {
+export function addNote(db: MemoryDB, project: string, text: string, ts = Date.now(), opts: { pinned?: boolean; from?: string; kind?: string } = {}): MemNode {
   // Merge into an existing similar note instead of piling up.
   for (const n of Object.values(db.nodes)) {
     if (n.type === 'note' && n.project === project && similarity(n.label, text) >= 0.6) {
@@ -230,6 +233,7 @@ export function addNote(db: MemoryDB, project: string, text: string, ts = Date.n
       }
       if (text.length > n.label.length) n.label = text;
       if (opts.pinned) n.data = { ...n.data, pinned: true };
+      if (opts.kind && !n.data?.kind) n.data = { ...n.data, kind: opts.kind };
       if (opts.from) link(db, n.id, opts.from);
       return n;
     }
@@ -237,7 +241,14 @@ export function addNote(db: MemoryDB, project: string, text: string, ts = Date.n
   const id = `note:${project}:${createHash('sha1').update(text).digest('hex').slice(0, 10)}`;
   const node = upsert(
     db,
-    { id, type: 'note', label: text, project, weight: opts.pinned ? 3 : 1.5, data: { pinned: !!opts.pinned, sources: opts.from ? [opts.from] : [] } },
+    {
+      id,
+      type: 'note',
+      label: text,
+      project,
+      weight: opts.pinned ? 3 : opts.kind === 'preference' ? 2.2 : 1.5,
+      data: { pinned: !!opts.pinned, sources: opts.from ? [opts.from] : [], ...(opts.kind ? { kind: opts.kind } : {}) }
+    },
     ts
   );
   link(db, node.id, `project:${project}`);
@@ -325,6 +336,8 @@ export function ingestSession(db: MemoryDB, sessionId: string, events = readBuff
     if (m) addNote(db, project, m[1].trim(), p.ts, { pinned: true, from: sid });
   }
   if (lastAssistant) for (const n of extractNotes(lastAssistant.text)) addNote(db, project, n, lastAssistant.ts, { from: sid });
+  // Durable facts picked from the transcript at handoff time (decisions, root causes, preferences, commands).
+  for (const ev of events) if (ev.t === 'facts') for (const f of ev.items || []) if (f?.text) addNote(db, project, String(f.text).slice(0, 400), f.ts || ev.ts, { from: sid, kind: f.kind });
 
   recomputeTouches(db, project);
   session.data.ingestedAt = Date.now();
@@ -415,7 +428,16 @@ export function consolidate(db: MemoryDB, cfg: GrugConfig['memory'], now = Date.
       }
     }
 
-    // 3. Cap node count by score (projects, digests and pinned notes are kept).
+    // 3. Auto-captured facts get their own cap, so they never crowd out sessions and files.
+    const facts = Object.values(db.nodes)
+      .filter((n) => n.type === 'note' && n.project === project && n.data?.kind && !n.data?.pinned)
+      .sort((x, y) => score(y, cfg.halfLifeDays, now) - score(x, cfg.halfLifeDays, now));
+    for (const n of facts.slice(MAX_FACTS_PER_PROJECT)) {
+      removeNode(db, n.id);
+      rep.pruned++;
+    }
+
+    // 4. Cap node count by score (projects, digests and pinned notes are kept).
     recomputeTouches(db, project);
     const prunable = Object.values(db.nodes)
       .filter((n) => n.project === project && n.type !== 'project' && n.type !== 'digest' && !n.data?.pinned)

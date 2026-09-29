@@ -19,9 +19,10 @@ import { exportVault } from '../src/memory/vault.js';
 import { renderGraphHtml } from '../src/memory/graphhtml.js';
 import { findSymbol, handleMessage } from '../src/mcp.js';
 import { installClaudeCode, installDesktop, uninstall, MARK } from '../src/install.js';
-import { readRequests, summarize } from '../src/stats.js';
+import { readActivity, readRequests, summarize } from '../src/stats.js';
 import { runHook } from '../src/hooks.js';
 import { costOf } from '../src/tokens.js';
+import { projectTranscriptDir } from '../src/history.js';
 
 const ORIGINAL = { HOME: process.env.HOME, GRUG_HOME: process.env.GRUG_HOME, PATH: process.env.PATH, BASE: process.env.ANTHROPIC_BASE_URL };
 let tmp = '';
@@ -902,5 +903,256 @@ describe('history tool', () => {
     expect(out).not.toContain('unrelated output');
     const r = handleMessage({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'history', arguments: { query: 'undici', dir: cwd } } });
     expect(r.result.content[0].text).toContain('6.19');
+  });
+});
+
+// ---------------------------------------------------------------- v2.7 features
+const line = (type: 'user' | 'assistant', content: any, ts = new Date().toISOString(), extra: any = {}) =>
+  JSON.stringify({ type, timestamp: ts, message: { role: type, content }, ...extra });
+
+function writeTranscript(cwd: string, name: string, lines: string[]): string {
+  const dir = projectTranscriptDir(cwd);
+  fs.mkdirSync(dir, { recursive: true });
+  const f = path.join(dir, name);
+  fs.writeFileSync(f, lines.join('\n') + '\n');
+  return f;
+}
+
+function codeProject(name: string): string {
+  const cwd = path.join(tmp, name);
+  fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, 'package.json'), '{"name":"shop"}');
+  fs.writeFileSync(
+    path.join(cwd, 'src', 'webhook.ts'),
+    `import { db } from './db';\n\nexport function verifyStripeSignature(body: string, sig: string): boolean {\n  return sig.length > 0 && body.length > 0;\n}\n\nexport async function handleStripeWebhook(req: any) {\n  if (!verifyStripeSignature(req.body, req.sig)) throw new Error('bad sig');\n  await db.save(req.body);\n}\n`
+  );
+  fs.writeFileSync(path.join(cwd, 'src', 'db.ts'), `export const db = { save: async (x: any) => x };\n`);
+  fs.writeFileSync(path.join(cwd, 'src', 'cart.ts'), `import { db } from './db';\nexport function addToCart(id: string) { return db.save(id); }\n`);
+  return cwd;
+}
+
+describe('relevance', () => {
+  it('treats short acknowledgements as trivial and keeps identifiers', async () => {
+    const { isTrivialPrompt, queryTerms, rank } = await import('../src/relevance.js');
+    for (const p of ['ok', 'yes', 'go ahead', 'thanks!', 'fix it', '/clear', 'lgtm']) expect(isTrivialPrompt(p)).toBe(true);
+    expect(isTrivialPrompt('why does the stripe webhook retry twice')).toBe(false);
+    const t = queryTerms('speed up searchHistory in history.ts');
+    expect(t).toEqual(expect.arrayContaining(['searchhistory', 'search', 'history', 'history.ts', 'speed']));
+    // A rare term outranks a common one.
+    const docs = ['the test passed', 'the test failed', 'the test ran', 'ECONNRESET in the test'].map((d) => d.toLowerCase());
+    expect(rank(docs, ['test', 'econnreset'])[0].index).toBe(3);
+  });
+});
+
+describe('history cache + ranking', () => {
+  it('caches parsed transcripts by size/mtime and parses only appended lines', async () => {
+    const { historyHits, transcriptItems } = await import('../src/history.js');
+    const cwd = path.join(tmp, 'cached');
+    const f = writeTranscript(cwd, 'a.jsonl', [line('user', 'the payments worker crashes with ECONNRESET under load')]);
+    expect(historyHits(cwd, 'payments ECONNRESET').hits[0].item.text).toContain('ECONNRESET');
+    const cacheDir = path.join(paths.home(), 'cache', 'history');
+    expect(fs.readdirSync(cacheDir).length).toBe(1);
+    fs.appendFileSync(f, line('assistant', [{ type: 'text', text: 'Decision: pin undici to 6.19 because 6.20 drops keep-alive sockets.' }]) + '\n');
+    const items = transcriptItems(f)!;
+    expect(items.length).toBe(2); // old item kept from cache, new one parsed
+    expect(historyHits(cwd, 'undici keep-alive').hits[0].item.text).toContain('pin undici');
+    // grug's own injected blocks are never indexed
+    fs.appendFileSync(f, line('user', '[grugbrain recall: possibly relevant notes] undici undici undici') + '\n');
+    expect(transcriptItems(f)!.some((i) => i.text.includes('[grugbrain'))).toBe(false);
+  });
+});
+
+describe('auto-recall', () => {
+  async function setup() {
+    const cwd = codeProject('shop');
+    withMem((db) => {
+      addNote(db, projectKey(cwd), 'Stripe webhook retries must be idempotent: dedupe on event id before saving', Date.now(), { kind: 'decision' });
+      addNote(db, projectKey(cwd), 'Deploys go through fly.io, never from a laptop', Date.now(), { pinned: true });
+    });
+    writeTranscript(cwd, 'old.jsonl', [
+      line('user', 'the stripe webhook fails signature verification in staging', new Date(Date.now() - 3 * DAY).toISOString()),
+      line('assistant', [{ type: 'text', text: 'Root cause: the staging webhook secret was rotated; verifyStripeSignature used the old STRIPE_WEBHOOK_SECRET.' }], new Date(Date.now() - 3 * DAY).toISOString()),
+      line('user', 'unrelated: rename the cart button colour', new Date(Date.now() - 3 * DAY).toISOString())
+    ]);
+    const { buildGraphIndex } = await import('../src/graph.js');
+    buildGraphIndex(cwd);
+    return cwd;
+  }
+  function withMem(fn: (db: MemoryDB) => void) {
+    const db = loadMemory();
+    fn(db);
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(paths.memory(), JSON.stringify(db));
+  }
+
+  it('injects memory, code locations and earlier-session excerpts under the cap, once', async () => {
+    const cwd = await setup();
+    const cur = path.join(tmp, 'current.jsonl');
+    fs.writeFileSync(cur, line('user', 'stripe webhook signature: this is already in my context') + '\n');
+    const prompt = 'stripe webhook retries fail the signature check in verifyStripeSignature';
+    // A note the session brief already showed is not repeated by recall.
+    const start: any = await runHook('session-start', { session_id: 'r0', cwd, source: 'startup' });
+    expect(start.hookSpecificOutput.additionalContext).toContain('idempotent');
+    const r0: any = await runHook('user-prompt', { session_id: 'r0', cwd, prompt, transcript_path: cur });
+    expect(r0.hookSpecificOutput.additionalContext).not.toContain('idempotent');
+    const out: any = await runHook('user-prompt', { session_id: 'r1', cwd, prompt, transcript_path: cur });
+    const ctx: string = out.hookSpecificOutput.additionalContext;
+    expect(ctx.startsWith('[grugbrain recall: possibly relevant notes from memory/earlier sessions; verify before relying]')).toBe(true);
+    expect(ctx).toContain('idempotent');
+    expect(ctx).not.toContain('fly.io'); // pinned but unrelated
+    expect(ctx).toMatch(/src\/webhook\.ts.*verifyStripeSignature\(\) L3-5/);
+    expect(ctx).toContain('secret was rotated');
+    expect(ctx).not.toContain('already in my context'); // current session is in context already
+    expect(ctx).not.toContain('cart button');
+    // Memory is listed before code, code before history.
+    expect(ctx.indexOf('idempotent')).toBeLessThan(ctx.indexOf('webhook.ts'));
+    expect(ctx.indexOf('webhook.ts')).toBeLessThan(ctx.indexOf('secret was rotated'));
+    const { estimateTokens } = await import('../src/tokens.js');
+    expect(estimateTokens(ctx)).toBeLessThanOrEqual(800);
+    const kinds = readActivity().map((a: any) => a.kind);
+    expect(kinds).toEqual(expect.arrayContaining(['auto-recall', 'graph']));
+    // Same prompt again: nothing new to say.
+    const again: any = await runHook('user-prompt', { session_id: 'r1', cwd, prompt, transcript_path: cur });
+    expect(again?.hookSpecificOutput).toBeUndefined();
+    // After auto-compaction the context is gone, so recall may speak again.
+    await runHook('pre-compact', { session_id: 'r1', cwd, transcript_path: cur });
+    const after: any = await runHook('user-prompt', { session_id: 'r1', cwd, prompt, transcript_path: cur });
+    expect(after.hookSpecificOutput.additionalContext).toContain('idempotent');
+  });
+
+  it('stays quiet for trivial or unrelated prompts, respects the token cap and the toggle', async () => {
+    const cwd = await setup();
+    await runHook('session-start', { session_id: 'r2', cwd, source: 'startup' });
+    for (const prompt of ['ok', 'yes go ahead', 'write a haiku about autumn leaves falling']) {
+      const out: any = await runHook('user-prompt', { session_id: 'r2', cwd, prompt });
+      expect(out?.hookSpecificOutput).toBeUndefined();
+    }
+    const { setConfigValue } = await import('../src/config.js');
+    expect(() => setConfigValue('autoRecall.maxTokens', '50')).toThrow(/between 100 and 4000/);
+    expect(() => setConfigValue('autoRecall.enabled', 'maybe')).toThrow(/true or false/);
+    expect(() => setConfigValue('graphContext.mapTokens', '99999')).toThrow(/between/);
+    setConfigValue('autoRecall.maxTokens', '120');
+    const small: any = await runHook('user-prompt', { session_id: 'r3', cwd, prompt: 'the stripe webhook signature check fails, see verifyStripeSignature' });
+    const { estimateTokens } = await import('../src/tokens.js');
+    expect(estimateTokens(small.hookSpecificOutput.additionalContext)).toBeLessThanOrEqual(120);
+    setConfigValue('autoRecall.enabled', 'false');
+    const off: any = await runHook('user-prompt', { session_id: 'r4', cwd, prompt: 'the stripe webhook signature check fails, see verifyStripeSignature' });
+    expect(JSON.stringify(off || {})).not.toContain('possibly relevant notes');
+  });
+
+  it('stays fast on a large synthetic history', async () => {
+    const { historyHits, warmHistory } = await import('../src/history.js');
+    const { autoRecall } = await import('../src/recall.js');
+    const { loadConfig } = await import('../src/config.js');
+    const cwd = codeProject('big');
+    const words = 'alpha beta gamma delta build deploy cache queue worker retry schema index router token parser module'.split(' ');
+    for (let f = 0; f < 20; f++) {
+      const ls: string[] = [];
+      for (let i = 0; i < 1200; i++) {
+        const w = Array.from({ length: 60 }, (_, j) => words[(i * 7 + j * 3 + f) % words.length]).join(' ');
+        ls.push(line(i % 2 ? 'assistant' : 'user', i % 2 ? [{ type: 'text', text: w }] : w));
+      }
+      if (f === 7) ls.push(line('assistant', [{ type: 'text', text: 'Root cause: the flux capacitor overheats when QUANTUM_MODE is on.' }]));
+      writeTranscript(cwd, `s${f}.jsonl`, ls);
+    }
+    // Cold, with a time budget: returns within budget-ish, marks the result partial.
+    const t0 = Date.now();
+    const cold = historyHits(cwd, 'flux capacitor overheats', { budgetMs: 30 });
+    expect(Date.now() - t0).toBeLessThan(1500);
+    expect(cold.partial).toBe(true);
+    warmHistory(cwd); // what `grug warm` does in the background at session start
+    const t1 = Date.now();
+    const r = autoRecall({ cfg: loadConfig(), sessionId: 'lat', cwd, prompt: 'why does the flux capacitor overheat with QUANTUM_MODE' });
+    const ms = Date.now() - t1;
+    expect(r?.text).toContain('flux capacitor overheats');
+    expect(ms).toBeLessThan(400); // typical is well under 150ms; loose bound for slow CI
+  });
+});
+
+describe('graph-first code context', () => {
+  it('injects a compact code map and tool guidance at session start, only for code projects', async () => {
+    const cwd = codeProject('mapped');
+    const out: any = await runHook('session-start', { session_id: 'g1', cwd, source: 'startup' });
+    const ctx: string = out.hookSpecificOutput.additionalContext;
+    expect(ctx).toContain('[grugbrain code map');
+    expect(ctx).toContain('read_symbol');
+    expect(ctx).toContain('webhook.ts');
+    expect(ctx).toContain('db.ts (');
+    const { estimateTokens } = await import('../src/tokens.js');
+    expect(estimateTokens(ctx.slice(ctx.indexOf('[grugbrain code map')))).toBeLessThanOrEqual(640);
+    expect(readActivity().some((a: any) => a.kind === 'graph')).toBe(true);
+    const plain = path.join(tmp, 'notes');
+    fs.mkdirSync(plain);
+    const none: any = await runHook('session-start', { session_id: 'g2', cwd: plain, source: 'startup' });
+    expect(JSON.stringify(none || {})).not.toContain('code map');
+    const { setConfigValue } = await import('../src/config.js');
+    setConfigValue('graphContext.enabled', 'false');
+    const off: any = await runHook('session-start', { session_id: 'g3', cwd, source: 'startup' });
+    expect(JSON.stringify(off || {})).not.toContain('code map');
+  });
+});
+
+describe('durable fact capture', () => {
+  it('extracts decisions, root causes, preferences and working commands at handoff time, deduped', async () => {
+    const cwd = path.join(tmp, 'facts');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'f.jsonl');
+    const bash = (id: string, command: string) => ({ type: 'tool_use', id, name: 'Bash', input: { command } });
+    const result = (id: string, content: string, is_error = false) => ({ type: 'tool_result', tool_use_id: id, content, is_error });
+    fs.writeFileSync(t, [
+      line('user', 'Please always use pnpm in this repo, never npm.'),
+      line('assistant', [{ type: 'text', text: "Let me run the tests." }, bash('b1', 'pnpm test')]),
+      line('user', [result('b1', 'FAILED src/cart.test.ts\nexit code 1', true)]),
+      line('assistant', [{ type: 'text', text: 'The failure happens because the cart total is rounded before tax is applied. We chose to round only at checkout to match the invoice service.' }, bash('b2', 'pnpm test')]),
+      line('user', [result('b2', 'Tests 42 passed')]),
+      line('assistant', [bash('b3', 'export API_TOKEN=abc123 && pnpm run deploy')]),
+      line('user', [result('b3', 'ok')])
+    ].join('\n') + '\n');
+    await runHook('session-start', { session_id: 'f1', cwd, source: 'startup' });
+    await runHook('user-prompt', { session_id: 'f1', cwd, prompt: 'fix the cart rounding bug' });
+    await runHook('pre-compact', { session_id: 'f1', cwd, transcript_path: t });
+    await runHook('session-end', { session_id: 'f1', cwd, transcript_path: t });
+    const factEvents = readBuffer('f1').filter((e: any) => e.t === 'facts');
+    expect(factEvents.length).toBe(1); // the second handoff found nothing new
+    const texts = (factEvents[0] as any).items.map((f: any) => f.text).join('\n');
+    expect(texts).toContain('User preference: Please always use pnpm');
+    expect(texts).toMatch(/Root cause: The failure happens because the cart total is rounded/);
+    expect(texts).toContain('We chose to round only at checkout');
+    expect(texts).toContain('Command that works here: `pnpm test`');
+    expect(texts).not.toContain('abc123'); // secrets never stored
+    const db = loadMemory();
+    ingestSession(db, 'f1');
+    ingestSession(db, 'f1'); // idempotent
+    const notes = Object.values(db.nodes).filter((n) => n.type === 'note' && n.data?.kind);
+    expect(notes.map((n) => n.data.kind).sort()).toEqual(['cause', 'command', 'decision', 'preference']);
+    expect(notes.every((n) => n.touches === 0)).toBe(true);
+    // No pile-up: auto facts are capped per project, pinned notes untouched.
+    const p = projectKey(cwd);
+    for (let i = 0; i < 90; i++) addNote(db, p, `Decision number ${i} about subsystem ${'xyzw'.repeat(i % 7)} ${i * 13} zone${i}`, Date.now() - i * 1000, { kind: 'decision' });
+    addNote(db, p, 'pinned: keep this forever please', Date.now(), { pinned: true });
+    consolidate(db, defaultConfig().memory);
+    const left = Object.values(db.nodes).filter((n) => n.type === 'note' && n.project === p);
+    expect(left.filter((n) => n.data?.kind).length).toBeLessThanOrEqual(60);
+    expect(left.some((n) => n.data?.pinned)).toBe(true);
+    // Recall picks the captured fact up later.
+    fs.writeFileSync(paths.memory(), JSON.stringify(db));
+    const r: any = await runHook('user-prompt', { session_id: 'f2', cwd, prompt: 'the cart total rounding looks wrong again before tax' });
+    expect(r.hookSpecificOutput.additionalContext).toContain('rounded before tax');
+  });
+});
+
+describe('dashboard shows auto-recall and graph usage', () => {
+  it('counts the new activity kinds with average tokens', async () => {
+    const { recordActivity } = await import('../src/stats.js');
+    recordActivity({ kind: 'auto-recall', msg: 'x', tokens: -300 });
+    recordActivity({ kind: 'auto-recall', msg: 'y', tokens: -100 });
+    recordActivity({ kind: 'graph', msg: 'z', tokens: -500 });
+    const s = summarize();
+    expect(s.countByKind['auto-recall']).toBe(2);
+    expect(s.savedByKind['graph']).toBe(-500);
+    const { renderOnce } = await import('../src/tui/dashboard.js');
+    const text = renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '');
+    expect(text).toMatch(/auto-recall injections.*2×.*avg 200 tok/);
+    expect(text).toMatch(/graph context: maps \+ code hints.*1×/);
   });
 });
