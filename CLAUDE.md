@@ -1,0 +1,24 @@
+# grugbrain: project handoff (read this instead of old conversations)
+
+Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's Code tab). Repo: swaraj792725/grugbrain (the local clone may be named token-diet). TypeScript, built with tsup, tested with vitest (`npm test`; tests sandbox HOME, and must never touch the real ~/.claude).
+
+## Install / update (users)
+- `npx github:swaraj792725/grugbrain install`, then `grug update`, `grug doctor [--fix]`, `grug dash`.
+- npm publish is blocked (NPM_TOKEN needs bypass-2FA); deferred by the user.
+- Releases: bump the package.json version on main; release.yml then tags it and makes a GitHub Release plus a tarball.
+
+## Architecture (src/)
+- hooks.ts: SessionStart (terse style, handoff restore, memory brief), UserPromptSubmit (context alert, remember:/recall), PreToolUse (read guards), PostToolUse (test summary, output trim via updatedToolOutput `{stdout,stderr}`), Stop (meterTranscript), PreCompact/SessionEnd (handoff + maintain).
+- handoff.ts: builds a model-free handoff from the session log and transcript tail. history.ts: keyword search over past transcripts (MCP tool `history`).
+- meter.ts: measures real usage from ~/.claude/projects transcripts, because the Code tab bypasses the proxy (ANTHROPIC_BASE_URL is not honored there).
+- proxy/ (port 4747), mcp.ts (tools), install.ts (hooks, MCP, launchd/systemd, PATH launchers, applyTuning for autoCompactWindow / CLAUDE_CODE_AUTO_COMPACT_WINDOW / CLAUDE_CODE_SUBAGENT_MODEL), update.ts, tui/dashboard.ts, bench.ts.
+
+## Facts learned
+- Hooks cannot run /clear or /compact, and cannot replace conversation history. Context is cut only by auto-compaction (grug sets the window to 200k in v2.6.0) or /clear.
+- The user's data: about 10.7k replies/week, about $2.9k/week API-equivalent, an average context of about 500k/reply before 2.6.0, 99% cache hits, Opus.
+- Evaluated and rejected: a local LLM that summarizes the context every turn (too slow on entry-level hardware, and it can't hook into the Code tab). Worth doing later: a tiny local embedding model to rank history/recall results.
+- Never put `#` comments in shell commands given to the user (zsh saves them into the config).
+
+## Open items
+- Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction").
+- Watch the average context drop after 2.6.0; consider a default window of 120k.

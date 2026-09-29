@@ -244,7 +244,7 @@ export function advice(proxyUp: boolean | null): Advice[] {
     out.push({
       level: 'save',
       text: `Average context is ${fmtTokens(avgCtx)} tokens per reply (${fmtUsd(perReply)}/reply). Every reply re-reads it. Cost scales with context: halving it roughly halves the bill (≈ ${fmtUsd(week.costUsd / 2)}/week here).`,
-      cmd: 'type /clear when a task is done: grug hands off to the fresh session for free (skip /compact, it re-reads everything)'
+      cmd: 'grug auto-compacts at the autoCompact window and restores a handoff; cut deeper: grug config set autoCompact.windowTokens 120000'
     });
   }
   const outShare = week.outputTokens / Math.max(1, week.inputTokens + week.outputTokens);
