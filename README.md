@@ -1,92 +1,222 @@
-# 🥗 Token Diet (`@swaraj792725/token-diet`)
+# 🪨 grugbrain
 
-> **Put Claude on a Token Diet.**  
-> Zero-touch, system-wide token optimizer & context compressor for **macOS Claude Desktop**. Install once, forget forever, and automatically slash **70%+ tokens** across all future Claude sessions. Get **5x the value out of your $20/month Claude Pro plan**!
+> why use many token when few token do trick
 
----
+**grug make Claude use few token. grug remember for Claude. grug do alone. you do nothing.**
 
-## ⚡ Quick 10-Second Install
-
-Open Terminal on your Mac and run:
+Install once. grug sit between Claude Code and Anthropic API, trim fat, stick cache, guard big files, remember every session in small brain that never get fat. grug draw brain picture. grug write Obsidian notes. grug show cave dashboard.
 
 ```bash
-npx @swaraj792725/token-diet install
+npx grugbrain install
 ```
 
-> **Done!** Restart your Claude Desktop app. `token-diet` is now active in the background for **100% of your sessions**. You never have to configure or run it manually again.
+Restart Claude Code (and Claude Desktop). Done. Grug work now. Forever. No reminders.
+
+> Not on npm yet? Grug also install straight from GitHub:
+> `npx github:swaraj792725/token-diet install`
 
 ---
 
-## 🧐 How Does It Work?
+## grug see problem
 
-When you use Claude Desktop with large codebases or long chats, your context window fills up rapidly with:
-1. **Conversational fluff** ("Could you please help me write...", "In order to achieve this...", polite padding).
-2. **Gigantic source files** sent in full (2,000–10,000 tokens per file) just to inspect one function.
-3. **Flat multi-file dumps** where Claude reads dozens of files without understanding project architecture.
-4. **Repeated context re-evaluations** that miss Anthropic's KV prompt cache discount.
+Claude burn token on:
 
-### The 4-Pillar Token Diet Engine:
+| fat | how much | what grug do |
+|---|---|---|
+| same big prompt sent every turn, no cache | pay 100% each turn | **cache autopilot**: add cache breakpoints when app forget. Cache read cost 0.1×. |
+| giant `npm test` / log / build output | 10k–100k token each | **trim**: strip colour junk, squash repeat lines (`[×50]`), keep head + tail, say what cut |
+| same tool output twice in one chat | pay twice | **dedupe**: second copy become pointer to first |
+| `Read` whole 5,000-line file to find one function | ~30k token | **read guard**: say "grep first, read range". Ranged read always allowed. |
+| exploring repo file by file | 20–60k token | **repo map / outline / read_symbol** MCP tools: signatures, not bodies |
+| Claude chatty: preamble, recap, "let me know!" | output cost 5× input | **terse mode**: short answer. `full` = caveman talk. Code never shortened. |
+| every new session re-learn project from zero | many turn, many token | **memory**: small brief at start, recall on prompt, fixed budget |
 
-```
-┌────────────────────────────────────────────────────────┐
-│                   TOKEN DIET ENGINE                    │
-├─────────────────┬──────────────────┬───────────────────┤
-│ 🪨 CAVEMAN      │ 🕸️ GRAPHIFY       │ 💀 SKELETONIZER   │
-│ Prompt Fluff    │ Codebase Topology│ Function Bodies   │
-│ -40% to -70%    │ -98% File Dumps  │ -80% AST Signatures│
-├─────────────────┴──────────────────┴───────────────────┤
-│           🏷️ ANTHROPIC PROMPT CACHE OPTIMIZER          │
-│        Cache Boundaries -> 90% Cost / Token Discount   │
-└────────────────────────────────────────────────────────┘
-```
-
-1. **🪨 Caveman Context Compression**: Inspired by the famous `caveman` technique. It algorithmically detects and removes redundant pleasantries, boilerplate, and repetitive formatting while keeping 100% of code blocks, identifiers, and technical semantics intact. Saves **40%–70%** tokens per turn.
-2. **🕸️ Graphify Topology Indexer**: Inspired by `graphify`. Instead of feeding Claude 50 raw files (costing 50,000+ tokens), Graphify builds an in-memory topological dependency graph of your project (<1,000 tokens) showing file linkages, imports, and exports. Saves **up to 98%** on repository inspection.
-3. **💀 AST Symbol Skeletonizer**: Reads TypeScript, JavaScript, Python, Go, and Rust files and replaces implementation bodies (`{ /* implementation hidden */ }`) with pure interface signatures, type definitions, and class declarations. Saves **75%–85%** tokens when navigating code.
-4. **🏷️ Anthropic Prompt Cache Injection**: Automatically formats context blocks exceeding 1,024 tokens with Anthropic's `cache_control: { type: "ephemeral" }` boundaries. Claude Desktop reuses KV caches, yielding a **90% discount** on prompt processing.
+grug **measure**, not guess. Proxy read real `usage` from every API reply (input, output, cache read, cache write). Dashboard show real dollars. Things grug can only estimate (trim, read guard) say *estimate* on label.
 
 ---
 
-## 💥 How Powerful Is It?
+## grug brain (memory that never get fat)
 
-| Scenario | Standard Claude Desktop | With Token Diet (`@swaraj792725/token-diet`) | Savings |
-|---|---|---|---|
-| **Reading 10 Source Files** | ~25,000 tokens | ~3,500 tokens (AST Skeletonizer) | **86% Saved** |
-| **Exploring Project Architecture** | ~60,000 tokens (full files) | ~1,200 tokens (Graphify Topology) | **98% Saved** |
-| **Multi-Turn Chat History & Prompts** | ~8,000 tokens | ~2,800 tokens (Caveman Compression) | **65% Saved** |
-| **Repeated Prompt Turns** | 100% token cost | 10% token cost (Anthropic Prompt Caching) | **90% Discount** |
-| **Monthly Limit Longevity ($20 Pro)** | Hits limit in ~3–4 hours of heavy coding | **Runs for days without hitting message caps (5x longevity)** | **5x Value** |
+Normal memory file grow, grow, grow. Every session pay for all of it. Bad.
 
----
+grug brain is **graph**: projects · sessions · files · topics · notes · digests.
 
-## 🛠️ CLI Utilities
+- **auto capture**: hooks log prompts, files touched, commands, final answer. You type `remember: we deploy with fly.io` → pinned note.
+- **auto notes**: grug pick sentences like "root cause was…", "decided…", "never…" from Claude's last answer.
+- **decay**: every node lose score over time (half-life 14 days) unless used again.
+- **fold**: sessions older than 21 days squash into one monthly **digest** per project. Old buffers deleted.
+- **merge**: near-same notes become one note.
+- **cap**: max 400 nodes per project; weakest go first. Pinned notes stay.
+- **budget**: session brief ≤ 700 token, per-prompt recall ≤ 250 token, and only when something clearly match. Already-said things not repeated.
 
-Check your lifetime savings or use the compression tools directly from terminal:
+So: day 1 or day 300, context cost per session stay **flat**. Knowledge carry forward. That the multiplier.
+
+```text
+[grugbrain memory: shop-api, 23 past session(s). Auto-maintained; trust but verify against the code.]
+Last session (2h ago): "fix the stripe webhook retries"
+  ended with: Root cause was a missing await in src/stripe/webhook.ts; fixed by awaiting before commit.
+Remembered:
+- Never call Stripe from a DB transaction; enqueue instead
+Hot files: src/checkout.ts, src/stripe/webhook.ts, src/orders.ts
+```
+
+### grug draw brain
 
 ```bash
-# Check installation status & lifetime tokens saved
-npx @swaraj792725/token-diet status
-
-# Compress a prompt or context block directly
-npx @swaraj792725/token-diet compress "Could you please make sure to optimize this function in order to save costs?"
-
-# Generate a knowledge graph for any codebase
-npx @swaraj792725/token-diet graph ./src
-
-# Uninstall
-npx @swaraj792725/token-diet uninstall
+grug graph
 ```
 
+Open interactive graph (one HTML file, no internet): drag, zoom, search, filter by project/type, click node for detail. Auto-redrawn after each session at `~/.grug/graph.html`.
+
+![memory graph](docs/memory-graph.png)
+
+### grug write Obsidian
+
+Brain also written as markdown with `[[wikilinks]]` + frontmatter at `~/.grug/vault/grugbrain/`. Open in Obsidian → *Open folder as vault*. Graph view just work.
+
+Want it inside your own vault?
+
+```bash
+grug config set memory.vaultDir ~/Documents/MyVault
+```
+
+grug only write in `MyVault/grugbrain/` and only delete files grug made (they carry `generator: grugbrain`). Your notes safe.
+
 ---
 
-## 📋 System Requirements & Compatibility
+## grug cave dashboard
 
-- **macOS** (Apple Silicon M1/M2/M3/M4 or Intel)
-- **Claude Desktop App** (automatically detects `~/Library/Application Support/Claude/claude_desktop_config.json`)
-- **Node.js**: $\ge 18$
+```bash
+grug dash
+```
+
+```text
+ 🪨 grugbrain v2.0.0   proxy ● up :4747  hooks ✓  code-mcp ✓  desktop ✓  terse lite
+ 1 Overview  2 Activity  3 Memory  4 Advice                                    10:42:07
+────────────────────────────────────────────────────────────────────────────────────
+MEASURED  real API usage through the proxy
+                                         24h      7 days    all time
+  requests                                84         612       2,410
+  spend                                $3.12      $21.40      $88.10
+  saved by prompt cache (all)          $9.80      $61.22     $240.51
+    …where grug added the cache        $0.00       $1.10       $6.40
+  cache hit rate (7d)           ███████████████████░░░░░ 79%
+
+WHAT GRUG DID  (token counts here are estimates)
+  trimmed long tool output          ~412k tok       96×
+  deduped repeated tool results     —               14×
+  redirected huge full-file reads   ~188k tok       11×
+  outlines instead of full files    ~61k tok        40×
+  memory briefs + recalls (cost)    -9.8k tok       57×  context carried over
+14-DAY  spend ▂▃▅▂▁▇▃▄▅▃▂▆▄▃   cache-saved ▃▄▆▃▂█▄▅▆▄▃▇▅▄
+PROJECTION  at 7-day pace: $91.71/mo, without grug's changes ≈ $104.20/mo
+```
+
+- **1 Overview**: what grug did (measured + estimated), 14-day sparkline, monthly projection
+- **2 Activity**: live log of every action (trim, guard, cache, brief, recall, fold…)
+- **3 Memory**: projects, sessions, digests, notes, hot files, graph + vault paths (`g` opens graph)
+- **4 Advice**: what grug *would* do but can't do alone: low cache hit rate, too much top-tier model spend (with $ estimate), terse mode, broken install
+
+`grug dash --once` print it all without the TUI (for scripts / CI).
 
 ---
 
-## 📜 License
+## where grug work
 
-MIT © [swaraj792725](https://github.com/swaraj792725)
+| app | what grug do |
+|---|---|
+| **Claude Code** (CLI, IDE, desktop app's Code tab) | everything: proxy (cache, trim, dedupe, real stats), hooks (memory, read guard, terse), MCP tools |
+| **Claude Desktop** chat | MCP tools (`outline`, `read_symbol`, `repo_map`, `search`, `recall`, `remember`, `project_brief`…) + shared memory. Desktop's own API calls are private, so no proxy, no measured stats. |
+| **claude.ai** in browser | nothing. grug cannot reach inside browser. grug honest. |
+| your own app on the Anthropic SDK | set `ANTHROPIC_BASE_URL=http://127.0.0.1:4747` → proxy + stats |
+
+Pro/Max subscription or API key: both fine. Proxy pass auth headers through untouched. On a subscription you are limited by usage, not billed per token, so "$" in dashboard mean *API-equivalent value*. Fewer token still mean you hit limits later.
+
+---
+
+## grug safety rules
+
+- **fail open**: transform throw → original request sent. Upstream say 400 to optimized request → grug resend original untouched, log `fallback`.
+- **deterministic**: same conversation → same bytes → cache prefix stay stable.
+- **never touch** assistant turns or thinking blocks. Never add cache breakpoints when app already manage cache (Claude Code does).
+- **file reads never trimmed**: Claude asked for that content.
+- **config safety**: every file backed up to `~/.grug/backups/` first. Broken JSON config? grug **refuse to write** and tell you. Writes atomic.
+- **absolute paths**: Mac GUI apps don't see your shell `PATH`; grug use full node path.
+- **keep your gateway**: already have `ANTHROPIC_BASE_URL`? grug chain to it, restore it on uninstall.
+- **always alive**: launchd (macOS) / systemd `--user` (Linux) keep daemon up; SessionStart hook restart it if needed. `grug doctor` check all.
+- **local only**: no telemetry. Data live in `~/.grug`.
+
+---
+
+## grug commands
+
+```text
+grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
+grug dash [--once]              TUI dashboard
+grug doctor                     check everything, say how to fix
+grug uninstall [--purge]        remove (keeps memory unless --purge)
+
+grug graph                      open memory graph
+grug vault                      rebuild Obsidian vault, print path
+grug brief [dir]                what grug would tell Claude about a project
+grug recall <query>             search memory
+grug remember <text>            pin note for current project
+grug maintain                   ingest + consolidate now (normally automatic)
+
+grug map [dir] [--budget 1500]  ranked repo map under token budget
+grug outline <file>             skeleton of a source file
+grug compress <text | ->        strip filler from text you'll reuse (e.g. system prompt)
+
+grug config                     show config
+grug config set <key> <value>   e.g. terse full · readGuard.maxBytes 100000 · memory.briefTokens 500
+grug savings                    one-line summary
+```
+
+### config grug understand
+
+| key | default | what |
+|---|---|---|
+| `terse` | `lite` | `off` · `lite` (concise) · `full` (caveman talk) |
+| `port` | `4747` | proxy port |
+| `upstream` | `https://api.anthropic.com` | where proxy forward to |
+| `proxy.autoCache` | `true` | add cache breakpoints when client set none |
+| `proxy.trimToolResults` | `true` | trim giant tool output |
+| `proxy.dedupeReads` | `true` | replace repeated identical tool outputs |
+| `proxy.trimThresholdChars` | `24000` | trim only above this |
+| `readGuard.enabled` / `maxBytes` | `true` / `60000` | redirect full reads of bigger files |
+| `memory.enabled` | `true` | memory capture + brief + recall |
+| `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
+| `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |
+| `memory.vaultDir` | `~/.grug/vault` | Obsidian output |
+
+---
+
+## grug honest about limits
+
+- Claude Code already cache well. There grug's cache autopilot mostly idle; real wins are trim, read guard, memory, terse, advice. Dashboard split "cache saved (all)" from "where grug added cache" so grug not steal credit.
+- Memory notes come from rules, not an LLM. Good at "what files, what asked, how it ended, what you told it to remember". Not perfect summaries. Zero extra API cost.
+- Trim and read-guard savings are estimates (chars ÷ ~3.6). Cache savings and spend are real numbers from the API.
+- Model routing (Opus → Sonnet/Haiku) is advice only. grug never switch your model behind your back.
+
+---
+
+## for the grug who publish (maintainer)
+
+`E404 Not Found - GET https://registry.npmjs.org/...` mean package never published to public npm (old setup pushed to GitHub Packages, which `npx` don't read). Fix:
+
+1. Make npm account → create **Automation** access token.
+2. GitHub repo → Settings → Secrets → Actions → add `NPM_TOKEN`.
+3. Bump version in `package.json`, then create a GitHub Release (or push tag `v2.0.0`). Workflow `publish.yml` test, build, publish with provenance.
+
+Or by hand: `npm login && npm publish --access public`.
+
+Dev:
+
+```bash
+npm install
+npm test          # vitest, sandboxed HOME, never touch your real config
+npm run typecheck
+npm run build     # dist/cli.js is one self-contained file
+```
+
+MIT © swaraj792725

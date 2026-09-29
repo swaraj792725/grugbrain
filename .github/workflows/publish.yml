@@ -1,32 +1,35 @@
-name: Publish Package
+name: Publish to npm
 
 on:
-  push:
-    branches:
-      - main
-      - master
   release:
-    types: [created]
+    types: [published]
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write # npm provenance
 
 jobs:
-  build-and-publish:
+  publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@swaraj792725'
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - name: Publish to GitHub Packages
-        if: env.NPM_TOKEN != ''
-        run: npm publish
+      - name: Skip if this version is already on npm
+        id: check
+        run: |
+          V=$(node -p "require('./package.json').version")
+          if npm view "grugbrain@$V" version >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Publish
+        if: steps.check.outputs.exists == 'false'
+        run: npm publish --provenance --access public
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

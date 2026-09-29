@@ -1,45 +1,63 @@
 {
-  "name": "@swaraj792725/token-diet",
-  "version": "1.0.0",
-  "description": "Put Claude on a Token Diet. Zero-touch system daemon & MCP server for macOS Claude Desktop that slashes token consumption by 70%+ across all sessions automatically (Caveman + Graphify + Symbol Skeleton + Anthropic Prompt Cache)",
+  "name": "grugbrain",
+  "version": "2.0.0",
+  "description": "Grug make Claude use few token. Zero-touch token saver + self-maintaining memory graph for Claude Code & Claude Desktop: API proxy with prompt-cache autopilot, tool-output trimming, read guard, repo maps, code outlines, Obsidian vault, TUI dashboard.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
   "bin": {
-    "token-diet": "./dist/cli.js",
-    "tokendiet": "./dist/cli.js",
-    "claude-token-saver": "./dist/cli.js"
+    "grugbrain": "dist/cli.js",
+    "grug": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsup",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "prepublishOnly": "npm run build"
+    "prepare": "tsup",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/swaraj792725/token-diet.git"
   },
+  "homepage": "https://github.com/swaraj792725/token-diet#readme",
+  "bugs": "https://github.com/swaraj792725/token-diet/issues",
   "keywords": [
     "claude",
-    "token-diet",
-    "token-saver",
-    "mcp",
-    "mcp-server",
-    "context-compressor",
-    "caveman",
-    "graphify",
+    "claude-code",
     "claude-desktop",
     "anthropic",
-    "prompt-caching"
+    "mcp",
+    "mcp-server",
+    "token-saver",
+    "prompt-caching",
+    "memory",
+    "knowledge-graph",
+    "obsidian",
+    "caveman",
+    "grug",
+    "llm-cost"
   ],
   "author": "swaraj792725",
   "license": "MIT",
   "publishConfig": {
     "access": "public",
-    "registry": "https://npm.pkg.github.com"
+    "registry": "https://registry.npmjs.org/"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
