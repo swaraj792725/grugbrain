@@ -15,7 +15,8 @@ import { writeGraphHtml } from './memory/graphhtml.js';
 import { withMemoryLock } from './memory/maintain.js';
 import { addNote, loadMemory, MemoryDB, projectKey, projectNodes, saveMemory } from './memory/store.js';
 import { recordActivity, summarize } from './stats.js';
-import { fmtTokens, fmtUsd } from './tokens.js';
+import { estimateTokens, fmtTokens, fmtUsd } from './tokens.js';
+import { searchHistory } from './history.js';
 
 const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const MAX_FILE = 5 * 1024 * 1024;
@@ -24,7 +25,8 @@ const INSTRUCTIONS = `grugbrain saves tokens. Prefer its tools over reading whol
 - outline(path) before reading any large source file; then read_symbol or read_lines for just what you need.
 - repo_map(dir) instead of listing/reading many files to learn a codebase.
 - search(pattern, dir) to locate code before reading.
-- recall(query) to check memory of past sessions before re-exploring; remember(text) for durable facts/decisions.`;
+- recall(query) to check memory of past sessions before re-exploring; remember(text) for durable facts/decisions.
+- history(query) to fetch an exact detail from earlier in this project's conversations (e.g. after compaction) instead of guessing.`;
 
 type Json = any;
 
@@ -73,6 +75,19 @@ const TOOLS = [
         max: { type: 'number', description: 'Max matches (default 60)' }
       },
       required: ['pattern', 'dir']
+    }
+  },
+  {
+    name: 'history',
+    description:
+      "Search this project's earlier Claude Code conversations (full transcripts, including before compaction or /clear) and return only the matching excerpts: what the user asked, what was decided, errors, command output. Use it instead of guessing about earlier context.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Words to find: error text, filename, function, topic, decision' },
+        dir: { type: 'string', description: 'Project directory (default: current)' }
+      },
+      required: ['query']
     }
   },
   {
@@ -209,6 +224,11 @@ export function callTool(name: string, args: Json): string {
         }
       }
       return out.length ? out.join('\n') + (total > max ? `\n(+${total - max} more matches; narrow the pattern)` : '') : 'No matches.';
+    }
+    case 'history': {
+      const out = searchHistory(args.dir || process.cwd(), String(args.query || ''));
+      recordActivity({ kind: 'history', msg: `History lookup: ${String(args.query).slice(0, 60)}`, tokens: -estimateTokens(out) });
+      return out;
     }
     case 'recall': {
       const db = loadMemory();

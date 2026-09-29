@@ -270,6 +270,10 @@ async function main() {
         if (!pos[2] || pos[3] === undefined) throw new Error('usage: grug config set <key> <value>');
         setConfigValue(pos[2], pos.slice(3).join(' '));
         console.log(`set ${pos[2]} = ${pos.slice(3).join(' ')}`);
+        if (/^(autoCompact|routing)\./.test(pos[2])) {
+          const { applyTuningNow } = await import('./install.js');
+          printSteps([applyTuningNow()]);
+        }
       } else if (sub === 'get') {
         const v = pos[2].split('.').reduce((o: any, k) => (o ? o[k] : undefined), loadConfig());
         console.log(typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v));

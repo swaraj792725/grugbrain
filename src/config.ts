@@ -72,6 +72,14 @@ export interface GrugConfig {
     enabled: boolean;
     firstTokens: number;
   };
+  /** Let Claude Code compact on its own at this context size (0 = leave Claude Code's default). grug restores its handoff afterwards. */
+  autoCompact: {
+    windowTokens: number;
+  };
+  /** Model for Claude Code subagents ('' = same as the main conversation), e.g. sonnet or haiku. */
+  routing: {
+    subagentModel: string;
+  };
   /** Carry a session over to a fresh one: written on /clear, session end, and context alerts. */
   handoff: {
     enabled: boolean;
@@ -126,6 +134,12 @@ export function defaultConfig(): GrugConfig {
       enabled: true,
       firstTokens: 150000
     },
+    autoCompact: {
+      windowTokens: 200000
+    },
+    routing: {
+      subagentModel: ''
+    },
     handoff: {
       enabled: true,
       maxTokens: 1200,
@@ -153,7 +167,7 @@ function deepMerge<T>(base: T, over: any): T {
   return out;
 }
 
-const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'] };
+const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'] };
 
 export function loadConfig(): GrugConfig {
   const raw = readJson(paths.config());
@@ -188,6 +202,8 @@ export function setConfigValue(key: string, value: string): GrugConfig {
   } else if (kind === 'number') {
     if (v === '' || !Number.isFinite(Number(v)) || Number(v) < 0) throw new Error(`${key} must be a number ≥ 0, got "${value}"${hint}`);
     v = Number(v);
+    if (key === 'autoCompact.windowTokens' && v !== 0 && (v < 100000 || v > 1000000))
+      throw new Error(`${key} must be 0 (Claude Code default) or between 100000 and 1000000`);
   } else if (ENUMS[key] && !ENUMS[key].includes(v)) {
     throw new Error(`${key} must be one of: ${ENUMS[key].join(', ')}; got "${value}"${hint}`);
   } else if (kind === 'object') throw new Error(`${key} is a group; set one of its keys (see: grug config)`);

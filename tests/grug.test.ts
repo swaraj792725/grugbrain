@@ -788,6 +788,8 @@ describe('context alert + handoff', () => {
     JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id, model: 'claude-opus-5-5', content: [{ type: 'text', text }, ...extra], usage: { input_tokens: 10, cache_read_input_tokens: ctx - 10, cache_creation_input_tokens: 0, output_tokens: 0 } } });
 
   it('alerts the user (only) once per level and leaves a handoff', async () => {
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(paths.config(), JSON.stringify({ autoCompact: { windowTokens: 0 } }));
     const cwd = path.join(tmp, 'shop');
     fs.mkdirSync(cwd);
     const t = path.join(tmp, 'ctx.jsonl');
@@ -828,5 +830,77 @@ describe('context alert + handoff', () => {
     expect(ctx).toContain('retries still pending');
     const again: any = await runHook('session-start', { session_id: 'newer', cwd, source: 'startup' });
     expect(JSON.stringify(again || {})).not.toContain('grugbrain handoff');
+  });
+});
+
+
+// ---------------------------------------------------------------- v2.6 features
+describe('auto-compaction + restore', () => {
+  it('installer manages autoCompactWindow/env and restores the previous values', () => {
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, JSON.stringify({ autoCompactWindow: 500000, env: { KEEP: '1' } }));
+    installClaudeCode(false);
+    const s1 = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(s1.autoCompactWindow).toBe(200000);
+    expect(s1.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+    expect(s1.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+    installClaudeCode(false); // idempotent, still remembers the original 500000
+    uninstall();
+    const s2 = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(s2.autoCompactWindow).toBe(500000);
+    expect(s2.env).toEqual({ KEEP: '1' });
+  });
+
+  it('config set applies routing/auto-compact changes to Claude Code at once', async () => {
+    const { setConfigValue } = await import('../src/config.js');
+    const { applyTuningNow } = await import('../src/install.js');
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, '{}');
+    expect(() => setConfigValue('autoCompact.windowTokens', '50000')).toThrow(/100000/);
+    expect(() => setConfigValue('routing.subagentModel', 'gpt')).toThrow(/one of/);
+    setConfigValue('routing.subagentModel', 'sonnet');
+    setConfigValue('autoCompact.windowTokens', '0');
+    applyTuningNow();
+    const s = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(s.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
+    expect(s.autoCompactWindow).toBeUndefined();
+  });
+
+  it('after auto-compaction the same session gets its own handoff back', async () => {
+    const cwd = path.join(tmp, 'svc');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'c.jsonl');
+    fs.writeFileSync(t, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'z', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'Rate limiter wired into the API gateway; load test still to run.' }], usage: { input_tokens: 1, cache_read_input_tokens: 190000, output_tokens: 1 } } }) + '\n');
+    await runHook('session-start', { session_id: 'long', cwd, source: 'startup' });
+    await runHook('user-prompt', { session_id: 'long', cwd, transcript_path: t, prompt: 'add rate limiting to the gateway' });
+    await runHook('pre-compact', { session_id: 'long', cwd, transcript_path: t });
+    const out: any = await runHook('session-start', { session_id: 'long', cwd, source: 'compact' });
+    const ctx = out.hookSpecificOutput.additionalContext;
+    expect(ctx).toContain('Goal: add rate limiting to the gateway');
+    expect(ctx).toContain('load test still to run');
+    expect(ctx).toContain('`history` tool');
+  });
+});
+
+describe('history tool', () => {
+  it('finds exact earlier details in the project transcripts', async () => {
+    const { searchHistory, projectTranscriptDir } = await import('../src/history.js');
+    const cwd = path.join(tmp, 'my app');
+    const dir = projectTranscriptDir(cwd);
+    fs.mkdirSync(dir, { recursive: true });
+    const ts = new Date().toISOString();
+    fs.writeFileSync(path.join(dir, 's1.jsonl'), [
+      JSON.stringify({ type: 'user', timestamp: ts, message: { role: 'user', content: 'deploy fails with ECONNRESET on the payments worker' } }),
+      JSON.stringify({ type: 'assistant', timestamp: ts, message: { content: [{ type: 'text', text: 'Decision: we pin undici to 6.19 because 6.20 drops keep-alive sockets (ECONNRESET).' }] } }),
+      JSON.stringify({ type: 'user', timestamp: ts, message: { content: [{ type: 'tool_result', tool_use_id: 'x', content: 'unrelated output' }] } })
+    ].join('\n') + '\n');
+    const out = searchHistory(cwd, 'ECONNRESET undici');
+    expect(out).toContain('pin undici to 6.19');
+    expect(out).toContain('you: deploy fails with ECONNRESET');
+    expect(out).not.toContain('unrelated output');
+    const r = handleMessage({ jsonrpc: '2.0', id: 9, method: 'tools/call', params: { name: 'history', arguments: { query: 'undici', dir: cwd } } });
+    expect(r.result.content[0].text).toContain('6.19');
   });
 });

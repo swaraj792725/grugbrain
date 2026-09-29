@@ -49,18 +49,21 @@ grug **measure**, not guess. Proxy read real `usage` from every API reply (input
 
 ---
 
-## grug hand off (skip `/compact`)
+## grug keep context small (automatic)
 
-Long session = big context = every reply re-read all of it. Real install: **~500k tokens re-read per reply.** `/compact` make it worse first: it send whole conversation to Claude again just to write summary.
+Long session = big context = every reply re-read all of it. Real install: **~500k tokens re-read per reply.** Tool can't press `/clear` for you (Claude Code don't allow). But Claude Code can compact itself, and grug decide *when*:
 
-grug way:
+1. grug set Claude Code's auto-compact point to **200k** (not near 1M). No user action.
+2. Right before compaction: grug save a **handoff**: goal, latest asks, open todos, where it got to, files changed, recent commands. No AI call, no tokens.
+3. Right after: grug put the handoff into the fresh context, and tell Claude about the **`history` tool**: search the full old conversation for an exact detail instead of guessing or carrying it.
+4. You type `/clear` yourself when switching tasks? Same handoff, next session pick up.
 
-1. Context pass 150k → Claude Code show you one line: `context 480k tokens · ~$0.19/reply · type /clear` (only you see it, zero tokens).
-2. You type `/clear` (free, instant).
-3. grug already wrote a **handoff**: goal, latest asks, open todos, where it got to, files changed, recent commands. No AI call, no tokens to make.
-4. Fresh session start from the handoff: **~1k tokens instead of 500k.** Same work continue.
+Real Claude Code run: auto-compaction fired by itself → 120-token handoff restored → answer that needed pre-compaction content still correct → later replies ~40k tokens instead of 100k+.
 
-Measured on a real 711k-token session: handoff = 173 tokens.
+```bash
+grug config set autoCompact.windowTokens 300000   # compact later (100k–1M), 0 = Claude Code default
+grug config set routing.subagentModel sonnet      # subagents on Sonnet 5.5, main chat stays on your model
+```
 
 ## grug brain (memory that never get fat)
 
@@ -236,7 +239,9 @@ grug savings                    one-line summary
 | `testSummary.enabled` / `minChars` | `true` / `3000` | collapse test/build output |
 | `updateCheck` | `true` | GitHub release check every 6h, notify only |
 | `contextAlert.enabled` / `firstTokens` | `true` / `150000` | one-line notice when context passes 150k, 300k, 600k… |
-| `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work to the next session on `/clear` or session end |
+| `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
+| `autoCompact.windowTokens` | `200000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
+| `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
 | `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |

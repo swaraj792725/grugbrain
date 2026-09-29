@@ -44,7 +44,10 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
   if (process.env.GRUG_DEBUG === '1') {
     try {
       fs.mkdirSync(paths.logs(), { recursive: true });
-      fs.appendFileSync(path.join(paths.logs(), 'hook-input.jsonl'), JSON.stringify({ event, input }).slice(0, 20000) + '\n');
+      // Keep each line valid JSON: shorten big string fields instead of cutting the JSON.
+      const clip = (v: any): any =>
+        typeof v === 'string' ? (v.length > 2000 ? v.slice(0, 2000) + `…(+${v.length - 2000})` : v) : Array.isArray(v) ? v.slice(0, 50).map(clip) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, clip(x)])) : v;
+      fs.appendFileSync(path.join(paths.logs(), 'hook-input.jsonl'), JSON.stringify({ event, input: clip(input) }) + '\n');
     } catch {
       /* ignore */
     }
@@ -65,14 +68,17 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (style) parts.push(style);
       let handedOff = false;
       if (cfg.handoff.enabled) {
-        const h = takeHandoff(projectKey(cwd), sid, cfg.handoff.maxAgeHours);
+        const h = takeHandoff(projectKey(cwd), sid, cfg.handoff.maxAgeHours, input.source === 'compact');
         if (h) {
           parts.push(h.text);
           handedOff = true;
           const tok = estimateTokens(h.text);
           recordActivity({
             kind: 'handoff',
-            msg: `Continued from a ${Math.round(h.contextTokens / 1000)}k-token session with a ${tok}-token handoff`,
+            msg:
+              input.source === 'compact'
+                ? `Restored work after auto-compaction (${Math.round(h.contextTokens / 1000)}k-token context) with a ${tok}-token handoff`
+                : `Continued from a ${Math.round(h.contextTokens / 1000)}k-token session with a ${tok}-token handoff`,
             tokens: Math.max(0, h.contextTokens - tok),
             project: path.basename(cwd)
           });
@@ -297,7 +303,9 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
 function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: string, transcript: string | undefined, now: number): string | undefined {
   if (!cfg.contextAlert.enabled || !transcript) return undefined;
   const { tokens, model } = contextSize(transcript);
-  const first = Math.max(10000, cfg.contextAlert.firstTokens);
+  // With auto-compaction managed by grug there is nothing to do below ~1.2x the window.
+  const win = cfg.autoCompact.windowTokens;
+  const first = win > 0 ? Math.round(win * 1.2) : Math.max(10000, cfg.contextAlert.firstTokens);
   if (tokens < first) return undefined;
   const level = Math.floor(Math.log2(tokens / first)) + 1;
   const done = readBuffer(sid).filter((e) => e.t === 'alert').reduce((m, e: any) => Math.max(m, e.level || 0), 0);
@@ -313,9 +321,14 @@ function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: stri
   }
   const per = costPerReply(tokens, model);
   recordActivity({ kind: 'context-alert', msg: `Context reached ${Math.round(tokens / 1000)}k tokens (~$${per.toFixed(2)}/reply)`, project: path.basename(cwd) });
+  if (win > 0)
+    return (
+      `🪨 grugbrain: context is ${Math.round(tokens / 1000)}k tokens (~$${per.toFixed(2)}/reply) and Claude Code has not auto-compacted at ${Math.round(win / 1000)}k yet. ` +
+      `Type /clear when this task is done: grug hands the work to the fresh session (~1k tokens).`
+    );
   return (
     `🪨 grugbrain: this session's context is ${Math.round(tokens / 1000)}k tokens, so every reply re-reads it (~$${per.toFixed(2)}/reply in API terms). ` +
-    `When this task is done, type /clear: grug hands the work over to the fresh session (~1k tokens) at no cost; /compact would spend tokens re-reading everything.`
+    `When this task is done, type /clear: grug hands the work over to the fresh session (~1k tokens) at no cost.`
   );
 }
 
