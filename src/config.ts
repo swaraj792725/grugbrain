@@ -67,6 +67,17 @@ export interface GrugConfig {
   };
   /** Check GitHub releases for a newer grugbrain (once a day, notify only). */
   updateCheck: boolean;
+  /** Tell the user (not the model) when a session's context gets expensive; levels double from firstTokens. */
+  contextAlert: {
+    enabled: boolean;
+    firstTokens: number;
+  };
+  /** Carry a session over to a fresh one: written on /clear, session end, and context alerts. */
+  handoff: {
+    enabled: boolean;
+    maxTokens: number;
+    maxAgeHours: number;
+  };
   memory: {
     enabled: boolean;
     /** Token budget for the brief injected at session start. */
@@ -111,6 +122,15 @@ export function defaultConfig(): GrugConfig {
       minChars: 3000
     },
     updateCheck: true,
+    contextAlert: {
+      enabled: true,
+      firstTokens: 150000
+    },
+    handoff: {
+      enabled: true,
+      maxTokens: 1200,
+      maxAgeHours: 48
+    },
     memory: {
       enabled: true,
       briefTokens: 700,
@@ -133,9 +153,15 @@ function deepMerge<T>(base: T, over: any): T {
   return out;
 }
 
+const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'] };
+
 export function loadConfig(): GrugConfig {
   const raw = readJson(paths.config());
-  return deepMerge(defaultConfig(), raw.ok ? raw.value : {});
+  const cfg = deepMerge(defaultConfig(), raw.ok ? raw.value : {});
+  // Repair values saved by older versions without validation (e.g. "full # comment" typed in zsh).
+  const t = String(cfg.terse).trim().split(/\s+/)[0];
+  cfg.terse = (ENUMS.terse.includes(t) ? t : 'lite') as GrugConfig['terse'];
+  return cfg;
 }
 
 export function saveConfig(cfg: GrugConfig): void {
@@ -153,10 +179,18 @@ export function setConfigValue(key: string, value: string): GrugConfig {
   }
   const last = parts[parts.length - 1];
   if (!(last in cur)) throw new Error(`Unknown config key: ${key}`);
-  let v: any = value;
-  if (value === 'true') v = true;
-  else if (value === 'false') v = false;
-  else if (value !== '' && !isNaN(Number(value)) && typeof cur[last] === 'number') v = Number(value);
+  const hint = /(^|\s)#/.test(value) ? ` (zsh passes "# comments" as arguments: leave them off)` : '';
+  let v: any = value.trim();
+  const kind = typeof cur[last];
+  if (kind === 'boolean') {
+    if (v !== 'true' && v !== 'false') throw new Error(`${key} must be true or false, got "${value}"${hint}`);
+    v = v === 'true';
+  } else if (kind === 'number') {
+    if (v === '' || !Number.isFinite(Number(v)) || Number(v) < 0) throw new Error(`${key} must be a number ≥ 0, got "${value}"${hint}`);
+    v = Number(v);
+  } else if (ENUMS[key] && !ENUMS[key].includes(v)) {
+    throw new Error(`${key} must be one of: ${ENUMS[key].join(', ')}; got "${value}"${hint}`);
+  } else if (kind === 'object') throw new Error(`${key} is a group; set one of its keys (see: grug config)`);
   cur[last] = v;
   saveConfig(cfg);
   return cfg;

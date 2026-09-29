@@ -37,6 +37,8 @@ export type ActivityKind =
   | 'cache-miss'
   | 'bench'
   | 'update'
+  | 'context-alert'
+  | 'handoff'
   | 'brief'
   | 'recall'
   | 'remember'

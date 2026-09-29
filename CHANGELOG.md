@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.5.0
+
+- **Handoffs instead of `/compact`.** `/compact` sends the whole conversation to the model again to summarize it. With grug, just type `/clear` (free): grug writes a handoff from what it already recorded (goal, latest requests, open todos, where it got to, files changed/read, recent commands; no model call) and the fresh session starts from it: ~1k tokens instead of the old context. Also written at session end and on context alerts; used once, by the next session in the same project.
+- **Context-size alert.** When a session's context passes 150k tokens (then 300k, 600k…), Claude Code shows you a one-line notice with the size and ~cost per reply, suggesting `/clear` with a handoff. Shown to you only, never sent to Claude.
+- **Dashboard:** cost per reply and average context per reply; handoffs and alerts in "what grug did"; advice when average context is large (the biggest cost driver on real installs).
+- **Config validation:** `grug config set` rejects invalid values (enums, booleans, numbers) and warns about `# comments` typed in zsh; bad values saved by older versions are repaired on load.
+- New settings: `contextAlert.enabled` / `contextAlert.firstTokens`, `handoff.enabled` / `handoff.maxTokens` / `handoff.maxAgeHours`.
+
 ## 2.4.1
 
 - Usage appears right away: `grug doctor`, `grug dash` and the background service (every 30 min) catch up on recent Claude Code transcripts in `~/.claude/projects`, so numbers don't wait for the next reply and nothing is lost if a hook times out. Offsets are shared per transcript file with the Stop hook, so nothing is counted twice.

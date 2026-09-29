@@ -767,3 +767,66 @@ describe('transcript catch-up', () => {
     expect(readRequests()[0].project).toBe('shop');
   });
 });
+
+// ---------------------------------------------------------------- v2.5 features
+describe('config validation', () => {
+  it('rejects bad values with a hint and repairs old saved ones', async () => {
+    const { setConfigValue, loadConfig } = await import('../src/config.js');
+    expect(() => setConfigValue('terse', 'full # caveman-style short answers')).toThrow(/# comments/);
+    expect(() => setConfigValue('readGuard.enabled', 'yes')).toThrow(/true or false/);
+    expect(() => setConfigValue('memory.briefTokens', 'lots')).toThrow(/number/);
+    expect(() => setConfigValue('memory', '1')).toThrow(/group/);
+    setConfigValue('terse', 'full');
+    expect(loadConfig().terse).toBe('full');
+    fs.writeFileSync(paths.config(), JSON.stringify({ terse: 'full # caveman-style short answers, now from grug' }));
+    expect(loadConfig().terse).toBe('full');
+  });
+});
+
+describe('context alert + handoff', () => {
+  const assistant = (id: string, ctx: number, text = 'ok', extra: any[] = []) =>
+    JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id, model: 'claude-opus-5-5', content: [{ type: 'text', text }, ...extra], usage: { input_tokens: 10, cache_read_input_tokens: ctx - 10, cache_creation_input_tokens: 0, output_tokens: 0 } } });
+
+  it('alerts the user (only) once per level and leaves a handoff', async () => {
+    const cwd = path.join(tmp, 'shop');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'ctx.jsonl');
+    fs.writeFileSync(t, assistant('a1', 200000) + '\n');
+    await runHook('session-start', { session_id: 'big', cwd, source: 'startup' });
+    const a: any = await runHook('user-prompt', { session_id: 'big', cwd, transcript_path: t, prompt: 'add coupon support to checkout' });
+    expect(a.systemMessage).toMatch(/200k tokens/);
+    expect(a.systemMessage).toMatch(/\/clear/);
+    expect(JSON.stringify(a.hookSpecificOutput || {})).not.toMatch(/200k/); // never sent to Claude
+    const b: any = await runHook('user-prompt', { session_id: 'big', cwd, transcript_path: t, prompt: 'and the tests too please' });
+    expect(b?.systemMessage).toBeUndefined();
+    fs.appendFileSync(t, assistant('a2', 420000) + '\n');
+    const c: any = await runHook('user-prompt', { session_id: 'big', cwd, transcript_path: t, prompt: 'now refactor the cart module' });
+    expect(c.systemMessage).toMatch(/420k tokens/);
+    const { loadHandoff } = await import('../src/handoff.js');
+    expect(loadHandoff(projectKey(cwd))?.text).toContain('add coupon support to checkout');
+  });
+
+  it('/clear hands the work to the next session exactly once', async () => {
+    const cwd = path.join(tmp, 'api');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'h.jsonl');
+    const todo = { type: 'tool_use', id: 't', name: 'TodoWrite', input: { todos: [{ content: 'write migration', status: 'completed' }, { content: 'wire webhook retries', status: 'in_progress' }] } };
+    fs.writeFileSync(t, assistant('h1', 300000, 'Webhook handler done; retries still pending.', [todo]) + '\n');
+    await runHook('session-start', { session_id: 'old', cwd, source: 'startup' });
+    await runHook('user-prompt', { session_id: 'old', cwd, transcript_path: t, prompt: 'build the stripe webhook handler' });
+    await runHook('post-tool', { session_id: 'old', cwd, tool_name: 'Edit', tool_input: { file_path: path.join(cwd, 'src/webhook.ts') } });
+    await runHook('post-tool', { session_id: 'old', cwd, tool_name: 'Bash', tool_input: { command: 'npm test' } });
+    await runHook('session-end', { session_id: 'old', cwd, transcript_path: t, reason: 'clear' });
+    const fresh: any = await runHook('session-start', { session_id: 'new', cwd, source: 'clear' });
+    const ctx = fresh.hookSpecificOutput.additionalContext;
+    expect(ctx).toContain('grugbrain handoff');
+    expect(ctx).toContain('Goal: build the stripe webhook handler');
+    expect(ctx).toContain('[in_progress] wire webhook retries');
+    expect(ctx).not.toContain('write migration');
+    expect(ctx).toContain('src/webhook.ts');
+    expect(ctx).toContain('npm test');
+    expect(ctx).toContain('retries still pending');
+    const again: any = await runHook('session-start', { session_id: 'newer', cwd, source: 'startup' });
+    expect(JSON.stringify(again || {})).not.toContain('grugbrain handoff');
+  });
+});
