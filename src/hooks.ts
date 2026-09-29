@@ -16,6 +16,7 @@ import { addNote, appendBuffer, BufferEvent, loadMemory, projectKey, readBuffer,
 import { recordActivity } from './stats.js';
 import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
+import { meterTranscript } from './meter.js';
 
 export interface HookInput {
   session_id?: string;
@@ -235,6 +236,11 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     }
 
     case 'stop': {
+      try {
+        meterTranscript(sid, input.transcript_path, path.basename(cwd));
+      } catch {
+        /* metering is best-effort */
+      }
       const text = lastAssistantText(input.transcript_path);
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
       return null;
@@ -242,6 +248,11 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
 
     case 'session-end':
     case 'pre-compact': {
+      try {
+        meterTranscript(sid, input.transcript_path, path.basename(cwd));
+      } catch {
+        /* best-effort */
+      }
       const text = lastAssistantText(input.transcript_path);
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
       if (event === 'session-end') appendBuffer(sid, { t: 'end', ts: now, reason: input.reason });

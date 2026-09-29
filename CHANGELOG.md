@@ -2,6 +2,13 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.4.0
+
+- **Measures real usage from Claude Code session transcripts.** The Claude desktop app's Code tab manages its own API connection and never goes through grug's proxy; grug now reads each reply's exact token usage from the session transcript (via the Stop/SessionEnd/PreCompact hooks): spend, cache hits and savings show up in `grug dash` for every session. Replies are de-duplicated, only new bytes are read, and traffic the proxy already recorded is never counted twice.
+- **`grug doctor --fix` removes leftovers of uninstalled tools**: hooks, status lines and MCP servers whose program no longer exists (e.g. after uninstalling caveman), with backups. Plain `grug doctor` lists them.
+- Doctor reports proxied calls and transcript-measured replies separately; the "bypass" warning only fires when neither sees usage.
+- Wider dashboard columns.
+
 ## 2.3.2
 
 - `grug doctor` and the dashboard warn when Claude Code sessions run but none of their API calls reach grug's proxy (e.g. another proxy tool owns `ANTHROPIC_BASE_URL`), instead of showing all green.

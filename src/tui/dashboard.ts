@@ -76,10 +76,10 @@ function overview(width: number): string[] {
   const all = summarize(0);
   const week = summarize(now - 7 * DAY);
   const day = summarize(now - DAY);
-  const col = (s: string) => pad(s, 12, true);
+  const col = (s: string) => pad(s, 15, true);
   const row = (label: string, f: (s: Summary) => string) => `  ${pad(label, 30)}${col(f(day))}${col(f(week))}${col(f(all))}`;
   const L: string[] = [];
-  L.push(bold('MEASURED') + dim('  real API usage through the proxy') + pad('', 0));
+  L.push(bold('MEASURED') + dim('  real token usage (proxy + session transcripts)'));
   L.push(dim(`  ${pad('', 30)}${col('24h')}${col('7 days')}${col('all time')}`));
   L.push(row('requests', (s) => s.requests.toLocaleString()));
   L.push(row('spend', (s) => fmtUsd(s.costUsd)));
@@ -218,7 +218,7 @@ export function advice(proxyUp: boolean | null): Advice[] {
   if (h.proxyConfigured && proxyUp === false)
     out.push({ level: 'fix', text: 'Claude Code points at the proxy but it is not running. Claude Code requests will fail until it is up.', cmd: 'grug daemon &   # or: grug install' });
   const traffic = trafficCheck();
-  if (h.proxyConfigured && traffic.sessions > 0 && traffic.requests === 0)
+  if (h.proxyConfigured && traffic.sessions > 0 && traffic.requests === 0 && traffic.metered === 0)
     out.push({ level: 'fix', text: `Claude Code ran ${traffic.sessions} session(s) today but no API calls reached grug's proxy: something else (another proxy tool?) sets its base URL. Measured stats stay at 0 until fixed.`, cmd: 'in Claude Code: /status (look at the base URL)' });
   if (!h.proxyConfigured && cfg.proxy.enabled) out.push({ level: 'info', text: 'Proxy not wired into Claude Code, so measured stats and in-flight trimming are off.', cmd: 'grug install' });
   if (week.requests >= 20 && week.cacheHitRate < 0.5)

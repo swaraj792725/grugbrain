@@ -23,6 +23,8 @@ export interface RequestEvent {
   project?: string;
   /** Set for synthetic traffic (e.g. `grug bench`); excluded from dashboard totals. */
   tag?: string;
+  /** 'transcript' = measured from the session transcript (proxy not in the path). */
+  source?: 'proxy' | 'transcript';
 }
 
 export type ActivityKind =
@@ -188,7 +190,7 @@ export function summarize(sinceMs = 0): Summary {
  * session; proxied API calls land in events.jsonl. Sessions but zero calls = something else
  * (another proxy tool, an app-level setting) points Claude Code elsewhere.
  */
-export function trafficCheck(sinceMs = Date.now() - 24 * 3600 * 1000): { sessions: number; requests: number } {
+export function trafficCheck(sinceMs = Date.now() - 24 * 3600 * 1000): { sessions: number; requests: number; metered: number } {
   let sessions = 0;
   try {
     for (const f of fs.readdirSync(paths.sessions())) {
@@ -201,6 +203,7 @@ export function trafficCheck(sinceMs = Date.now() - 24 * 3600 * 1000): { session
   } catch {
     /* no sessions yet */
   }
-  const requests = readRequests().filter((r) => r.ts >= sinceMs && !r.tag).length;
-  return { sessions, requests };
+  const reqs = readRequests().filter((r) => r.ts >= sinceMs && !r.tag);
+  const metered = reqs.filter((r) => r.source === 'transcript').length;
+  return { sessions, requests: reqs.length - metered, metered };
 }

@@ -48,7 +48,7 @@ const HELP = `
   grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
                                   one-time setup; then grug works alone forever
   grug dash [--once]              live TUI dashboard: what grug did, what it would do
-  grug doctor                     check everything, say how to fix
+  grug doctor [--fix]             check everything, say how to fix (--fix: remove broken leftovers of uninstalled tools)
   grug uninstall [--purge]        remove from Claude Code/Desktop (keeps memory unless --purge)
 
   grug graph [--no-open]          open the interactive memory graph
@@ -109,9 +109,11 @@ async function main() {
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
       {
         const t = trafficCheck();
-        if (h.proxyConfigured && t.sessions > 0 && t.requests === 0)
-          console.log(`❌ Claude Code ran ${t.sessions} session(s) in the last 24h but none of their API calls went through grug's proxy.\n   Something else points Claude Code at another URL (e.g. another proxy tool). In Claude Code run /status to see it.`);
-        else if (t.requests > 0) console.log(`✅ ${t.requests} Claude API call(s) went through grug in the last 24h`);
+        if (t.requests > 0) console.log(`✅ ${t.requests} Claude API call(s) went through grug's proxy in the last 24h`);
+        if (t.metered > 0)
+          console.log(`✅ ${t.metered} Claude reply(ies) measured from session transcripts in the last 24h${t.requests === 0 ? ' (sessions that bypass the proxy, e.g. the Claude app Code tab)' : ''}`);
+        if (h.proxyConfigured && t.sessions > 0 && t.requests === 0 && t.metered === 0)
+          console.log(`❌ Claude Code ran ${t.sessions} session(s) in the last 24h but no usage reached grug (no proxied calls, nothing measured).\n   Update grug (grug update) and start a new session; if it persists, something else points Claude Code at another URL.`);
       }
       console.log(`${ok(h.codeMcp)} Claude Code MCP server`);
       console.log(`${ok(h.desktopMcp)} Claude Desktop MCP server (${h.desktopPath})`);
@@ -125,6 +127,16 @@ async function main() {
             ? `⬆️  grugbrain ${u.latest} is available (you have ${u.current}) → run: grug update`
             : `✅ grugbrain up to date${u.latest ? ` (latest release ${u.latest})` : ''}${u.error ? ` (couldn't check GitHub: ${u.error})` : ''}`
         );
+      }
+      {
+        const { brokenIntegrations, fixBrokenIntegrations } = await import('./install.js');
+        const broken = brokenIntegrations();
+        if (broken.length && flags.has('--fix')) printSteps(fixBrokenIntegrations());
+        else if (broken.length) {
+          console.log(`❌ ${broken.length} leftover(s) from an uninstalled tool (their program no longer exists; they error in every session):`);
+          for (const b of broken) console.log(`   - ${b.label}: ${b.command.slice(0, 110)}`);
+          console.log('   → remove them: grug doctor --fix   (backups kept in ~/.grug/backups)');
+        } else console.log('✅ no broken hooks / MCP servers left by other tools');
       }
       const upOk = await reachable(cfg.upstream);
       console.log(`${upOk ? '✅' : '❌'} upstream ${cfg.upstream} ${upOk ? 'reachable' : 'NOT reachable (Claude Code requests will fail until it is up)'}`);

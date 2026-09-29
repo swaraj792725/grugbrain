@@ -535,3 +535,90 @@ export function health(): Health {
     desktopPath: claudeDesktopConfigPath()
   };
 }
+
+// ---------- leftovers from uninstalled tools ----------
+
+export interface Broken {
+  where: 'hook' | 'statusLine' | 'mcp';
+  file: string;
+  label: string;
+  command: string;
+  name?: string;
+}
+
+function firstToken(cmd: string): string {
+  const t = cmd.trim();
+  const m = t.match(/^'([^']*)'|^"((?:[^"\\]|\\.)*)"|^(\S+)/);
+  return m ? m[1] ?? m[2] ?? m[3] ?? '' : '';
+}
+
+function expandHome(p: string): string {
+  return p.replace(/^~(?=\/)/, userHome()).replace(/^\$\{?HOME\}?(?=\/)/, userHome());
+}
+
+/** Command whose program is an absolute path that no longer exists (tool was uninstalled). */
+export function missingProgram(cmd: string): boolean {
+  const prog = expandHome(firstToken(cmd || ''));
+  return !!prog && path.isAbsolute(prog) && !fs.existsSync(prog);
+}
+
+export function brokenIntegrations(): Broken[] {
+  const out: Broken[] = [];
+  const settingsFile = claudeCodeSettingsPath();
+  const s = readJson(settingsFile);
+  if (s.ok && s.value) {
+    for (const [event, groups] of Object.entries<any>(s.value.hooks || {})) {
+      if (!Array.isArray(groups)) continue;
+      for (const g of groups)
+        for (const h of g?.hooks || [])
+          if (h?.type === 'command' && typeof h.command === 'string' && missingProgram(h.command))
+            out.push({ where: 'hook', file: settingsFile, label: `${event} hook`, command: h.command });
+    }
+    const sl = s.value.statusLine;
+    if (sl?.type === 'command' && typeof sl.command === 'string' && missingProgram(sl.command))
+      out.push({ where: 'statusLine', file: settingsFile, label: 'status line', command: sl.command });
+  }
+  for (const file of [claudeCodeUserConfigPath(), claudeDesktopConfigPath()]) {
+    const j = readJson(file);
+    if (!j.ok || !j.value?.mcpServers) continue;
+    for (const [name, srv] of Object.entries<any>(j.value.mcpServers)) {
+      const cmd = typeof srv?.command === 'string' ? srv.command : '';
+      if (cmd && missingProgram(cmd.includes(' ') && !cmd.startsWith('"') ? `"${cmd}"` : cmd))
+        out.push({ where: 'mcp', file, label: `MCP server "${name}"`, command: cmd, name });
+    }
+  }
+  return out;
+}
+
+/** Remove only entries whose program no longer exists. Every file is backed up first. */
+export function fixBrokenIntegrations(): Step[] {
+  const broken = brokenIntegrations();
+  const steps: Step[] = [];
+  const byFile = new Map<string, Broken[]>();
+  for (const b of broken) byFile.set(b.file, [...(byFile.get(b.file) || []), b]);
+  for (const [file, items] of byFile) {
+    const { value, step } = openConfig(file);
+    if (step) {
+      steps.push(step);
+      continue;
+    }
+    for (const b of items) {
+      if (b.where === 'hook') {
+        for (const [event, groups] of Object.entries<any>(value.hooks || {})) {
+          if (!Array.isArray(groups)) continue;
+          value.hooks[event] = groups
+            .map((g: any) => ({ ...g, hooks: (g.hooks || []).filter((h: any) => h.command !== b.command) }))
+            .filter((g: any) => g.hooks.length);
+          if (!value.hooks[event].length) delete value.hooks[event];
+        }
+      } else if (b.where === 'statusLine') delete value.statusLine;
+      else if (b.where === 'mcp' && b.name) delete value.mcpServers[b.name];
+      steps.push({ target: 'cleanup', ok: true, message: `Removed ${b.label} → ${firstToken(b.command)} (program no longer exists)` });
+    }
+    const bak = backupFile(file);
+    writeJsonAtomic(file, value);
+    steps.push({ target: 'cleanup', ok: true, message: `Saved ${file}${bak ? ` (backup: ${path.basename(bak)})` : ''}` });
+  }
+  return steps;
+}
+
