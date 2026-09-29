@@ -11,6 +11,7 @@ import { GrugConfig, paths } from './config.js';
 import { BufferEvent, loadMemory, MemNode, projectKey, projectNodes, readBuffer, score, similarity } from './memory/store.js';
 import { excerpt, historyHits, ago } from './history.js';
 import { relevantCode } from './graph.js';
+import { loadTune } from './recalltune.js';
 import { isRelevant, isTrivialPrompt, queryTerms, rank } from './relevance.js';
 import { estimateTokens } from './tokens.js';
 
@@ -25,6 +26,8 @@ export interface AutoRecall {
   keys: string[];
   counts: { memory: number; code: number; history: number };
   codeTokens: number;
+  /** Repo-relative files hinted (used to score whether the hints helped). */
+  files: string[];
 }
 
 function hashKey(s: string): string {
@@ -32,17 +35,23 @@ function hashKey(s: string): string {
 }
 
 /** Keys already put into this session's context (since its last compaction). */
-export function injectedKeys(events: BufferEvent[]): { keys: Set<string>; lastCompact: number } {
+export function injectedKeys(events: BufferEvent[]): { keys: Set<string>; lastCompact: number; spent: number; edited: string[] } {
   let keys = new Set<string>();
   let lastCompact = 0;
+  let spent = 0; // recall tokens sitting in the current context
+  const edited: string[] = [];
   for (const ev of events) {
     if (ev.t === 'compact') {
       keys = new Set();
       lastCompact = ev.ts;
+      spent = 0;
     } else if (ev.t === 'injected') ev.ids.forEach((i) => keys.add(i));
-    else if (ev.t === 'recall') ev.keys.forEach((k) => keys.add(k));
+    else if (ev.t === 'recall') {
+      ev.keys.forEach((k) => keys.add(k));
+      spent += ev.tokens || 0;
+    } else if (ev.t === 'file' && ev.op === 'edit') edited.push(ev.path);
   }
-  return { keys, lastCompact };
+  return { keys, lastCompact, spent, edited };
 }
 
 function memoryText(n: MemNode): string {
@@ -72,8 +81,17 @@ export function autoRecall(opts: {
   if (isTrivialPrompt(prompt)) return null;
   const terms = queryTerms(prompt);
   if (terms.length < 2) return null;
-  const { keys: seen, lastCompact } = injectedKeys(readBuffer(opts.sessionId));
-  const max = cfg.autoRecall.maxTokens;
+  const { keys: seen, lastCompact, spent, edited } = injectedKeys(readBuffer(opts.sessionId));
+  // Everything injected stays in context and is re-read every reply, so the session as a whole
+  // has a budget: what is left caps this block, and the relevance bar rises as it fills.
+  const remaining = cfg.autoRecall.sessionTokens - spent;
+  if (remaining < 120) return null;
+  const max = Math.min(cfg.autoRecall.maxTokens, remaining);
+  const bar = 1 + 0.5 * Math.min(1, spent / Math.max(1, cfg.autoRecall.sessionTokens));
+  const strict = loadTune().strictness * bar;
+  const share = Math.min(0.9, 0.34 * bar);
+  const root = path.resolve(cwd);
+  const fresh = edited.map((f) => (path.isAbsolute(f) ? path.relative(root, f) : f)).filter((f) => f && !f.startsWith('..'));
   const promptLower = prompt.toLowerCase();
 
   const sections: { memory: string[]; code: string[]; history: string[] } = { memory: [], code: [], history: [] };
@@ -102,7 +120,7 @@ export function autoRecall(opts: {
     const ranked = rank(nodes.map((n) => memoryText(n).toLowerCase()), terms, weights, promptLower.trim());
     for (const r of ranked) {
       const n = nodes[r.index];
-      if (seen.has(n.id) || !isRelevant(r, terms.length, n.type === 'note' ? 0.35 : 0.45)) continue;
+      if (seen.has(n.id) || !isRelevant(r, terms.length, (n.type === 'note' ? 0.35 : 0.45) * bar, share)) continue;
       if (sections.memory.length >= 4) break;
       const line = memoryLine(n, now);
       const t = fits(line, Math.round(max * 0.45), memTok);
@@ -118,13 +136,15 @@ export function autoRecall(opts: {
 
   // 2. Code graph: where the prompt's names live (paths + line ranges, never bodies).
   let codeTok = 0;
+  const files: string[] = [];
   if (cfg.graphContext.enabled) {
     try {
-      for (const h of relevantCode(cwd, terms, promptLower, 4, seen)) {
+      for (const h of relevantCode(cwd, terms, promptLower, 4, seen, { fresh, strictness: strict })) {
         const t = fits(h.line, Math.round(max * 0.25), codeTok);
         if (!t) continue;
         sections.code.push(h.line);
         keys.push(...h.keys);
+        files.push(h.file);
         used += t;
         codeTok += t;
       }
@@ -144,7 +164,7 @@ export function autoRecall(opts: {
     const shown: string[] = [];
     for (const h of hits.slice(0, 60)) {
       if (sections.history.length >= 3) break;
-      if (!isRelevant(h, terms.length, 0.5)) continue;
+      if (!isRelevant(h, terms.length, Math.min(0.95, 0.5 * strict), share)) continue;
       if (h.item.who.startsWith('Claude →')) continue; // raw tool calls rarely help
       if (similarity(h.item.text.slice(0, 400), prompt) >= 0.7) continue; // the same question asked before
       const ex = excerpt(h, 320);
@@ -174,5 +194,5 @@ export function autoRecall(opts: {
   while (out.length > 2 && estimateTokens(out.join('\n')) > max) out.pop();
   if (/:$/.test(out[out.length - 1])) out.pop();
   const text = out.join('\n');
-  return { text, tokens: estimateTokens(text), ids, keys, counts, codeTokens: codeTok };
+  return { text, tokens: estimateTokens(text), ids, keys, counts, codeTokens: codeTok, files };
 }

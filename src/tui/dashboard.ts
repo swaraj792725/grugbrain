@@ -6,6 +6,7 @@
 import { spawn } from 'node:child_process';
 import { loadConfig, paths, VERSION } from '../config.js';
 import { health } from '../install.js';
+import { loadTune } from '../recalltune.js';
 import { loadMemory, projectName, score } from '../memory/store.js';
 import { proxyHealth } from '../proxy/server.js';
 import { readActivity, summarize, Summary, trafficCheck } from '../stats.js';
@@ -109,6 +110,11 @@ function overview(width: number): string[] {
   const avg = (kind: string) => (k(kind) ? `avg ${Math.round(Math.abs(t(kind)) / k(kind))} tok` : '');
   L.push(did('auto-recall injections (cost)', t('auto-recall'), k('auto-recall'), [avg('auto-recall'), 'only when something clearly matches'].filter(Boolean).join(', ')));
   L.push(did('graph context: maps + code hints', t('graph'), k('graph'), [avg('graph'), 'find the symbol, skip the full read'].filter(Boolean).join(', ')));
+  {
+    const tu = loadTune();
+    const rate = tu.codeShown >= 1 ? `${Math.round((tu.codeHit / tu.codeShown) * 100)}% of code hints then used` : 'no data yet';
+    L.push(did('recall usefulness', 0, Math.round(tu.codeShown), `${rate}, strictness ×${tu.strictness.toFixed(2)} (self-tuning)`));
+  }
   L.push(did('durable facts captured', 0, k('facts'), 'decisions, root causes, preferences, commands'));
   L.push(did('notes remembered', 0, k('remember')));
   L.push(did('memory consolidations', 0, k('consolidate')));

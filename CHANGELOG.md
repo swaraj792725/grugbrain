@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.8.0
+
+- **Recall has a session budget.** Everything injected stays in context and is re-read every reply, so auto-recall now also has a per-session cap (`autoRecall.sessionTokens`, default 2500, reset after compaction). What is left caps each block, and the relevance bar rises as the budget fills: early prompts get generous recall, late ones only near-certain matches, and when it is spent grug goes quiet.
+- **Recall tunes itself.** grug checks whether a code hint was useful: did Claude then read or edit the hinted file (built-in tools, or grug's `outline`/`read_symbol`/`read_lines`)? Scored once per session at PreCompact/SessionEnd into `~/.grug/recall-tune.json`. Hints mostly ignored raise the bar for code hints and earlier-session excerpts (up to ×1.6); hints mostly used lower it (down to ×0.8), in steps of 0.1 and only after 10 samples. `grug dash` and `grug doctor` show the hit rate and strictness.
+- **Code graph stays fresh mid-session.** Files Claude edited or created are rescanned from disk when the next prompt is recalled, so a new function is findable at once; edits also trigger a debounced (45 s) background rescan (`grug warm --graph`). Deleted files are dropped instead of hinted.
+- **Facts are captured as the session goes.** The Stop hook now scans only the transcript bytes not seen yet (saved offset, at most every 24 KB of growth) instead of one pass over the last 1 MB at the end, so decisions and root causes from early in a very long session are no longer lost. Handoff time still always scans. Per-session cap of 30 facts; nothing is captured twice.
+- New setting `autoRecall.sessionTokens` (200-20000).
+
 ## 2.7.0
 
 - **Auto-recall.** On every prompt grug now looks in memory, the code graph and your earlier conversations, and adds only what clearly matches (max 800 tokens, `autoRecall.maxTokens`), labelled "possibly relevant, verify before relying". Memory notes come first, then code locations, then excerpts from earlier sessions (your requests and decisions preferred). Skipped for trivial prompts ("ok", "yes", fewer than 3 content words), when nothing clears the relevance bar, or when the same item was already injected this session (reset after compaction). The current session is never searched: it is already in context. Toggle: `autoRecall.enabled`.

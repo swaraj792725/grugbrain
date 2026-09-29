@@ -1156,3 +1156,188 @@ describe('dashboard shows auto-recall and graph usage', () => {
     expect(text).toMatch(/graph context: maps \+ code hints.*1×/);
   });
 });
+
+// ---------------------------------------------------------------- v2.8 features
+function seedNotes(cwd: string, notes: string[]) {
+  const db = loadMemory();
+  for (const n of notes) addNote(db, projectKey(cwd), n, Date.now(), { kind: 'decision' });
+  fs.mkdirSync(paths.home(), { recursive: true });
+  fs.writeFileSync(paths.memory(), JSON.stringify(db));
+}
+
+describe('session-wide recall budget', () => {
+  const NOTES = [
+    'Invoice PDFs are rendered by wkhtmltopdf inside the billing worker container',
+    'Kafka consumer offsets must be committed only after the database write succeeds',
+    'Feature flags live in LaunchDarkly and are cached for sixty seconds per process',
+    'Nightly reports run through the cron scheduler on the analytics cluster'
+  ];
+  const PROMPTS = [
+    'how are invoice PDFs rendered inside the billing worker',
+    'when do kafka consumer offsets get committed after the database write',
+    'where do the feature flags live and how long are they cached',
+    'which cluster runs the nightly reports through the cron scheduler'
+  ];
+
+  it('caps everything recall injects into one session and resets after compaction', async () => {
+    const { setConfigValue } = await import('../src/config.js');
+    expect(() => setConfigValue('autoRecall.sessionTokens', '10')).toThrow(/between 200 and 20000/);
+    setConfigValue('autoRecall.sessionTokens', '200');
+    const cwd = path.join(tmp, 'budget');
+    fs.mkdirSync(cwd);
+    seedNotes(cwd, NOTES); // no session-start here: the brief would already have shown these notes
+    const got: boolean[] = [];
+    for (const prompt of PROMPTS) {
+      const out: any = await runHook('user-prompt', { session_id: 'b1', cwd, prompt });
+      got.push(!!out?.hookSpecificOutput?.additionalContext);
+    }
+    expect(got[0]).toBe(true);
+    expect(got[3]).toBe(false); // budget spent: silence beats an ever-growing context
+    const spent = (readBuffer('b1') as any[]).filter((e) => e.t === 'recall').reduce((s, e) => s + e.tokens, 0);
+    expect(spent).toBeLessThanOrEqual(200);
+    await runHook('pre-compact', { session_id: 'b1', cwd });
+    const again: any = await runHook('user-prompt', { session_id: 'b1', cwd, prompt: PROMPTS[3] });
+    expect(again.hookSpecificOutput.additionalContext).toContain('cron scheduler');
+  });
+
+  it('raises the relevance bar as the budget fills', async () => {
+    const { autoRecall } = await import('../src/recall.js');
+    const { loadConfig } = await import('../src/config.js');
+    const cwd = path.join(tmp, 'bar');
+    fs.mkdirSync(cwd);
+    seedNotes(cwd, ['Invoice PDFs are rendered by wkhtmltopdf inside the billing worker container']);
+    // Weak match: 2 of 5 prompt words. Fine on a fresh session...
+    const weak = 'invoice billing reports summary statistics';
+    expect(autoRecall({ cfg: loadConfig(), sessionId: 'bar-a', cwd, prompt: weak })).not.toBeNull();
+    // ...but not once most of the budget is already in context.
+    appendBuffer('bar-b', { t: 'recall', ts: Date.now(), keys: [], tokens: 2000 });
+    expect(autoRecall({ cfg: loadConfig(), sessionId: 'bar-b', cwd, prompt: weak })).toBeNull();
+  });
+});
+
+describe('recall usefulness tuning', () => {
+  it('scores hinted files that were then used (built-in and grug tools), once, and adjusts strictness', async () => {
+    const { loadTune, nextStrictness, scoreRecalls } = await import('../src/recalltune.js');
+    const { buildGraphIndex } = await import('../src/graph.js');
+    const cwd = codeProject('tune');
+    buildGraphIndex(cwd);
+    const prompt = 'the stripe webhook signature check is failing in verifyStripeSignature';
+    const hinted = async (sid: string) => {
+      await runHook('session-start', { session_id: sid, cwd, source: 'startup' });
+      const out: any = await runHook('user-prompt', { session_id: sid, cwd, prompt });
+      expect(out.hookSpecificOutput.additionalContext).toContain('src/webhook.ts');
+      expect((readBuffer(sid) as any[]).find((e) => e.t === 'recall').files).toContain('src/webhook.ts');
+    };
+    await hinted('t1');
+    await runHook('post-tool', { session_id: 't1', cwd, tool_name: 'mcp__grugbrain__read_symbol', tool_input: { path: path.join(cwd, 'src/webhook.ts'), name: 'verifyStripeSignature' } });
+    await runHook('session-end', { session_id: 't1', cwd, reason: 'other' });
+    expect(loadTune()).toMatchObject({ codeShown: 1, codeHit: 1 });
+    expect(scoreRecalls('t1', cwd).shown).toBe(0); // already scored: never double counted
+    await hinted('t2'); // hinted, but Claude never touched the file
+    await runHook('post-tool', { session_id: 't2', cwd, tool_name: 'Read', tool_input: { file_path: path.join(cwd, 'src/cart.ts') } });
+    await runHook('pre-compact', { session_id: 't2', cwd });
+    await runHook('session-end', { session_id: 't2', cwd });
+    expect(loadTune()).toMatchObject({ codeShown: 2, codeHit: 1 });
+    // Strictness only moves with enough evidence, in small bounded steps.
+    expect(nextStrictness({ codeShown: 5, codeHit: 0, strictness: 1 })).toBe(1);
+    expect(nextStrictness({ codeShown: 20, codeHit: 1, strictness: 1 })).toBe(1.1);
+    expect(nextStrictness({ codeShown: 20, codeHit: 15, strictness: 1 })).toBe(0.9);
+    expect(nextStrictness({ codeShown: 20, codeHit: 1, strictness: 1.6 })).toBe(1.6);
+    expect(nextStrictness({ codeShown: 20, codeHit: 15, strictness: 0.8 })).toBe(0.8);
+    fs.writeFileSync(path.join(paths.home(), 'recall-tune.json'), JSON.stringify({ strictness: 9, codeShown: 'x' }));
+    expect(loadTune()).toEqual({ codeShown: 0, codeHit: 0, strictness: 1.6 });
+    const { renderOnce } = await import('../src/tui/dashboard.js');
+    expect(renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/recall usefulness.*strictness ×1\.60/);
+  });
+});
+
+describe('code graph stays fresh during a session', () => {
+  it('finds a symbol from a file created a moment ago, before any rescan', async () => {
+    const { buildGraphIndex, refreshGraphSoon } = await import('../src/graph.js');
+    const cwd = codeProject('fresh');
+    buildGraphIndex(cwd);
+    fs.writeFileSync(path.join(cwd, 'src', 'refund.ts'), `export function issueRefundLedgerEntry(orderId: string) {\n  return orderId;\n}\n`);
+    await runHook('session-start', { session_id: 'fr1', cwd, source: 'startup' });
+    const prompt = 'add a refund ledger entry when we issue a refund for an order';
+    const before: any = await runHook('user-prompt', { session_id: 'fr1', cwd, prompt });
+    expect(JSON.stringify(before || {})).not.toContain('refund.ts'); // not indexed yet, nothing edited via Claude
+    await runHook('post-tool', { session_id: 'fr1', cwd, tool_name: 'Write', tool_input: { file_path: path.join(cwd, 'src', 'refund.ts') } });
+    const after: any = await runHook('user-prompt', { session_id: 'fr1', cwd, prompt: prompt + ' please' });
+    expect(after.hookSpecificOutput.additionalContext).toMatch(/src\/refund\.ts.*issueRefundLedgerEntry\(\) L1-3/);
+    // The background rescan is debounced: once per window per project.
+    const t0 = Date.now();
+    expect(refreshGraphSoon(cwd, t0 + 3600_000)).toBe(true);
+    expect(refreshGraphSoon(cwd, t0 + 3600_000 + 10_000)).toBe(false);
+    expect(refreshGraphSoon(cwd, t0 + 3600_000 + 60_000)).toBe(true);
+  });
+
+  it('forgets a deleted file instead of hinting at it', async () => {
+    const { buildGraphIndex, loadGraphIndex, overlayFresh } = await import('../src/graph.js');
+    const cwd = codeProject('gone');
+    buildGraphIndex(cwd);
+    fs.unlinkSync(path.join(cwd, 'src', 'cart.ts'));
+    const idx = overlayFresh(loadGraphIndex(cwd)!, ['src/cart.ts']);
+    expect(idx.files.some((f) => f.rel === 'src/cart.ts')).toBe(false);
+  });
+});
+
+describe('incremental fact capture', () => {
+  const filler = (n: number) => Array.from({ length: n }, () => line('user', [{ type: 'tool_result', tool_use_id: 'x', content: 'y'.repeat(50_000) }]));
+  const say = (text: string) => line('assistant', [{ type: 'text', text }]);
+
+  it('captures facts as the session goes, reading each byte once, even past the tail window', async () => {
+    const cwd = path.join(tmp, 'inc');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'inc.jsonl');
+    fs.writeFileSync(t, [say('We chose to keep the job queue in Redis because ordering matters more than throughput.'), ...filler(1)].join('\n') + '\n');
+    await runHook('session-start', { session_id: 'i1', cwd, source: 'startup' });
+    await runHook('user-prompt', { session_id: 'i1', cwd, prompt: 'set up the job queue' });
+    await runHook('stop', { session_id: 'i1', cwd, transcript_path: t });
+    const facts = () => (readBuffer('i1') as any[]).filter((e) => e.t === 'facts').flatMap((e) => e.items.map((f: any) => f.text));
+    expect(facts().join('\n')).toContain('keep the job queue in Redis');
+    // Six more megabytes: the old decision is far outside the 4 MB tail a final-only pass would read.
+    fs.appendFileSync(t, [...filler(120), say('Decided: use Postgres advisory locks for the nightly billing job.'), ...filler(1)].join('\n') + '\n');
+    await runHook('stop', { session_id: 'i1', cwd, transcript_path: t });
+    expect(facts().join('\n')).toContain('Postgres advisory locks');
+    expect(facts().filter((x) => x.includes('Redis')).length).toBe(1); // not re-captured
+    const n = facts().length;
+    await runHook('pre-compact', { session_id: 'i1', cwd, transcript_path: t });
+    await runHook('session-end', { session_id: 'i1', cwd, transcript_path: t });
+    expect(facts().length).toBe(n); // nothing new, nothing duplicated
+    const db = loadMemory();
+    ingestSession(db, 'i1');
+    const notes = Object.values(db.nodes).filter((x) => x.type === 'note').map((x) => x.label).join('\n');
+    expect(notes).toContain('Redis');
+    expect(notes).toContain('advisory locks');
+  });
+
+  it('does not rescan on every Stop: small growth waits for enough new transcript', async () => {
+    const cwd = path.join(tmp, 'inc2');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'inc2.jsonl');
+    fs.writeFileSync(t, say('We chose to deploy on Fridays only because support is staffed then.') + '\n');
+    await runHook('session-start', { session_id: 'i2', cwd, source: 'startup' });
+    await runHook('stop', { session_id: 'i2', cwd, transcript_path: t });
+    expect((readBuffer('i2') as any[]).some((e) => e.t === 'facts')).toBe(false); // <24 KB: skipped
+    await runHook('pre-compact', { session_id: 'i2', cwd, transcript_path: t });
+    expect((readBuffer('i2') as any[]).some((e) => e.t === 'facts')).toBe(true); // handoff time always scans
+  });
+
+  it('caps facts per session', async () => {
+    const cwd = path.join(tmp, 'inc3');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'inc3.jsonl');
+    const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet'];
+    const rows: string[] = [];
+    for (let i = 0; i < 60; i++) rows.push(say(`We chose ${words[i % 10]} number ${i} for subsystem ${words[(i * 3) % 10]}${i} because reasons differ ${i * 7}.`));
+    fs.writeFileSync(t, rows.join('\n') + '\n');
+    await runHook('session-start', { session_id: 'i3', cwd, source: 'startup' });
+    for (let i = 0; i < 12; i++) {
+      fs.appendFileSync(t, filler(1).join('\n') + '\n' + say(`Decided: option ${words[i % 10]}${i} wins for area ${i * 11} today ok.`) + '\n');
+      await runHook('stop', { session_id: 'i3', cwd, transcript_path: t });
+      await runHook('pre-compact', { session_id: 'i3', cwd, transcript_path: t });
+    }
+    const total = (readBuffer('i3') as any[]).filter((e) => e.t === 'facts').reduce((s, e) => s + e.items.length, 0);
+    expect(total).toBeLessThanOrEqual(30);
+  });
+});

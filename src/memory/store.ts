@@ -54,8 +54,10 @@ export type BufferEvent =
   | { t: 'skip'; ts: number; key: string }
   | { t: 'compact'; ts: number }
   | { t: 'alert'; ts: number; level: number }
-  | { t: 'facts'; ts: number; items: Array<{ kind: string; text: string; ts: number }> }
-  | { t: 'recall'; ts: number; keys: string[]; tokens: number }
+  | { t: 'facts'; ts: number; items: Array<{ kind: string; text: string; ts: number }>; offset?: number; failed?: string[] }
+  | { t: 'factscan'; ts: number; offset: number; failed: string[] }
+  | { t: 'recall'; ts: number; keys: string[]; tokens: number; files?: string[] }
+  | { t: 'scored'; ts: number }
   | { t: 'end'; ts: number; reason?: string };
 
 const DAY = 86400000;

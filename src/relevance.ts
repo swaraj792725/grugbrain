@@ -130,7 +130,7 @@ export function rank(docs: string[], terms: string[], weights?: number[], phrase
  * Coverage (rarity-weighted) works on big corpora; on tiny ones (a handful of memory notes) idf is
  * noisy, so a doc sharing at least a third of the prompt's content words also qualifies.
  */
-export function isRelevant(r: Ranked, nTerms: number, minCoverage = 0.4): boolean {
-  if (r.matched >= 2 && (r.coverage >= minCoverage || r.matched / nTerms >= 0.34)) return true;
+export function isRelevant(r: Ranked, nTerms: number, minCoverage = 0.4, minShare = 0.34): boolean {
+  if (r.matched >= 2 && (r.coverage >= minCoverage || r.matched / nTerms >= minShare)) return true;
   return nTerms <= 3 && r.matched >= 1 && r.coverage >= 0.6;
 }

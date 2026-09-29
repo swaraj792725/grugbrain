@@ -90,8 +90,10 @@ export interface GrugConfig {
   /** Per-prompt recall of memory, earlier sessions and code (UserPromptSubmit), only when something clearly matches. */
   autoRecall: {
     enabled: boolean;
-    /** Hard cap for the whole injected block. */
+    /** Hard cap for one injected block. */
     maxTokens: number;
+    /** Total recall tokens per session (since its last compaction); the bar rises as it fills. */
+    sessionTokens: number;
   };
   /** Graph-first code context: compact repo map at session start + relevant files/symbols per prompt (code projects only). */
   graphContext: {
@@ -160,7 +162,8 @@ export function defaultConfig(): GrugConfig {
     },
     autoRecall: {
       enabled: true,
-      maxTokens: 800
+      maxTokens: 800,
+      sessionTokens: 2500
     },
     graphContext: {
       enabled: true,
@@ -192,6 +195,7 @@ const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routi
 
 const RANGES: Record<string, [number, number]> = {
   'autoRecall.maxTokens': [100, 4000],
+  'autoRecall.sessionTokens': [200, 20000],
   'graphContext.mapTokens': [100, 3000]
 };
 
