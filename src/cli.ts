@@ -63,7 +63,7 @@ const HELP = `
 
   grug bench [--model sonnet] [--runs 1] [--tasks a,b] --yes
                                   A/B real Claude Code runs: grug off vs on, graded (spends usage)
-  grug update [--install]         check GitHub Releases for a newer grugbrain (and install it)
+  grug update [--check]           install the newest GitHub release (--check: only look)
 
   grug config [path | get <k> | set <k> <v>]
   grug savings                    one-line spend/savings summary
@@ -110,6 +110,15 @@ async function main() {
       console.log(`${ok(h.desktopMcp)} Claude Desktop MCP server (${h.desktopPath})`);
       console.log(`${h.service !== 'none' ? '✅' : '➖'} background service: ${h.service}`);
       console.log(`${h.command === 'missing' ? '❌' : '✅'} \`grug\` command ${h.command === 'on-path' ? 'on PATH' : h.command === 'rc' ? 'added to shell startup (open a new terminal)' : 'not on PATH (re-run install)'}`);
+      {
+        const { checkForUpdate } = await import('./update.js');
+        const u = await checkForUpdate();
+        console.log(
+          u.newer
+            ? `⬆️  grugbrain ${u.latest} is available (you have ${u.current}) → run: grug update`
+            : `✅ grugbrain up to date${u.latest ? ` (latest release ${u.latest})` : ''}${u.error ? ` (couldn't check GitHub: ${u.error})` : ''}`
+        );
+      }
       const upOk = await reachable(cfg.upstream);
       console.log(`${upOk ? '✅' : '❌'} upstream ${cfg.upstream} ${upOk ? 'reachable' : 'NOT reachable (Claude Code requests will fail until it is up)'}`);
       console.log('');
@@ -271,10 +280,11 @@ async function main() {
         console.log('Grug up to date.');
         break;
       }
-      if (!flags.has('--install')) {
-        console.log(`Update available. Run: grug update --install`);
+      if (flags.has('--check')) {
+        console.log(`Update available. Run: grug update`);
         break;
       }
+      console.log(`Updating ${info.current} → ${info.latest} …\n`);
       process.exit(installRelease(info));
     }
 
@@ -291,7 +301,7 @@ async function main() {
       if (flags.has('--check')) {
         const { checkForUpdate } = await import('./update.js');
         const u = await checkForUpdate(true);
-        console.log(u.newer ? `newer release: ${u.latest} (grug update --install)` : `latest release: ${u.latest ?? 'unknown'}`);
+        console.log(u.newer ? `newer release: ${u.latest} (run: grug update)` : `latest release: ${u.latest ?? 'unknown'}`);
       }
       break;
     }

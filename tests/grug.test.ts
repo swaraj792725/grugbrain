@@ -660,3 +660,21 @@ describe('grug command under npx', () => {
     expect(commandStatus()).toBe('on-path');
   });
 });
+
+describe('update notice', () => {
+  it('SessionStart shows a user-only notice when a newer release is cached', async () => {
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(path.join(paths.home(), 'update.json'), JSON.stringify({ current: '0.0.1', latest: '99.0.0', newer: true, checkedAt: Date.now() }));
+    const out: any = await runHook('session-start', { session_id: 'u1', cwd: tmp });
+    expect(out.systemMessage).toContain('99.0.0');
+    expect(out.systemMessage).toContain('grug update');
+    expect(JSON.stringify(out.hookSpecificOutput || {})).not.toContain('99.0.0'); // not sent to Claude
+  });
+
+  it('no notice when up to date', async () => {
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(path.join(paths.home(), 'update.json'), JSON.stringify({ current: '0.0.0-dev', latest: '0.0.0', newer: false, checkedAt: Date.now() }));
+    const out: any = await runHook('session-start', { session_id: 'u2', cwd: tmp });
+    expect(out?.systemMessage).toBeUndefined();
+  });
+});
