@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { paths, readJson, VERSION, writeJsonAtomic } from './config.js';
 
-export const REPO = 'swaraj792725/token-diet';
+export const REPO = 'swaraj792725/grugbrain'; // renamed from swaraj792725/token-diet (GitHub redirects old URLs)
 const DAY = 86400000;
 
 export interface UpdateInfo {
@@ -31,9 +31,14 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-function getJson(url: string, timeoutMs = 6000): Promise<any> {
+function getJson(url: string, timeoutMs = 6000, redirects = 3): Promise<any> {
   return new Promise((resolve, reject) => {
     const req = https.get(url, { headers: { 'user-agent': `grugbrain/${VERSION}`, accept: 'application/vnd.github+json' }, timeout: timeoutMs }, (res) => {
+      // Renamed repos answer with a redirect; follow it.
+      if ([301, 302, 307, 308].includes(res.statusCode || 0) && res.headers.location && redirects > 0) {
+        res.resume();
+        return resolve(getJson(new URL(res.headers.location, url).toString(), timeoutMs, redirects - 1));
+      }
       let t = '';
       res.on('data', (c) => (t += c));
       res.on('end', () => {
@@ -64,6 +69,7 @@ export async function checkForUpdate(force = false): Promise<UpdateInfo> {
   try {
     const rel = await getJson(`https://api.github.com/repos/${REPO}/releases/latest`);
     const tag: string = rel.tag_name;
+    if (!tag) throw new Error('no releases found');
     const latest = tag.replace(/^v/, '');
     const asset = (rel.assets || []).find((a: any) => /\.tgz$/.test(a.name));
     const info: UpdateInfo = {
@@ -84,9 +90,10 @@ export async function checkForUpdate(force = false): Promise<UpdateInfo> {
   }
 }
 
-/** Install a release: prefer the release tarball, else the git tag. Re-runs `install` from the new version. */
+/** Install a release: npm when published there, else the release tarball, else the git tag. */
 export function installRelease(info: UpdateInfo, extraArgs: string[] = []): number {
-  const spec = info.tarball || `github:${REPO}#${info.tag}`;
+  const onNpm = spawnSync('npm', ['view', `grugbrain@${info.latest}`, 'version'], { encoding: 'utf8', timeout: 20000 }).stdout?.trim() === info.latest;
+  const spec = onNpm ? `grugbrain@${info.latest}` : info.tarball || `github:${REPO}#${info.tag}`;
   const r = spawnSync('npx', ['--yes', `--package=${spec}`, 'grugbrain', 'install', ...extraArgs], { stdio: 'inherit' });
   return r.status ?? 1;
 }

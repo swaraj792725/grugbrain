@@ -35,8 +35,11 @@ jobs:
           V=$(node -p "require('./package.json').version")
           echo "version=$V" >> "$GITHUB_OUTPUT"
           if git rev-parse "v$V" >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+          # npm is checked separately so a version released before NPM_TOKEN existed still gets published later
+          # (re-run this workflow from the Actions tab).
+          if [ -n "$NPM_TOKEN" ] && ! npm view "grugbrain@$V" version >/dev/null 2>&1; then echo "npm=true" >> "$GITHUB_OUTPUT"; else echo "npm=false" >> "$GITHUB_OUTPUT"; fi
       - name: Build and test
-        if: steps.v.outputs.exists == 'false'
+        if: steps.v.outputs.exists == 'false' || steps.v.outputs.npm == 'true'
         run: |
           npm ci
           npm run typecheck
@@ -58,7 +61,7 @@ jobs:
           npx --yes --package=https://github.com/${{ github.repository }}/releases/download/v$V/grugbrain-$V.tgz grugbrain install
           \`\`\`"
       - name: Publish to npm
-        if: steps.v.outputs.exists == 'false' && env.NPM_TOKEN != ''
+        if: steps.v.outputs.npm == 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

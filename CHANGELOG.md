@@ -2,6 +2,13 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.2.0
+
+- **Repository renamed to `swaraj792725/grugbrain`** (old `token-diet` URLs redirect). The old GitHub Packages package `@swaraj792725/token-diet` (v1) is discontinued.
+- **Published on npm**: `npm install -g grugbrain && grug install` (or `npx grugbrain install`).
+- `grug update` follows GitHub redirects and installs from npm when the release is there.
+- The installer leaves an npm-global `grug` command alone instead of adding a second one.
+
 ## 2.1.1
 
 - **`grug` command now lands on your PATH** after install (it only ran through `npx` before). The installer links `grug`/`grugbrain` into a writable PATH folder (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/bin`) or adds `~/.grug/bin` to `~/.zshrc`/`~/.bashrc` with a marked line. Foreign files are never overwritten; `grug uninstall` removes it all.

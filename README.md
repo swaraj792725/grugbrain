@@ -7,13 +7,15 @@
 Install once. grug sit between Claude Code and Anthropic API, trim fat, stick cache, guard big files, remember every session in small brain that never get fat. grug draw brain picture. grug write Obsidian notes. grug show cave dashboard.
 
 ```bash
-npx grugbrain install
+npm install -g grugbrain
+grug install
 ```
+
+(or one line, no global install: `npx grugbrain install`)
 
 Restart Claude Code (and Claude Desktop). New terminal → `grug doctor`. Done. Grug work now. Forever. No reminders.
 
-> Not on npm yet? Grug also install straight from GitHub:
-> `npx github:swaraj792725/token-diet install`
+> Old `@swaraj792725/token-diet` (GitHub Packages, v1) is **discontinued**. It was the Desktop-only prototype. Use `grugbrain`.
 
 ---
 
@@ -223,12 +225,12 @@ grug savings                    one-line summary
 
 - Every release = git tag `vX.Y.Z` + GitHub Release with installable tarball + notes from `CHANGELOG.md`.
 - `grug update` check latest release. `grug update --install` install it. Daemon check once a day and say so in `grug dash` (never auto-install).
-- Install exact version from GitHub, no npm needed:
+- Install exact version:
 
 ```bash
-npx --yes --package=https://github.com/swaraj792725/token-diet/releases/download/v2.1.0/grugbrain-2.1.0.tgz grugbrain install
-# or from the tag:
-npx --yes github:swaraj792725/token-diet#v2.1.0 install
+npm install -g grugbrain@2.2.0 && grug install
+# no npm registry needed, straight from the GitHub Release:
+npx --yes --package=https://github.com/swaraj792725/grugbrain/releases/download/v2.2.0/grugbrain-2.2.0.tgz grugbrain install
 ```
 
 Maintainer: `npm run release:patch` (or `release:minor`), add a `## x.y.z` section to `CHANGELOG.md`, merge to `main`. Workflow `release.yml` tag, build, test, attach tarball, create GitHub Release, and publish to npm if `NPM_TOKEN` secret exist.
@@ -241,6 +243,14 @@ Maintainer: `npm run release:patch` (or `release:minor`), add a `## x.y.z` secti
 - Model routing (Opus → Sonnet/Haiku) is advice only. grug never switch your model behind your back.
 
 ---
+
+## grug go away (uninstall)
+
+```bash
+grug uninstall          # remove hooks, proxy, MCP, launchd, `grug` command; restore settings; keep memory
+grug uninstall --purge  # same + delete ~/.grug (memory, stats, vault)
+npm uninstall -g grugbrain   # if installed with npm -g
+```
 
 ## for the grug who publish (maintainer)
 
