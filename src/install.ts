@@ -38,6 +38,8 @@ interface InstallState {
   node?: string;
   cli?: string;
   prevBaseUrl?: string | null;
+  /** Values that existed before grug managed them (restored on uninstall / when turned off). */
+  tuning?: Record<string, { managed: boolean; prev: any }>;
   proxyInstalled?: boolean;
   service?: 'launchd' | 'systemd' | 'none';
 }
@@ -161,6 +163,7 @@ export function installClaudeCode(withProxy: boolean): Step[] {
       proxyOk = true;
     }
   }
+  applyTuning(settings, cfg, state);
   const bak = backupFile(file);
   writeJsonAtomic(file, settings);
   state.proxyInstalled = proxyOk;
@@ -440,6 +443,7 @@ export function uninstall(purge = false): Step[] {
     else {
       value.hooks = stripOurHooks(value.hooks);
       if (!Object.keys(value.hooks).length) delete value.hooks;
+      removeTuning(value, state);
       if (value.env && value.env.ANTHROPIC_BASE_URL === `http://127.0.0.1:${cfg.port}`) {
         if (state.prevBaseUrl) value.env.ANTHROPIC_BASE_URL = state.prevBaseUrl;
         else delete value.env.ANTHROPIC_BASE_URL;
@@ -620,5 +624,70 @@ export function fixBrokenIntegrations(): Step[] {
     steps.push({ target: 'cleanup', ok: true, message: `Saved ${file}${bak ? ` (backup: ${path.basename(bak)})` : ''}` });
   }
   return steps;
+}
+
+// ---------- Claude Code tuning grug manages (auto-compact window, subagent model) ----------
+
+type Setter = { get: (s: any) => any; set: (s: any, v: any) => void; del: (s: any) => void };
+const envKey = (k: string): Setter => ({
+  get: (s) => s.env?.[k],
+  set: (s, v) => ((s.env = s.env || {}), (s.env[k] = String(v))),
+  del: (s) => {
+    if (s.env) delete s.env[k];
+    if (s.env && !Object.keys(s.env).length) delete s.env;
+  }
+});
+const TUNING: Record<string, Setter> = {
+  autoCompactWindow: { get: (s) => s.autoCompactWindow, set: (s, v) => (s.autoCompactWindow = v), del: (s) => delete s.autoCompactWindow },
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW: envKey('CLAUDE_CODE_AUTO_COMPACT_WINDOW'),
+  CLAUDE_CODE_SUBAGENT_MODEL: envKey('CLAUDE_CODE_SUBAGENT_MODEL')
+};
+
+function wanted(cfg: ReturnType<typeof loadConfig>): Record<string, any> {
+  const w = cfg.autoCompact.windowTokens;
+  return {
+    autoCompactWindow: w > 0 ? w : undefined,
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: w > 0 ? String(w) : undefined,
+    CLAUDE_CODE_SUBAGENT_MODEL: cfg.routing.subagentModel || undefined
+  };
+}
+
+/** Write grug-managed Claude Code settings; remember what was there before so it can be restored. */
+export function applyTuning(settings: any, cfg: ReturnType<typeof loadConfig>, state: InstallState): void {
+  state.tuning = state.tuning || {};
+  for (const [key, value] of Object.entries(wanted(cfg))) {
+    const t = TUNING[key];
+    const rec = state.tuning[key];
+    if (value !== undefined) {
+      if (!rec?.managed) state.tuning[key] = { managed: true, prev: t.get(settings) ?? null };
+      t.set(settings, value);
+    } else if (rec?.managed) {
+      if (rec.prev === null || rec.prev === undefined) t.del(settings);
+      else t.set(settings, rec.prev);
+      state.tuning[key] = { managed: false, prev: null };
+    }
+  }
+}
+
+function removeTuning(settings: any, state: InstallState): void {
+  for (const [key, rec] of Object.entries(state.tuning || {})) {
+    if (!rec.managed) continue;
+    if (rec.prev === null || rec.prev === undefined) TUNING[key].del(settings);
+    else TUNING[key].set(settings, rec.prev);
+  }
+  state.tuning = {};
+}
+
+/** Apply tuning to ~/.claude/settings.json right now (after `grug config set autoCompact.*|routing.*`). */
+export function applyTuningNow(): Step {
+  const file = claudeCodeSettingsPath();
+  const { value, step } = openConfig(file);
+  if (step) return step;
+  const state = loadState();
+  applyTuning(value, loadConfig(), state);
+  backupFile(file);
+  writeJsonAtomic(file, value);
+  writeJsonAtomic(statePath(), state);
+  return { target: 'claude-code', ok: true, message: `Updated ${file}. New Claude Code sessions use it.` };
 }
 

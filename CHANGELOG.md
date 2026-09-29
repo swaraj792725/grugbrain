@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.6.0
+
+- **grug now compacts for you, automatically.** Claude Code has no way for a tool to run `/clear`, but it has its own auto-compaction; grug sets its trigger point (`autoCompactWindow` + `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, default 200k tokens instead of near the 1M limit). Right before compacting grug saves a handoff; right after, it injects it into the fresh context. Verified in a real Claude Code session: auto-compaction fired on its own, grug restored a 120-token handoff, and the answer that depended on pre-compaction content was still correct, with each later reply at ~40k tokens instead of 100k+. `grug config set autoCompact.windowTokens 0` hands control back to Claude Code; uninstall restores your previous values.
+- **`history` MCP tool:** Claude searches this project's full earlier conversations (including what was compacted or cleared) and gets only the matching excerpts: user requests, decisions, errors, command output. Handoffs point Claude at it instead of guessing.
+- **Subagent model routing (opt-in):** `grug config set routing.subagentModel sonnet` sets `CLAUDE_CODE_SUBAGENT_MODEL` so search/exploration subagents run on Sonnet 5.5 while your main conversation stays on Opus.
+- `grug config set autoCompact.*|routing.*` applies to Claude Code immediately.
+- Context alert only fires if context grows past 1.2× the compaction point (i.e. compaction isn't happening); handoff context size now counts pending tool results; debug log lines stay valid JSON.
+
 ## 2.5.0
 
 - **Handoffs instead of `/compact`.** `/compact` sends the whole conversation to the model again to summarize it. With grug, just type `/clear` (free): grug writes a handoff from what it already recorded (goal, latest requests, open todos, where it got to, files changed/read, recent commands; no model call) and the fresh session starts from it: ~1k tokens instead of the old context. Also written at session end and on context alerts; used once, by the next session in the same project.

@@ -38,6 +38,7 @@ export type ActivityKind =
   | 'bench'
   | 'update'
   | 'context-alert'
+  | 'history'
   | 'handoff'
   | 'brief'
   | 'recall'

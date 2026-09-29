@@ -55,18 +55,22 @@ function entries(p: string | undefined, bytes = 1024 * 1024): any[] {
 
 /** Tokens in context for the latest request (what the next reply will re-read) + its model. */
 export function contextSize(transcriptPath?: string): { tokens: number; model: string } {
-  const es = entries(transcriptPath, 512 * 1024);
+  const es = entries(transcriptPath, 2 * 1024 * 1024);
+  let pending = 0; // tool results / prompts added after the last reply (not in any usage yet)
   for (let i = es.length - 1; i >= 0; i--) {
-    const m = es[i]?.message;
-    if (es[i]?.type === 'assistant' && m?.usage && !es[i].isSidechain) {
+    const e = es[i];
+    const m = e?.message;
+    if (e?.isSidechain) continue;
+    if (e?.type === 'assistant' && m?.usage) {
       const u = m.usage;
       return {
-        tokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0),
+        tokens: (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.output_tokens || 0) + pending,
         model: m.model || ''
       };
     }
+    if (e?.type === 'user' && m?.content) pending += estimateTokens(typeof m.content === 'string' ? m.content : JSON.stringify(m.content));
   }
-  return { tokens: 0, model: '' };
+  return { tokens: pending, model: '' };
 }
 
 /** Rough $ per reply at this context size (mostly cache reads) — shown to the user only. */
@@ -156,6 +160,7 @@ export function buildHandoff(sessionId: string, transcriptPath: string | undefin
   if (edited.size) add(`Files changed: ${top(edited).slice(0, 15).join(', ')}`);
   if (read.size) add(`Files read: ${top(read).filter((f) => !edited.has(f)).slice(0, 12).join(', ')}`);
   if (cmds.length) add(`Recent commands: ${[...new Set(cmds.slice(-8))].join(' · ')}`);
+  add('Need an exact detail from before (an error, a decision, a snippet)? Search the full earlier conversation with the grugbrain `history` tool instead of guessing.');
 
   return { ts: Date.now(), sessionId, project, contextTokens: ctx.tokens, text: lines.join('\n') };
 }
@@ -170,9 +175,12 @@ export function loadHandoff(project: string): Handoff | null {
 }
 
 /** Handoff to inject into a new session: recent, from another session, not already used. */
-export function takeHandoff(project: string, sessionId: string, maxAgeHours: number): Handoff | null {
+export function takeHandoff(project: string, sessionId: string, maxAgeHours: number, afterCompaction = false): Handoff | null {
   const h = loadHandoff(project);
-  if (!h || h.sessionId === sessionId || h.consumedBy) return null;
+  if (!h || h.consumedBy) return null;
+  // A new session takes another session's handoff; a compacted session takes its own.
+  if (!afterCompaction && h.sessionId === sessionId) return null;
+  if (afterCompaction && h.sessionId !== sessionId) return null;
   if (Date.now() - h.ts > maxAgeHours * 3600 * 1000) return null;
   saveHandoff({ ...h, consumedBy: sessionId });
   return h;
