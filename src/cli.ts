@@ -108,6 +108,12 @@ async function main() {
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
       {
+        try {
+          const { meterRecent } = await import('./meter.js');
+          meterRecent(); // catch up on recent transcripts before judging
+        } catch {
+          /* best-effort */
+        }
         const t = trafficCheck();
         if (t.requests > 0) console.log(`✅ ${t.requests} Claude API call(s) went through grug's proxy in the last 24h`);
         if (t.metered > 0)

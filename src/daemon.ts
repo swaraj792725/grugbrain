@@ -10,6 +10,7 @@ import { maintain } from './memory/maintain.js';
 import { proxyHealth, startProxy } from './proxy/server.js';
 import { cachedUpdate, checkForUpdate } from './update.js';
 import { recordActivity } from './stats.js';
+import { meterRecent } from './meter.js';
 
 export async function runDaemon(): Promise<void> {
   const cfg = loadConfig();
@@ -26,6 +27,11 @@ export async function runDaemon(): Promise<void> {
   console.log(`[${new Date().toISOString()}] grugbrain daemon up: proxy http://127.0.0.1:${handle.port} -> ${cfg.upstream}`);
 
   const tick = () => {
+    try {
+      meterRecent();
+    } catch (err: any) {
+      console.error('meter failed:', err?.message);
+    }
     try {
       const r = maintain({ quietMs: 10 * 60 * 1000 });
       if (r && r.ingested) console.log(`[${new Date().toISOString()}] memory: +${r.ingested} sessions, ${r.nodes} nodes`);
