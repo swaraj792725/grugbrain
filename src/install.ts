@@ -265,8 +265,13 @@ WantedBy=default.target
 const RC_MARK = '# added by grugbrain';
 const binDir = () => path.join(paths.home(), 'bin');
 
+/** npx/npm put temporary .bin folders on PATH while a package runs; they vanish afterwards. */
+function isEphemeral(p: string): boolean {
+  return /[\\/](_npx|\.npm[\\/]_cacache|npm-cache)[\\/]|[\\/]node_modules[\\/]\.bin$/.test(p);
+}
+
 function pathDirs(): string[] {
-  return (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  return (process.env.PATH || '').split(path.delimiter).filter((d) => d && !isEphemeral(d));
 }
 
 function writable(dir: string): boolean {
@@ -304,6 +309,7 @@ export function installCommand(): Step {
   for (const dir of onPath) {
     try {
       const real = fs.realpathSync(path.join(dir, 'grug'));
+      if (isEphemeral(real)) continue;
       if (/grugbrain[\\/]dist[\\/]cli\.js$/.test(real) || real === path.join(binDir(), 'grug'))
         return { target: 'command', ok: true, message: `\`grug\` already on PATH (${path.join(dir, 'grug')})` };
     } catch {
