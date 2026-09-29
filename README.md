@@ -26,10 +26,15 @@ Claude burn token on:
 | same big prompt sent every turn, no cache | pay 100% each turn | **cache autopilot**: add cache breakpoints when app forget. Cache read cost 0.1×. |
 | giant `npm test` / log / build output | 10k–100k token each | **trim**: strip colour junk, squash repeat lines (`[×50]`), keep head + tail, say what cut |
 | same tool output twice in one chat | pay twice | **dedupe**: second copy become pointer to first |
+| 400 passing tests + 1 failure dumped into chat | 5–50k token | **test summarizer**: keep every failure (assertion, diff, code frame) + summary, drop passing noise. jest, vitest, mocha, pytest, go, cargo, TAP, rspec, phpunit, tsc |
 | `Read` whole 5,000-line file to find one function | ~30k token | **read guard**: say "grep first, read range". Ranged read always allowed. |
+| `Read` same unchanged file again | pay again | Claude Code ≥ 2.1 already stub this itself (grug bench found it). grug's **re-read guard** stay off by default; turn on for older versions: `grug config set rereadGuard.enabled true` |
+| prompt cache silently broken (timestamp in system prompt, tool list change, model switch) | pay 2× cache write every turn | **cache-miss detective**: name culprit + tokens wasted in dashboard |
 | exploring repo file by file | 20–60k token | **repo map / outline / read_symbol** MCP tools: signatures, not bodies |
 | Claude chatty: preamble, recap, "let me know!" | output cost 5× input | **terse mode**: short answer. `full` = caveman talk. Code never shortened. |
 | every new session re-learn project from zero | many turn, many token | **memory**: small brief at start, recall on prompt, fixed budget |
+
+grug **prove** it too: `grug bench` run real Claude Code twice per task (grug off vs on), check answer with real test, show quality + cost side by side. Savings that hurt quality get caught.
 
 grug **measure**, not guess. Proxy read real `usage` from every API reply (input, output, cache read, cache write). Dashboard show real dollars. Things grug can only estimate (trim, read guard) say *estimate* on label.
 
@@ -121,6 +126,26 @@ PROJECTION  at 7-day pace: $91.71/mo, without grug's changes ≈ $104.20/mo
 
 ---
 
+## grug prove it (`grug bench`)
+
+```bash
+grug bench --model sonnet --runs 3 --yes
+```
+
+Makes small real repos (failing test to fix, needle in huge log, value hidden in multi-file repo, re-read trap), runs `claude -p` on each with grug **off** (hooks disabled, proxy raw pass-through) and **on**. Warm-up first + alternating order so prompt cache timing can't fake savings. Every task graded by a real check (tests pass / exact answer).
+
+Real run (Claude Code 2.1.284, Haiku 4.5, 4 tasks × 2 runs × 2 arms, warm cache both arms):
+
+| task | what it test | quality off → on | cost off → on | uncached input off → on |
+|---|---|---|---|---|
+| fix-failing-test | test summarizer | 2/2 → 2/2 | $0.108 → $0.071 (**−35%**) | 27.5k → 10.5k (**−62%**) |
+| log-needle | read guard | 2/2 → 2/2 | $0.061 → $0.062 (same) | 8.6k → 8.8k |
+| find-threshold | navigation | 2/2 → 2/2 | $0.047 → $0.047 (same) | 8.5k → 8.6k |
+| reread-config | re-read | 2/2 → 2/2 | $0.102 → $0.103 (same) | 37.0k → 37.3k |
+| **total** | | **8/8 → 8/8** | **$0.318 → $0.282 (−11%)** | **−20%** |
+
+Grug read it straight: big win where output is noisy (tests, builds, logs), no loss anywhere, no magic where Claude Code already efficient. Most of each small task's cost is Claude Code's own ~35k-token system prompt, already cached. Bench spends real usage, so it asks for `--yes`; use `--runs 3+` for your own numbers.
+
 ## where grug work
 
 | app | what grug do |
@@ -184,12 +209,29 @@ grug savings                    one-line summary
 | `proxy.dedupeReads` | `true` | replace repeated identical tool outputs |
 | `proxy.trimThresholdChars` | `24000` | trim only above this |
 | `readGuard.enabled` / `maxBytes` | `true` / `60000` | redirect full reads of bigger files |
+| `rereadGuard.enabled` / `windowMinutes` | `true` / `45` | skip unchanged re-reads (once) |
+| `testSummary.enabled` / `minChars` | `true` / `3000` | collapse test/build output |
+| `updateCheck` | `true` | daily notify-only GitHub release check |
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
 | `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |
 | `memory.vaultDir` | `~/.grug/vault` | Obsidian output |
 
 ---
+
+## grug versions live on GitHub
+
+- Every release = git tag `vX.Y.Z` + GitHub Release with installable tarball + notes from `CHANGELOG.md`.
+- `grug update` check latest release. `grug update --install` install it. Daemon check once a day and say so in `grug dash` (never auto-install).
+- Install exact version from GitHub, no npm needed:
+
+```bash
+npx --yes --package=https://github.com/swaraj792725/token-diet/releases/download/v2.1.0/grugbrain-2.1.0.tgz grugbrain install
+# or from the tag:
+npx --yes github:swaraj792725/token-diet#v2.1.0 install
+```
+
+Maintainer: `npm run release:patch` (or `release:minor`), add a `## x.y.z` section to `CHANGELOG.md`, merge to `main`. Workflow `release.yml` tag, build, test, attach tarball, create GitHub Release, and publish to npm if `NPM_TOKEN` secret exist.
 
 ## grug honest about limits
 
@@ -206,7 +248,7 @@ grug savings                    one-line summary
 
 1. Make npm account → create **Automation** access token.
 2. GitHub repo → Settings → Secrets → Actions → add `NPM_TOKEN`.
-3. Bump version in `package.json`, then create a GitHub Release (or push tag `v2.0.0`). Workflow `publish.yml` test, build, publish with provenance.
+3. Bump the version and merge to `main` (see "grug versions live on GitHub"). `release.yml` publishes to npm with provenance once `NPM_TOKEN` exists.
 
 Or by hand: `npm login && npm publish --access public`.
 

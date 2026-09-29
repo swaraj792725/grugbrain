@@ -61,6 +61,10 @@ const HELP = `
   grug outline <file>             skeleton of a source file
   grug compress <text | ->        strip filler from text (stdin with -)
 
+  grug bench [--model sonnet] [--runs 1] [--tasks a,b] --yes
+                                  A/B real Claude Code runs: grug off vs on, graded (spends usage)
+  grug update [--install]         check GitHub Releases for a newer grugbrain (and install it)
+
   grug config [path | get <k> | set <k> <v>]
   grug savings                    one-line spend/savings summary
 
@@ -236,6 +240,41 @@ async function main() {
       break;
     }
 
+    case 'bench': {
+      const { runBench, formatBench, TASKS } = await import('./bench.js');
+      const model = flagValue('model') || 'sonnet';
+      const runs = Number(flagValue('runs') || 1);
+      const ids = (flagValue('tasks') || '').split(',').filter(Boolean);
+      const n = (ids.length || TASKS.length) * runs * 2;
+      if (!flags.has('--yes')) {
+        console.log(`grug bench runs ${n} real Claude Code sessions (model: ${model}). That spends real usage (roughly $0.05–0.40 per session).`);
+        console.log(`Tasks: ${TASKS.map((t) => `${t.id} (${t.exercises})`).join(', ')}`);
+        console.log('Re-run with --yes to start.');
+        break;
+      }
+      console.log(`🪨 grug bench: ${n} sessions, model ${model}\n`);
+      const { results, file } = await runBench({ model, runs, taskIds: ids, log: (l) => console.log(l) });
+      console.log('\n' + formatBench(results));
+      console.log(`\nreport: ${file}`);
+      break;
+    }
+
+    case 'update': {
+      const { checkForUpdate, installRelease } = await import('./update.js');
+      const info = await checkForUpdate(true);
+      if (info.error) console.log(`Could not check GitHub: ${info.error}`);
+      console.log(`installed: ${info.current}   latest release: ${info.latest ?? 'unknown'}${info.url ? `  (${info.url})` : ''}`);
+      if (!info.newer) {
+        console.log('Grug up to date.');
+        break;
+      }
+      if (!flags.has('--install')) {
+        console.log(`Update available. Run: grug update --install`);
+        break;
+      }
+      process.exit(installRelease(info));
+    }
+
     case 'savings': {
       const { callTool } = await import('./mcp.js');
       console.log(callTool('savings', {}));
@@ -244,9 +283,15 @@ async function main() {
 
     case 'version':
     case '--version':
-    case '-v':
+    case '-v': {
       console.log(VERSION);
+      if (flags.has('--check')) {
+        const { checkForUpdate } = await import('./update.js');
+        const u = await checkForUpdate(true);
+        console.log(u.newer ? `newer release: ${u.latest} (grug update --install)` : `latest release: ${u.latest ?? 'unknown'}`);
+      }
       break;
+    }
 
     case 'help':
     case '--help':

@@ -50,6 +50,9 @@ export type BufferEvent =
   | { t: 'cmd'; ts: number; cmd: string }
   | { t: 'assistant'; ts: number; text: string }
   | { t: 'injected'; ts: number; ids: string[] }
+  | { t: 'read'; ts: number; path: string; key: string; mtime: number; size: number }
+  | { t: 'skip'; ts: number; key: string }
+  | { t: 'compact'; ts: number }
   | { t: 'end'; ts: number; reason?: string };
 
 const DAY = 86400000;

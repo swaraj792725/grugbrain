@@ -8,6 +8,8 @@ import * as fs from 'node:fs';
 import { ensureDir, loadConfig, paths } from './config.js';
 import { maintain } from './memory/maintain.js';
 import { proxyHealth, startProxy } from './proxy/server.js';
+import { cachedUpdate, checkForUpdate } from './update.js';
+import { recordActivity } from './stats.js';
 
 export async function runDaemon(): Promise<void> {
   const cfg = loadConfig();
@@ -31,11 +33,20 @@ export async function runDaemon(): Promise<void> {
       console.error('maintain failed:', err?.message);
     }
   };
+  const updateTick = async () => {
+    if (!loadConfig().updateCheck) return;
+    const before = cachedUpdate();
+    const info = await checkForUpdate();
+    if (info.newer && before?.latest !== info.latest) recordActivity({ kind: 'update', msg: `grugbrain ${info.latest} is available (installed ${info.current}). Run: grug update --install` });
+  };
+  setTimeout(() => updateTick().catch(() => {}), 15000);
+  const updTimer = setInterval(() => updateTick().catch(() => {}), 6 * 3600 * 1000);
   setTimeout(tick, 5000);
   const timer = setInterval(tick, 30 * 60 * 1000);
 
   const shutdown = async () => {
     clearInterval(timer);
+    clearInterval(updTimer);
     await handle.close();
     try {
       if (fs.readFileSync(paths.pid(), 'utf8') === String(process.pid)) fs.unlinkSync(paths.pid());

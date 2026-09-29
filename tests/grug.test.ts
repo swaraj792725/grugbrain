@@ -428,3 +428,182 @@ describe('pricing', () => {
     expect(costOf('claude-sonnet-5-5', { input_tokens: 1_000_000, output_tokens: 1_000_000 })).toBeCloseTo(12);
   });
 });
+
+// ---------------------------------------------------------------- v2.1 features
+import { summarizeTestOutput } from '../src/compress/testsum.js';
+import { CacheWatch } from '../src/proxy/cachewatch.js';
+import { compareVersions } from '../src/update.js';
+import * as zlib from 'node:zlib';
+
+describe('test output summarizer', () => {
+  it('keeps vitest failures with diff + code frame, drops passing lines', () => {
+    const pass = Array.from({ length: 300 }, (_, i) => ` ✓ a.test.js > adds case ${i}`).join('\n');
+    const out = `${pass}\n × a.test.js > median of even list\n   → expected 3 to be 2.5\n\n⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯\n\n FAIL  a.test.js > median of even list\nAssertionError: expected 3 to be 2.5\n\n- Expected\n+ Received\n\n- 2.5\n+ 3\n\n ❯ a.test.js:3:109\n      3| test('median', () => {\n\n⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n\n Test Files  1 failed (1)\n      Tests  1 failed | 300 passed (301)\n`;
+    const r = summarizeTestOutput(out);
+    expect(r.framework).toBe('vitest');
+    expect(r.text).toContain('AssertionError: expected 3 to be 2.5');
+    expect(r.text).toContain('+ 3');
+    expect(r.text).toContain('❯ a.test.js:3:109');
+    expect(r.text).toContain('Tests  1 failed | 300 passed');
+    expect(r.text).not.toContain('adds case 150');
+    expect(r.text.length).toBeLessThan(out.length / 4);
+  });
+
+  it('handles pytest and go test', () => {
+    const py = Array.from({ length: 200 }, (_, i) => `tests/test_m.py::test_ok_${i} PASSED`).join('\n') +
+      `\n=================================== FAILURES ===================================\n___________________________ test_divide ___________________________\n\n    def test_divide():\n>       assert divide(1, 0) == 0\nE       ZeroDivisionError: division by zero\n\ntests/test_m.py:12: ZeroDivisionError\n=========================== short test summary info ============================\nFAILED tests/test_m.py::test_divide - ZeroDivisionError\n========================= 1 failed, 200 passed in 0.41s =========================\n`;
+    const p = summarizeTestOutput(py);
+    expect(p.framework).toBe('pytest');
+    expect(p.text).toContain('ZeroDivisionError: division by zero');
+    expect(p.text).toContain('1 failed, 200 passed');
+    expect(p.text).not.toContain('test_ok_100 PASSED');
+
+    const go = Array.from({ length: 200 }, (_, i) => `=== RUN   TestOk${i}\n--- PASS: TestOk${i} (0.00s)`).join('\n') +
+      `\n=== RUN   TestParse\n    parse_test.go:22: got "a", want "b"\n--- FAIL: TestParse (0.00s)\nFAIL\nFAIL\texample.com/p\t0.012s\n`;
+    const g = summarizeTestOutput(go);
+    expect(g.framework).toBe('go');
+    expect(g.text).toContain('parse_test.go:22: got "a", want "b"');
+    expect(g.text).toContain('--- FAIL: TestParse');
+  });
+
+  it('caps huge tsc error lists with a per-file count', () => {
+    const tsc = Array.from({ length: 120 }, (_, i) => `src/f${i % 4}.ts(${i + 1},5): error TS2322: Type 'string' is not assignable to type 'number'.`).join('\n') + '\nFound 120 errors.';
+    const r = summarizeTestOutput(tsc, 100);
+    expect(r.framework).toBe('tsc');
+    expect(r.text).toContain('showing first 30 of 120');
+    expect(r.text).toContain('Found 120 errors.');
+  });
+
+  it('never touches unrecognized output', () => {
+    const logs = Array.from({ length: 500 }, (_, i) => `INFO request ${i} ok`).join('\n');
+    expect(summarizeTestOutput(logs).changed).toBe(false);
+  });
+});
+
+describe('re-read guard', () => {
+  it('skips an unchanged re-read once, allows the repeat, resets on edit', async () => {
+    const f = path.join(tmp, 'cfg.json');
+    fs.writeFileSync(f, '{"a":1}');
+    const cwd = tmp;
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(paths.config(), JSON.stringify({ rereadGuard: { enabled: true } }));
+    const read = { session_id: 'rr', cwd, tool_name: 'Read', tool_input: { file_path: f } };
+    expect(await runHook('pre-tool', read)).toBeNull();
+    await runHook('post-tool', read);
+    const denied: any = await runHook('pre-tool', read);
+    expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(denied.hookSpecificOutput.permissionDecisionReason).toMatch(/unchanged/);
+    expect(await runHook('pre-tool', read)).toBeNull(); // repeat is allowed
+    await runHook('post-tool', read);
+    await runHook('post-tool', { session_id: 'rr', cwd, tool_name: 'Edit', tool_input: { file_path: f } });
+    expect(await runHook('pre-tool', read)).toBeNull(); // edited since -> read allowed
+  });
+
+  it('does nothing when GRUG_DISABLE=1', async () => {
+    process.env.GRUG_DISABLE = '1';
+    const f = path.join(tmp, 'huge.txt');
+    fs.writeFileSync(f, 'x'.repeat(300000));
+    expect(await runHook('pre-tool', { tool_name: 'Read', tool_input: { file_path: f } })).toBeNull();
+    delete process.env.GRUG_DISABLE;
+  });
+
+  it('summarizes Bash test output at the source', async () => {
+    const pass = Array.from({ length: 400 }, (_, i) => ` ✓ case ${i}`).join('\n');
+    const out: any = await runHook('post-tool', {
+      session_id: 'b', cwd: tmp, tool_name: 'Bash', tool_input: { command: 'npm test' },
+      tool_response: { stdout: `${pass}\n × broken\nError: boom\n\n Test Files  1 failed (1)\n      Tests  1 failed | 400 passed (401)\n`, stderr: '' }
+    });
+    expect(out.hookSpecificOutput.updatedToolOutput.stdout).toContain('Error: boom');
+    expect(out.hookSpecificOutput.updatedToolOutput.stdout).not.toContain('case 200');
+  });
+});
+
+describe('cache-miss detective', () => {
+  const base = () => ({
+    model: 'claude-opus-5-5',
+    system: [{ type: 'text', text: 'You are helpful. Current time: 10:01:02. Rules follow.' }],
+    tools: [{ name: 'Read' }, { name: 'Bash' }],
+    messages: [{ role: 'user', content: 'hello there' }]
+  });
+  const miss = { cache_creation_input_tokens: 30000, cache_read_input_tokens: 0 };
+
+  it('ignores the first request and healthy follow-ups', () => {
+    const w = new CacheWatch();
+    expect(w.observe(base(), miss)).toBeNull();
+    expect(w.observe(base(), { cache_creation_input_tokens: 500, cache_read_input_tokens: 30000 })).toBeNull();
+  });
+
+  it('names a changing timestamp in the system prompt', () => {
+    const w = new CacheWatch();
+    w.observe(base(), miss);
+    const b = base();
+    b.system[0].text = 'You are helpful. Current time: 10:07:44. Rules follow.';
+    const r = w.observe(b, miss)!;
+    expect(r.culprit).toBe('system-changed');
+    expect(r.detail).toMatch(/timestamp/);
+    expect(r.wastedUsd).toBeGreaterThan(0);
+  });
+
+  it('detects tool list and model changes', () => {
+    const w = new CacheWatch();
+    w.observe(base(), miss);
+    const b: any = base();
+    b.tools.push({ name: 'WebFetch' });
+    expect(w.observe(b, miss)!.detail).toContain('+WebFetch');
+    const c: any = { ...b, model: 'claude-sonnet-5-5' };
+    expect(w.observe(c, miss)!.culprit).toBe('model-switch');
+  });
+});
+
+describe('proxy routes', () => {
+  it('decodes gzip bodies and passes /__grug/raw through untouched', async () => {
+    const seen: any[] = [];
+    const upstream = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        seen.push({ url: req.url, enc: req.headers['content-encoding'], body: Buffer.concat(chunks) });
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"model":"m","usage":{"input_tokens":1,"output_tokens":1}}');
+      });
+    });
+    await new Promise<void>((r) => upstream.listen(0, '127.0.0.1', () => r()));
+    const cfg = defaultConfig();
+    cfg.upstream = `http://127.0.0.1:${(upstream.address() as any).port}`;
+    const proxy = await startProxy(cfg, 0);
+    const bodyObj = {
+      model: 'm', system: 'x '.repeat(3000),
+      messages: [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }]
+    };
+    const send = (p: string, gz: boolean) =>
+      new Promise<void>((resolve) => {
+        const raw = Buffer.from(JSON.stringify(bodyObj));
+        const payload = gz ? zlib.gzipSync(raw) : raw;
+        const req = http.request({ host: '127.0.0.1', port: proxy.port, path: p, method: 'POST', headers: { 'content-type': 'application/json', ...(gz ? { 'content-encoding': 'gzip' } : {}) } }, (res) => {
+          res.resume();
+          res.on('end', () => resolve());
+        });
+        req.end(payload);
+      });
+    await send('/v1/messages', true);
+    expect(seen[0].enc).toBeUndefined(); // transformed -> re-sent as plain JSON
+    expect(JSON.parse(seen[0].body.toString()).system[0].cache_control).toEqual({ type: 'ephemeral' });
+    await send('/__grug/raw/v1/messages', true);
+    expect(seen[1].url).toBe('/v1/messages');
+    expect(seen[1].enc).toBe('gzip'); // untouched bytes
+    expect(zlib.gunzipSync(seen[1].body).toString()).toBe(JSON.stringify(bodyObj));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(readRequests().find((r) => r.tag === 'raw')).toBeTruthy();
+    expect(summarize().requests).toBe(1); // tagged traffic excluded
+    await proxy.close();
+    upstream.close();
+  });
+});
+
+describe('versions', () => {
+  it('compares semver-ish tags', () => {
+    expect(compareVersions('2.1.0', '2.0.9')).toBeGreaterThan(0);
+    expect(compareVersions('v2.1.0', '2.1.0')).toBe(0);
+    expect(compareVersions('2.1.0', '2.10.0')).toBeLessThan(0);
+  });
+});
