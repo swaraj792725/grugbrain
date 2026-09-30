@@ -11,6 +11,7 @@ import * as path from 'node:path';
 import { ensureDir, loadConfig, paths } from './config.js';
 import { coldCacheCost, contextSize, costPerReply } from './handoff.js';
 import { computeSavings } from './savings.js';
+import { readActivity } from './stats.js';
 
 const useColor = !process.env.NO_COLOR;
 const c = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -19,6 +20,8 @@ const yellow = c('33');
 const red = c('31');
 const green = c('32');
 const orange = c('38;5;208');
+const cyan = c('36');
+const SPIN = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 const k = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1000)}k`);
 const usd = (n: number) => (n >= 10 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`);
@@ -48,6 +51,8 @@ export function composeLine(o: {
   tips: boolean;
   now: number;
   savedPct?: number;
+  /** Hide the `saved ~N%` tag: the panel row shows it as a bar instead. */
+  noSaved?: boolean;
 }): string {
   const parts: string[] = [];
   const base = o.tokens > 0 ? `ctx ${k(o.tokens)} · ${usd(costPerReply(o.tokens, o.model))}/reply` : '';
@@ -71,26 +76,87 @@ export function composeLine(o: {
     const tips = TIPS.filter((t) => !(t.includes('/model sonnet') && /sonnet|haiku/i.test(o.model)));
     parts.push(dim(tips[Math.floor(o.now / 25000) % tips.length]));
   }
-  if (o.savedPct !== undefined && o.savedPct > 0) parts.push(green(`saved ~${Math.round(o.savedPct * 100)}%`));
+  if (!o.noSaved && o.savedPct !== undefined && o.savedPct > 0) parts.push(green(`saved ~${Math.round(o.savedPct * 100)}%`));
   return `${orange('🪨')} ${parts.join(dim(' │ '))}`;
 }
 
-function cachedSavedPct(now: number): number | undefined {
+export interface SavedNow {
+  pct: number;
+  netUsd: number;
+  spendUsd: number;
+  last?: { ts: number; msg: string };
+}
+
+function cachedSaved(now: number): SavedNow | undefined {
   const file = path.join(paths.cache(), 'statusline.json');
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (now - j.ts < 60000) return j.pct;
+    if (now - j.ts < 60000 && typeof j.netUsd === 'number') return j;
   } catch {
     /* recompute */
   }
   try {
-    const pct = computeSavings(now - 7 * 86400000).pct;
+    const sv = computeSavings(now - 7 * 86400000);
+    const v: SavedNow & { ts: number } = { ts: now, pct: sv.pct, netUsd: sv.netUsd, spendUsd: sv.spendUsd };
     ensureDir(paths.cache());
-    fs.writeFileSync(file, JSON.stringify({ ts: now, pct }));
-    return pct;
+    fs.writeFileSync(file, JSON.stringify(v));
+    return v;
   } catch {
     return undefined;
   }
+}
+
+/** Latest grug action in the last 45 s (cheap: tail of the activity log). */
+function lastAction(now: number): { ts: number; msg: string } | undefined {
+  try {
+    const a = readActivity(20).filter((x) => now - x.ts < 45000).pop();
+    return a ? { ts: a.ts, msg: a.msg || a.kind } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Smooth bar with eighth-block resolution so a few percent still shows as a sliver. */
+export function barCells(frac: number, width: number): string {
+  const eighths = Math.round(Math.max(0, Math.min(1, frac)) * width * 8);
+  const full = Math.floor(eighths / 8);
+  const part = eighths % 8;
+  const partial = part ? '▏▎▍▌▋▊▉'[part - 1] : '';
+  return '█'.repeat(full) + partial + ' '.repeat(Math.max(0, width - full - (partial ? 1 : 0)));
+}
+
+/** Colored bar: filled part in `col`, the rest as dim shade. */
+function colored(frac: number, width: number, col: (s: string) => string): string {
+  const cells = barCells(frac, width);
+  const filled = cells.replace(/ +$/, '');
+  return col(filled) + dim('░'.repeat(cells.length - filled.length));
+}
+
+/** Pure: the second row. Moving pulse when a reply is being produced, calm dots when idle. */
+export function composePanel(o: {
+  now: number;
+  active: boolean;
+  savedPct?: number;
+  netUsd?: number;
+  tokens: number;
+  limit: number;
+  recent?: { ts: number; msg: string };
+}): string {
+  const f = Math.floor(o.now / 1000);
+  const pulse = o.active
+    ? Array.from({ length: 8 }, (_, i) => ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'][(f + i * 3) % 8]).join('')
+    : dim('········');
+  const state = o.active ? cyan(`${SPIN[f % SPIN.length]} working`) : dim('○ idle');
+  const parts = [`${state} ${o.active ? cyan(pulse) : pulse}`];
+  const pct = o.savedPct ?? 0;
+  parts.push(`${dim('saved')} ${colored(pct, 10, green)} ${green(`~${Math.round(pct * 100)}%`)}${o.netUsd && o.netUsd >= 0.01 ? dim(` (${usd(o.netUsd)}/7d)`) : ''}`);
+  if (o.tokens > 0 && o.limit > 0) {
+    const fr = o.tokens / o.limit;
+    const col = fr >= 1.2 ? red : fr >= 1 ? yellow : green;
+    parts.push(`${dim('ctx')} ${colored(Math.min(1, fr), 8, col)} ${col(`${Math.round(fr * 100)}%`)}${dim(' of limit')}`);
+  }
+  if (o.recent) parts.push(yellow(`✦ ${o.recent.msg.slice(0, 60)}`));
+  return parts.join(dim(' │ '));
 }
 
 export function renderStatusLine(raw: string, now = Date.now()): string {
@@ -108,6 +174,8 @@ export function renderStatusLine(raw: string, now = Date.now()): string {
     own = (r.stdout || '').split('\n')[0].trim();
   }
   let line = '';
+  let panel = '';
+  const saved = cachedSaved(now);
   try {
     const cs = contextSize(input.transcript_path);
     const modelId = typeof input.model === 'string' ? input.model : input.model?.id || cs.model;
@@ -120,10 +188,29 @@ export function renderStatusLine(raw: string, now = Date.now()): string {
       firstTokens: Math.max(10000, cfg.contextAlert.firstTokens),
       tips: cfg.statusLine.tips,
       now,
-      savedPct: cachedSavedPct(now)
+      savedPct: saved?.pct,
+      noSaved: cfg.statusLine.panel
     });
+    if (cfg.statusLine.panel) {
+      let mtime = 0;
+      try {
+        if (input.transcript_path) mtime = fs.statSync(input.transcript_path).mtimeMs;
+      } catch {
+        /* no transcript yet */
+      }
+      const limit = cfg.autoCompact.windowTokens > 0 ? cfg.autoCompact.windowTokens * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
+      panel = composePanel({
+        now,
+        active: now - mtime < 6000,
+        savedPct: saved?.pct,
+        netUsd: saved?.netUsd,
+        tokens: cs.tokens,
+        limit,
+        recent: lastAction(now)
+      });
+    }
   } catch {
     line = '';
   }
-  return [own, line].filter(Boolean).join('  ');
+  return [[own, line].filter(Boolean).join('  '), panel].filter(Boolean).join('\n');
 }
