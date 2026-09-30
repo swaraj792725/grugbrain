@@ -68,8 +68,26 @@ export interface GrugConfig {
     enabled: boolean;
     minChars: number;
   };
+  /** Per-command output rules (installs, builds, git transfers) and JSON compaction; originals are always saved. */
+  commandRules: {
+    enabled: boolean;
+    minChars: number;
+    /** Compact big JSON arrays of objects (first items in full, then one identity line each). */
+    json: boolean;
+    jsonMinChars: number;
+    /** Also apply to MCP tool results. */
+    mcp: boolean;
+  };
   /** Check GitHub releases for a newer grugbrain (once a day, notify only). */
   updateCheck: boolean;
+  /** Status line under Claude Code's input box: context size, cost per reply, when to /clear, cache timer, tips. */
+  statusLine: {
+    enabled: boolean;
+    /** The user's own status line command, run first; grug appends its notice. Set by install when one existed. */
+    wrap: string;
+    /** Rotate short user-side tips (/model, /compact...) when nothing more urgent shows. */
+    tips: boolean;
+  };
   /** Tell the user (not the model) when a session's context gets expensive; levels double from firstTokens. */
   contextAlert: {
     enabled: boolean;
@@ -178,7 +196,15 @@ export function defaultConfig(): GrugConfig {
       enabled: true,
       minChars: 3000
     },
+    commandRules: {
+      enabled: true,
+      minChars: 1500,
+      json: true,
+      jsonMinChars: 12000,
+      mcp: true
+    },
     updateCheck: true,
+    statusLine: { enabled: true, wrap: '', tips: true },
     contextAlert: {
       enabled: true,
       firstTokens: 150000

@@ -41,6 +41,8 @@ interface InstallState {
   /** Values that existed before grug managed them (restored on uninstall / when turned off). */
   tuning?: Record<string, { managed: boolean; prev: any }>;
   proxyInstalled?: boolean;
+  /** The status line the user had before grug took it over (run inside ours via statusLine.wrap). */
+  prevStatusLine?: any;
   service?: 'launchd' | 'systemd' | 'none';
 }
 
@@ -128,6 +130,34 @@ function ourHooks(): Record<string, any[]> {
   };
 }
 
+function statusLineCommand(): string {
+  return `${q(process.execPath)} ${q(installedCli())} statusline ${MARK}`;
+}
+
+/** Put grug's status line in, keeping the user's own (it runs inside ours). Off or uninstall restores it. */
+export function applyStatusLine(settings: any, cfg: ReturnType<typeof loadConfig>, state: InstallState): void {
+  const cur = settings.statusLine;
+  const ours = typeof cur?.command === 'string' && cur.command.includes(MARK);
+  if (!cfg.statusLine.enabled) {
+    if (ours) {
+      if (state.prevStatusLine) settings.statusLine = state.prevStatusLine;
+      else delete settings.statusLine;
+      delete state.prevStatusLine;
+      cfg.statusLine.wrap = '';
+      saveConfig(cfg);
+    }
+    return;
+  }
+  if (!ours && cur) {
+    state.prevStatusLine = cur;
+    if (cur.type === 'command' && typeof cur.command === 'string') {
+      cfg.statusLine.wrap = cur.command;
+      saveConfig(cfg);
+    }
+  }
+  settings.statusLine = { type: 'command', command: statusLineCommand(), padding: 0 };
+}
+
 export function installClaudeCode(withProxy: boolean): Step[] {
   const steps: Step[] = [];
   const file = claudeCodeSettingsPath();
@@ -164,6 +194,7 @@ export function installClaudeCode(withProxy: boolean): Step[] {
     }
   }
   applyTuning(settings, cfg, state);
+  applyStatusLine(settings, cfg, state);
   const bak = backupFile(file);
   writeJsonAtomic(file, settings);
   state.proxyInstalled = proxyOk;
@@ -444,6 +475,10 @@ export function uninstall(purge = false): Step[] {
       value.hooks = stripOurHooks(value.hooks);
       if (!Object.keys(value.hooks).length) delete value.hooks;
       removeTuning(value, state);
+      if (typeof value.statusLine?.command === 'string' && value.statusLine.command.includes(MARK)) {
+        if (state.prevStatusLine) value.statusLine = state.prevStatusLine;
+        else delete value.statusLine;
+      }
       if (value.env && value.env.ANTHROPIC_BASE_URL === `http://127.0.0.1:${cfg.port}`) {
         if (state.prevBaseUrl) value.env.ANTHROPIC_BASE_URL = state.prevBaseUrl;
         else delete value.env.ANTHROPIC_BASE_URL;
@@ -512,6 +547,7 @@ export interface Health {
   proxyConfigured: boolean;
   desktopMcp: boolean;
   codeMcp: boolean;
+  statusLine: boolean;
   service: string;
   command: 'on-path' | 'rc' | 'missing';
   settingsPath: string;
@@ -533,6 +569,7 @@ export function health(): Health {
     proxyConfigured: s.env?.ANTHROPIC_BASE_URL === `http://127.0.0.1:${cfg.port}`,
     desktopMcp: !!(desk.ok && desk.value?.mcpServers?.grugbrain),
     codeMcp: !!(user.ok && user.value?.mcpServers?.grugbrain),
+    statusLine: JSON.stringify(s.statusLine || {}).includes(MARK),
     service: state.service || 'none',
     command: commandStatus(),
     settingsPath: claudeCodeSettingsPath(),

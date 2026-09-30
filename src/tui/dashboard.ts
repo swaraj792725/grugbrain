@@ -1,6 +1,7 @@
 /**
  * `grug dash`: live terminal dashboard (zero dependencies).
- * Tabs: 1 Overview · 2 Activity · 3 Memory · 4 Advice.  Keys: 1-4/←→/tab, g graph, r refresh, q quit.
+ * Tabs: 1 Overview · 2 Savings · 3 Activity · 4 Memory · 5 Advice.  Keys: 1-5/←→/tab, g graph, r refresh, q quit.
+ * Animated: a live sync pulse, a braille donut of where the savings come from, a counting-up headline number.
  */
 
 import { spawn } from 'node:child_process';
@@ -10,7 +11,9 @@ import { loadTune } from '../recalltune.js';
 import { loadAdoption } from '../adoption.js';
 import { loadMemory, projectName, score } from '../memory/store.js';
 import { proxyHealth } from '../proxy/server.js';
-import { readActivity, summarize, Summary, trafficCheck } from '../stats.js';
+import { Activity, readActivity, summarize, Summary, trafficCheck } from '../stats.js';
+import { computeSavings, Savings } from '../savings.js';
+import { bigText, boldFg, colorBar, donut, ease, fg, PALETTE, pulse, SPINNER } from './visual.js';
 import { fmtTokens, fmtUsd, priceFor } from '../tokens.js';
 import { cachedUpdate } from '../update.js';
 import * as fs from 'node:fs';
@@ -51,14 +54,38 @@ function ago(ts: number): string {
   return `${Math.round(s / 86400)}d`;
 }
 
+interface Data {
+  loadedAt: number;
+  all: Summary;
+  week: Summary;
+  day: Summary;
+  savings: Savings;
+  acts: Activity[];
+}
+
 interface State {
   tab: number;
   proxyUp: boolean | null;
   proxyInfo: any;
   lastRender: number;
+  /** Animation frame counter (draws ~8x/s) and cached data (reloaded every ~2s). */
+  frame?: number;
+  data?: Data;
+  /** Headline percentage as currently shown (counts up to the real value). */
+  shown?: number;
+  /** Newest activity seen at the last reload, for the "just now" flash. */
+  flash?: { text: string; until: number };
+  seenTs?: number;
 }
 
-const TABS = ['Overview', 'Activity', 'Memory', 'Advice'];
+const TABS = ['Overview', 'Savings', 'Activity', 'Memory', 'Advice'];
+
+function loadData(): Data {
+  const now = Date.now();
+  const week = summarize(now - 7 * DAY);
+  return { loadedAt: now, all: summarize(0), week, day: summarize(now - DAY), savings: computeSavings(now - 7 * DAY, week), acts: readActivity(800).filter((a) => !a.tag) };
+}
+const dataOf = (st: State): Data => st.data || (st.data = loadData());
 const DAY = 86400000;
 
 function header(st: State, width: number): string[] {
@@ -67,20 +94,70 @@ function header(st: State, width: number): string[] {
   const ok = (b: boolean) => (b ? green('✓') : red('✗'));
   const proxy = st.proxyUp === null ? dim('…') : st.proxyUp ? green(`● up :${cfg.port}`) : red('● down');
   const upd = cachedUpdate();
-  const line1 = `${orange(bold(' 🪨 grugbrain'))} ${dim('v' + VERSION)}${upd?.newer ? ' ' + yellow(`⬆ ${upd.latest}`) : ''}   proxy ${proxy}  hooks ${ok(h.hooks)}  code-mcp ${ok(h.codeMcp)}  desktop ${ok(h.desktopMcp)}  terse ${cyan(cfg.terse)}`;
+  const live = st.frame === undefined ? dim('·') : green(SPINNER[st.frame % SPINNER.length]);
+  const synced = st.data ? dim(`synced ${Math.max(0, Math.round((Date.now() - st.data.loadedAt) / 1000))}s ago`) : '';
+  const line1 = `${orange(bold(' 🪨 grugbrain'))} ${dim('v' + VERSION)} ${live} ${synced}${upd?.newer ? ' ' + yellow(`⬆ ${upd.latest}`) : ''}   proxy ${proxy}  hooks ${ok(h.hooks)}  mcp ${ok(h.codeMcp)}  statusline ${ok(h.statusLine)}  terse ${cyan(cfg.terse)}`;
   const tabs = TABS.map((t, i) => (i === st.tab ? inverse(` ${i + 1} ${t} `) : dim(` ${i + 1} ${t} `))).join('');
   const clock = dim(new Date().toLocaleTimeString());
   return [line1, pad(tabs, width - visible(clock).length - 1) + clock, dim('─'.repeat(width))];
 }
 
-function overview(width: number): string[] {
+function sideBySide(left: string[], right: string[], gap: number): string[] {
+  const lw = Math.max(...left.map((l) => [...visible(l)].length), 0);
+  const n = Math.max(left.length, right.length);
+  const out: string[] = [];
+  for (let i = 0; i < n; i++) out.push(pad(left[i] || '', lw + gap) + (right[i] || ''));
+  return out;
+}
+
+const money = (n: number) => fmtUsd(n);
+
+/** Hero: the headline percentage (counts up), the donut of where it comes from, and a live sync strip. */
+function hero(st: State, width: number): string[] {
+  const d = dataOf(st);
+  const sv = d.savings;
+  const target = sv.pct * 100;
+  const shown = st.shown === undefined ? target : st.shown;
+  const digits = shown >= 9.95 ? String(Math.round(shown)) : shown.toFixed(1);
+  const big = bigText(digits + '%').map((l) => boldFg(sv.pct > 0 ? 120 : 245)(l));
+  const left: string[] = [bold('GRUG SAVED'), '', ...big, '', `${bold(money(sv.netUsd))} ${dim('saved on')} ${money(sv.spendUsd + sv.netUsd)} ${dim('(last 7 days, estimate)')}`, `${colorBar(sv.pct, 28, 120)} ${dim('of your bill')}`];
+  if (sv.costUsd > 0) left.push(dim(`after ${money(sv.costUsd)} that grug's own notes and hints cost`));
+  const parts = [...sv.parts].sort((a, b) => b.usd - a.usd);
+  const sweep = st.frame === undefined ? -1 : (st.frame % 48) / 48;
+  const slices = parts.map((p, i) => ({ value: p.usd, color: PALETTE[i % PALETTE.length] }));
+  const ring = donut(slices, 22, 11, sweep);
+  const totalUsd = parts.reduce((n, p) => n + p.usd, 0) || 1;
+  const legend = parts.slice(0, 8).map((p, i) => `${fg(PALETTE[i % PALETTE.length])('●')} ${pad(p.label, 28)}${pad(Math.round((p.usd / totalUsd) * 100) + '%', 5, true)} ${dim(pad(money(p.usd), 8, true))}`);
+  if (!parts.length) legend.push(dim('nothing saved yet: use Claude Code and this fills in'));
+  const right = sideBySide(ring, legend, 2);
+  return width >= 112 ? sideBySide(left, right, 4) : [...left, '', ...right];
+}
+
+/** The live strip: pulse of the last 30 minutes, the sync status, and a flash for the newest thing grug did. */
+function liveStrip(st: State, width: number): string[] {
+  const d = dataOf(st);
   const now = Date.now();
-  const all = summarize(0);
-  const week = summarize(now - 7 * DAY);
-  const day = summarize(now - DAY);
+  const buckets = new Array(30).fill(0);
+  for (const a of d.acts) {
+    const m = Math.floor((now - a.ts) / 60000);
+    if (m >= 0 && m < 30) buckets[29 - m]++;
+  }
+  const last = d.acts[d.acts.length - 1];
+  const f = st.frame ?? 0;
+  const spin = fg(120)(SPINNER[f % SPINNER.length]);
+  const L = [`${spin} ${bold('LIVE')}  ${pulse(buckets, f)}  ${dim('grug actions per minute, last 30 min')}   ${dim(last ? `last: ${ago(last.ts)} ago` : 'waiting for Claude')}`];
+  if (st.flash && st.flash.until > now) L.push(`  ${boldFg(120)('✦ just now:')} ${st.flash.text.slice(0, width - 16)}`);
+  else if (last) L.push(dim(`  ${last.kind}: ${last.msg}`.slice(0, width - 4)));
+  return L;
+}
+
+function overview(st: State, width: number): string[] {
+  const d = dataOf(st);
+  const now = Date.now();
+  const { all, week, day } = d;
   const col = (s: string) => pad(s, 15, true);
   const row = (label: string, f: (s: Summary) => string) => `  ${pad(label, 30)}${col(f(day))}${col(f(week))}${col(f(all))}`;
-  const L: string[] = [];
+  const L: string[] = [...hero(st, width), '', ...liveStrip(st, width), ''];
   L.push(bold('MEASURED') + dim('  real token usage (proxy + session transcripts)'));
   L.push(dim(`  ${pad('', 30)}${col('24h')}${col('7 days')}${col('all time')}`));
   L.push(row('requests', (s) => s.requests.toLocaleString()));
@@ -89,26 +166,72 @@ function overview(width: number): string[] {
   L.push(row('cost per reply', (s) => (s.requests ? fmtUsd(s.costUsd / s.requests) : '—')));
   L.push(row('avg context per reply', (s) => (s.requests ? fmtTokens((s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens) / s.requests) : '—')));
   L.push(row('saved by prompt cache (all)', (s) => green(fmtUsd(s.cacheSavedUsd))));
-  L.push(row('  …where grug added the cache', (s) => green(fmtUsd(s.grugCacheSavedUsd))));
   L.push(`  ${pad('cache hit rate (7d)', 30)}${bar(week.cacheHitRate, 24)} ${Math.round(week.cacheHitRate * 100)}%`);
   L.push('');
-  L.push(bold('WHAT GRUG DID') + dim('  (token counts here are estimates)'));
+  const days: number[] = [];
+  const saved: number[] = [];
+  for (let i = 13; i >= 0; i--) {
+    const dd = new Date(now - i * DAY).toISOString().slice(0, 10);
+    const hit = all.byDay.find((x) => x.day === dd);
+    days.push(hit?.costUsd || 0);
+    saved.push(hit?.savedUsd || 0);
+  }
+  L.push(`${bold('14-DAY')}  spend ${cyan(spark(days))}   cache-saved ${green(spark(saved))}`);
+  const monthly = (week.costUsd / 7) * 30;
+  const without = ((week.costUsd + d.savings.netUsd) / 7) * 30;
+  L.push(`${bold('PROJECTION')}  at 7-day pace: ${bold(fmtUsd(monthly))}/mo` + (d.savings.netUsd > 0 ? `, without grug ≈ ${fmtUsd(without)}/mo (${green('-' + fmtUsd(without - monthly))})` : ''));
+  const bench = latestBench();
+  if (bench) {
+    const on = bench.results.filter((r: any) => r.arm === 'on');
+    const off = bench.results.filter((r: any) => r.arm === 'off');
+    const sum = (xs: any[], f: (r: any) => number) => xs.reduce((a, r) => a + f(r), 0);
+    const oc = sum(off, (r) => r.costUsd);
+    const pct = oc > 0 ? Math.round((1 - sum(on, (r) => r.costUsd) / oc) * 100) : 0;
+    L.push(`${bold('LAST BENCH')}  (${bench.model}, ${ago(bench.ts)} ago) quality ${green(`${sum(on, (r) => +r.pass)}/${on.length}`)} vs baseline ${sum(off, (r) => +r.pass)}/${off.length} · cost ${pct >= 0 ? green(`-${pct}%`) : red(`+${-pct}%`)}`);
+  }
+  if (!all.requests) {
+    L.push('');
+    L.push(yellow('  No API traffic recorded yet. Grug sees requests from Claude Code once the proxy is running'));
+    L.push(yellow('  (the Claude Desktop chat tab does not expose its API calls; there grug helps via MCP tools + memory).'));
+  }
+  return L.map((l) => l.slice(0, width * 4));
+}
+
+/** Every thing grug does, grouped, with bars against the biggest source. Shows the newest features too. */
+function savingsView(st: State, width: number): string[] {
+  const d = dataOf(st);
+  const { all } = d;
+  const L: string[] = [];
+  const sv = d.savings;
+  const parts = [...sv.parts].sort((a, b) => b.usd - a.usd);
+  const maxUsd = Math.max(...parts.map((p) => p.usd), 1e-9);
+  L.push(bold('WHERE THE SAVINGS COME FROM') + dim('  last 7 days, estimate: tokens kept out of context priced once at your main model\'s input rate'));
+  parts.forEach((p, i) => L.push(`  ${fg(PALETTE[i % PALETTE.length])('●')} ${pad(p.label, 28)}${colorBar(p.usd / maxUsd, 24, PALETTE[i % PALETTE.length])} ${pad(money(p.usd), 9, true)} ${dim(p.count ? p.count + '×' : '')}`));
+  if (!parts.length) L.push(dim('  nothing yet'));
+  L.push(dim(`  net ${money(sv.netUsd)} = ${money(sv.savedUsd)} saved − ${money(sv.costUsd)} grug's own additions (briefs, recalls, code hints)`));
+  L.push('');
+  L.push(bold('WHAT GRUG DID') + dim('  all time (token counts are estimates)'));
   const k = (kind: string) => all.countByKind[kind] || 0;
   const t = (kind: string) => all.savedByKind[kind] || 0;
   const did = (label: string, tokens: number, count: number, extra = '') =>
     `  ${pad(label, 34)}${pad(tokens ? (tokens > 0 ? green('~' + fmtTokens(tokens) + ' tok') : yellow(fmtTokens(tokens) + ' tok')) : dim('—'), 16)}${dim(count + '×')} ${dim(extra)}`;
-  L.push(did('trimmed long tool output', all.trimmedTokens + t('trim'), k('trim'), all.trimSavedUsd > 0 ? `≈ ${fmtUsd(all.trimSavedUsd)} of input` : ''));
+  L.push(bold('  output') );
+  L.push(did('install/build noise dropped', t('cmdrules'), k('cmdrules'), 'npm pip cargo go apt docker git make; errors always kept'));
+  L.push(did('summarized test output', t('testsum'), k('testsum'), 'failures kept, passing noise dropped'));
+  L.push(did('compacted big JSON results', t('json'), k('json'), 'first items in full, one line per rest; also MCP tools'));
+  L.push(did('trimmed long tool output', all.trimmedTokens + t('trim'), k('trim'), all.trimSavedUsd > 0 ? `≈ ${fmtUsd(all.trimSavedUsd)} of input; full original always kept on disk` : 'full original always kept on disk'));
   L.push(did('deduped repeated tool results', 0, k('dedupe')));
-  L.push(did('summarized test/build output', t('testsum'), k('testsum'), 'failures kept, passing noise dropped'));
+  L.push(bold('  reads and media'));
   L.push(did('redirected huge full-file reads', t('read-guard'), k('read-guard')));
   L.push(did('skipped unchanged re-reads', t('reread'), k('reread')));
-  L.push(did('cache misses diagnosed (cost)', t('cache-miss'), k('cache-miss'), 'see Advice for culprits'));
-  L.push(did('media: repeats skipped/shrunk', t('media'), k('media'), 'screenshots, images, PDF text, video sheets'));
   L.push(did('outlines instead of full files', t('outline'), k('outline')));
+  L.push(did('media: repeats skipped/shrunk', t('media'), k('media'), 'screenshots, images, PDF text, video sheets'));
+  L.push(bold('  cache and context'));
   L.push(did('prompt-cache breakpoints added', 0, k('cache')));
+  L.push(did('cache misses diagnosed (cost)', t('cache-miss'), k('cache-miss'), 'see Advice for culprits'));
   L.push(did('handoffs to a fresh session', t('handoff'), k('handoff'), 'old context not re-read'));
-  L.push(did('context-size alerts', 0, k('context-alert')));
-  L.push(did('cache-expiry notices (cold replies)', 0, k('idle-alert'), 'told you before a big idle session re-wrote its cache'));
+  L.push(did('notices to you (/clear, cache)', 0, k('context-alert') + k('idle-alert') + k('task-shift'), 'context alerts, idle cache, new task'));
+  L.push(bold('  memory and navigation'));
   L.push(did('memory briefs + recalls (cost)', t('brief') + t('recall'), k('brief') + k('recall'), 'context carried over instead of re-exploring'));
   const avg = (kind: string) => (k(kind) ? `avg ${Math.round(Math.abs(t(kind)) / k(kind))} tok` : '');
   L.push(did('auto-recall injections (cost)', t('auto-recall'), k('auto-recall'), [avg('auto-recall'), 'only when something clearly matches'].filter(Boolean).join(', ')));
@@ -123,51 +246,23 @@ function overview(width: number): string[] {
     const total = a.grug + a.read + a.grep + a.glob;
     L.push(did('graph-first hints', 0, k('nav'), a.navShown ? `${Math.round((a.navFollowed / a.navShown) * 100)}% followed by a ranged read; grug tools ${a.grug} vs Read/Grep/Glob ${total - a.grug}` : 'no data yet'));
   }
-  L.push(did('new-task /clear suggestions', 0, k('task-shift'), 'big context + unrelated prompt'));
   L.push(did('durable facts captured', 0, k('facts'), 'decisions, root causes, preferences, commands'));
-  L.push(did('notes remembered', 0, k('remember')));
-  L.push(did('memory consolidations', 0, k('consolidate')));
+  L.push(did('notes remembered / consolidated', 0, k('remember') + k('consolidate')));
   L.push(did('safety fallbacks (sent original)', 0, all.fallbacks));
   L.push('');
-  const days: number[] = [];
-  const saved: number[] = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(now - i * DAY).toISOString().slice(0, 10);
-    const hit = all.byDay.find((x) => x.day === d);
-    days.push(hit?.costUsd || 0);
-    saved.push(hit?.savedUsd || 0);
-  }
-  L.push(`${bold('14-DAY')}  spend ${cyan(spark(days))}   cache-saved ${green(spark(saved))}`);
-  const monthly = (week.costUsd / 7) * 30;
-  const without = ((week.costUsd + week.grugCacheSavedUsd + week.trimSavedUsd) / 7) * 30;
-  L.push(
-    `${bold('PROJECTION')}  at 7-day pace: ${bold(fmtUsd(monthly))}/mo` +
-      (without > monthly ? `, without grug's changes ≈ ${fmtUsd(without)}/mo (${green('-' + fmtUsd(without - monthly))})` : '')
-  );
-  const bench = latestBench();
-  if (bench) {
-    const on = bench.results.filter((r: any) => r.arm === 'on');
-    const off = bench.results.filter((r: any) => r.arm === 'off');
-    const sum = (xs: any[], f: (r: any) => number) => xs.reduce((a, r) => a + f(r), 0);
-    const oc = sum(off, (r) => r.costUsd);
-    const saved = oc > 0 ? Math.round((1 - sum(on, (r) => r.costUsd) / oc) * 100) : 0;
-    L.push(
-      `${bold('LAST BENCH')}  (${bench.model}, ${ago(bench.ts)} ago) quality ${green(`${sum(on, (r) => +r.pass)}/${on.length}`)} vs baseline ${sum(off, (r) => +r.pass)}/${off.length} · cost ${saved >= 0 ? green(`-${saved}%`) : red(`+${-saved}%`)}`
-    );
-  }
-  if (!all.requests) {
-    L.push('');
-    L.push(yellow('  No API traffic recorded yet. Grug sees requests from Claude Code once the proxy is running'));
-    L.push(yellow('  (the Claude Desktop chat tab does not expose its API calls; there grug helps via MCP tools + memory).'));
-  }
-  return L.map((l) => l.slice(0, width * 3));
+  const cfg = loadConfig();
+  const h = health();
+  L.push(bold('IN THE CLAUDE APP'));
+  L.push(`  status line under the input box   ${h.statusLine ? green('on') : yellow('off')}  ${dim(h.statusLine ? 'shows context size, $/reply, when to /clear, cache timer, tips' + (cfg.statusLine.wrap ? ' (your own status line runs inside it)' : '') : 'grug install turns it on; grug config set statusLine.enabled true')}`);
+  L.push(`  /clear and cache-expiry notices   ${cfg.contextAlert.enabled ? green('on') : yellow('off')}  ${dim('also shown in the chat when a limit is crossed')}`);
+  return L.map((l) => l.slice(0, width * 4));
 }
 
 function activity(height: number): string[] {
   const acts = readActivity(500).filter((a) => !a.tag).slice(-Math.max(5, height)).reverse();
   if (!acts.length) return [dim('  Nothing yet. Grug waits for Claude to do something.')];
   const color: Record<string, (s: string) => string> = {
-    trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
+    trim: green, cmdrules: green, json: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
     consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow, 'idle-alert': yellow, nav: cyan, 'task-shift': yellow, media: green,
     'auto-recall': cyan, graph: cyan, facts: cyan
   };
@@ -307,11 +402,12 @@ function adviceView(st: State): string[] {
 export function renderOnce(st: State, width = process.stdout.columns || 100, height = process.stdout.rows || 40): string {
   const w = Math.max(60, Math.min(140, width));
   let body: string[];
-  if (st.tab === 0) body = overview(w);
-  else if (st.tab === 1) body = activity(height - 6);
-  else if (st.tab === 2) body = memory(w);
+  if (st.tab === 0) body = overview(st, w);
+  else if (st.tab === 1) body = savingsView(st, w);
+  else if (st.tab === 2) body = activity(height - 6);
+  else if (st.tab === 3) body = memory(w);
   else body = adviceView(st);
-  const footer = dim('  1-4/←→ switch · g open memory graph · r refresh · q quit');
+  const footer = dim('  1-5/←→ switch · g open memory graph · r refresh · q quit');
   return [...header(st, w), ...body, '', footer].join('\n');
 }
 
@@ -339,12 +435,27 @@ export async function runDashboard(opts: { once?: boolean } = {}): Promise<void>
   };
   await probe();
   if (opts.once || !process.stdout.isTTY || !process.stdin.isTTY) {
-    for (st.tab = 0; st.tab < 4; st.tab++) console.log(renderOnce(st) + '\n');
+    for (st.tab = 0; st.tab < TABS.length; st.tab++) console.log(renderOnce(st) + '\n');
     return;
   }
   const out = process.stdout;
   out.write('\x1b[?1049h\x1b[?25l');
-  const draw = () => out.write('\x1b[H\x1b[2J' + renderOnce(st));
+  st.frame = 0;
+  const reload = () => {
+    const prevTs = st.seenTs;
+    st.data = loadData();
+    const newest = st.data.acts[st.data.acts.length - 1];
+    if (newest && prevTs !== undefined && newest.ts > prevTs) st.flash = { text: `${newest.kind}: ${newest.msg}`, until: Date.now() + 4000 };
+    if (newest) st.seenTs = newest.ts;
+    else if (st.seenTs === undefined) st.seenTs = 0;
+  };
+  reload();
+  st.shown = 0; // the headline counts up from 0 on open
+  // One write per frame, line by line with erase-to-end, so nothing flickers.
+  const draw = () => {
+    st.shown = ease(st.shown ?? 0, st.data ? st.data.savings.pct * 100 : 0);
+    out.write('\x1b[H' + renderOnce(st).split('\n').map((l) => l + '\x1b[K').join('\n') + '\x1b[J');
+  };
   const cleanup = () => {
     out.write('\x1b[?25h\x1b[?1049l');
     process.stdin.setRawMode(false);
@@ -355,20 +466,33 @@ export async function runDashboard(opts: { once?: boolean } = {}): Promise<void>
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', async (key: string) => {
     if (key === 'q' || key === '\u0003' || key === '\u001b') return cleanup();
-    if (key >= '1' && key <= '4') st.tab = Number(key) - 1;
-    else if (key === '\t' || key === '\u001b[C') st.tab = (st.tab + 1) % 4;
-    else if (key === '\u001b[D') st.tab = (st.tab + 3) % 4;
+    if (key >= '1' && key <= String(TABS.length)) st.tab = Number(key) - 1;
+    else if (key === '\t' || key === '\u001b[C') st.tab = (st.tab + 1) % TABS.length;
+    else if (key === '\u001b[D') st.tab = (st.tab + TABS.length - 1) % TABS.length;
     else if (key === 'g') {
       const { maintain } = await import('../memory/maintain.js');
       maintain();
       openPath(paths.graphHtml());
-    } else if (key === 'r') await probe();
+    } else if (key === 'r') {
+      await probe();
+      reload();
+    }
+    out.write('\x1b[2J');
     draw();
   });
-  out.on('resize', draw);
+  out.on('resize', () => {
+    out.write('\x1b[2J');
+    draw();
+  });
+  out.write('\x1b[2J');
   draw();
+  // Animation: ~8 frames a second (spinner, donut sweep, count-up); data reloads every 2 s.
+  setInterval(() => {
+    st.frame = (st.frame ?? 0) + 1;
+    draw();
+  }, 120);
   setInterval(async () => {
     await probe();
-    draw();
+    reload();
   }, 2000);
 }

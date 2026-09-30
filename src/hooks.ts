@@ -11,6 +11,8 @@ import { loadConfig, paths } from './config.js';
 import { terseStyle } from './compress/caveman.js';
 import { trimToolOutput } from './compress/trim.js';
 import { summarizeTestOutput } from './compress/testsum.js';
+import { applyCommandRules } from './compress/cmdrules.js';
+import { compactJson } from './compress/jsoncompact.js';
 import { buildBrief, recall } from './memory/brief.js';
 import { withMemoryLock } from './memory/maintain.js';
 import { addNote, appendBuffer, BufferEvent, loadMemory, projectKey, readBuffer, saveMemory } from './memory/store.js';
@@ -296,11 +298,21 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       } else if (tool === 'Bash' && ti.command) {
         appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
       }
-      if (tool !== 'Bash' && tool !== 'Grep') return mediaOut;
+      if (tool !== 'Bash' && tool !== 'Grep' && !(cfg.commandRules.mcp && tool.startsWith('mcp__'))) return mediaOut;
       const original = toolOutputText(input);
-      if (original === null) return null;
+      if (original === null) return mediaOut;
       let text = original;
-      let kind: 'testsum' | 'trim' | null = null;
+      let kind: 'testsum' | 'trim' | 'cmdrules' | 'json' | null = null;
+      let ruleName = '';
+      const cmd = tool === 'Bash' ? String(ti.command || '') : '';
+      if (cfg.commandRules.enabled && tool === 'Bash') {
+        const c = applyCommandRules(cmd, text, cfg.commandRules.minChars);
+        if (c.changed) {
+          text = c.text;
+          kind = 'cmdrules';
+          ruleName = c.rule || '';
+        }
+      }
       if (cfg.testSummary.enabled && tool === 'Bash') {
         const s = summarizeTestOutput(text, cfg.testSummary.minChars);
         if (s.changed) {
@@ -308,30 +320,58 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           kind = 'testsum';
         }
       }
+      if (cfg.commandRules.json) {
+        const j = compactJson(text, cfg.commandRules.jsonMinChars);
+        if (j.changed) {
+          text = j.text;
+          kind = kind || 'json';
+        }
+      }
       if (cfg.proxy.trimToolResults) {
         const r = trimToolOutput(text, {
           // Content Claude asked to see (cat, sed -n, grep, git diff...) keeps the generous limit; only noisy runs are cut early.
-          thresholdChars: wantsContent(String(ti.command || '')) ? Math.max(cfg.proxy.trimThresholdChars, cfg.proxy.trimContentChars) : cfg.proxy.trimThresholdChars,
+          thresholdChars: wantsContent(cmd) ? Math.max(cfg.proxy.trimThresholdChars, cfg.proxy.trimContentChars) : cfg.proxy.trimThresholdChars,
           keepHeadChars: cfg.proxy.trimKeepHeadChars,
           keepTailChars: cfg.proxy.trimKeepTailChars,
-          saveFull: (full) => saveFullOutput(full, input.scratchpad_dir)
+          saveFull: () => saveFullOutput(original, input.scratchpad_dir)
         });
         if (r.changed) {
           text = r.text;
           kind = kind || 'trim';
         }
       }
+      // Whatever shortened the output, the untouched original stays recoverable.
+      if (text !== original && !text.includes('Full original output:')) {
+        try {
+          const where = saveFullOutput(original, input.scratchpad_dir);
+          if (where) text += `\n[grug: full original output: ${where} (Read it with offset/limit if something above is not enough).]`;
+        } catch {
+          /* recovery pointer is best-effort */
+        }
+      }
       const removed = original.length - text.length;
       if (!kind || removed < 200) return null;
       recordActivity({
         kind,
-        msg: kind === 'testsum' ? `Summarized test/build output (${Math.round((removed / original.length) * 100)}% smaller)` : `Trimmed ${tool} output at source`,
+        msg:
+          kind === 'testsum'
+            ? `Summarized test/build output (${Math.round((removed / original.length) * 100)}% smaller)`
+            : kind === 'cmdrules'
+              ? `Dropped ${ruleName} progress noise (${Math.round((removed / original.length) * 100)}% smaller, errors kept)`
+              : kind === 'json'
+                ? `Compacted a big JSON result from ${tool} (${Math.round((removed / original.length) * 100)}% smaller)`
+                : `Trimmed ${tool} output at source`,
         tokens: Math.round(removed / 3.6),
         project: path.basename(cwd)
       });
       // Reply in the same shape the tool produced (Bash gives {stdout, stderr, ...}).
       const r = input.tool_response;
-      const updated = r && typeof r === 'object' && typeof r.stdout === 'string' ? { ...r, stdout: text, stderr: '' } : text;
+      const updated =
+        Array.isArray(r) && r.length
+          ? [{ ...r[0], text }] // MCP text blocks: one block carrying the compacted text
+          : r && typeof r === 'object' && typeof r.stdout === 'string'
+            ? { ...r, stdout: text, stderr: '' }
+            : text;
       return { hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: updated } };
     }
 
@@ -568,6 +608,8 @@ export function toolOutputText(input: HookInput): string | null {
   const r = input.tool_response;
   if (typeof r === 'string') return r;
   if (r && typeof r === 'object' && typeof r.stdout === 'string') return r.stdout + (r.stderr ? `\n${r.stderr}` : '');
+  // MCP tools: an array of content blocks. Only pure text results are handled (images etc. stay untouched).
+  if (Array.isArray(r) && r.length && r.every((b: any) => b && b.type === 'text' && typeof b.text === 'string')) return r.map((b: any) => b.text).join('\n');
   return null;
 }
 
@@ -631,6 +673,13 @@ function ensureDaemon(): void {
     /* not running or no pid file */
   }
   if (cfg.proxy.enabled) spawnDetached(['daemon']);
+}
+
+export async function readStdinText(): Promise<string> {
+  if (process.stdin.isTTY) return '';
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 export async function readStdinJson(): Promise<HookInput> {

@@ -120,34 +120,42 @@ grug only write in `MyVault/grugbrain/` and only delete files grug made (they ca
 grug dash
 ```
 
-```text
- 🪨 grugbrain v2.0.0   proxy ● up :4747  hooks ✓  code-mcp ✓  desktop ✓  terse lite
- 1 Overview  2 Activity  3 Memory  4 Advice                                    10:42:07
-────────────────────────────────────────────────────────────────────────────────────
-MEASURED  real API usage through the proxy
-                                         24h      7 days    all time
-  requests                                84         612       2,410
-  spend                                $3.12      $21.40      $88.10
-  saved by prompt cache (all)          $9.80      $61.22     $240.51
-    …where grug added the cache        $0.00       $1.10       $6.40
-  cache hit rate (7d)           ███████████████████░░░░░ 79%
+Live, animated TUI (redraws every 120 ms, reloads data every 2 s; the header shows a spinner and "synced Ns ago"). Keys `1`-`5` switch tabs.
 
-WHAT GRUG DID  (token counts here are estimates)
-  trimmed long tool output          ~412k tok       96×
-  deduped repeated tool results     —               14×
-  redirected huge full-file reads   ~188k tok       11×
-  outlines instead of full files    ~61k tok        40×
-  memory briefs + recalls (cost)    -9.8k tok       57×  context carried over
-14-DAY  spend ▂▃▅▂▁▇▃▄▅▃▂▆▄▃   cache-saved ▃▄▆▃▂█▄▅▆▄▃▇▅▄
-PROJECTION  at 7-day pace: $91.71/mo, without grug's changes ≈ $104.20/mo
+- **1 Overview**: the headline, **"grug saved ~N% of your bill"**, counting up in big digits, next to a rotating donut chart of where the savings come from. Below it a live pulse of recent activity (new events flash "just now"), measured spend and cache numbers, the 14-day sparkline and the monthly projection.
+- **2 Savings**: the donut with legend, each saver with tokens and count (output trimming, per-command install/build rules, test summaries, compact JSON, read guards and outlines, media, handoff), grug's own costs, and the user-side optimisations shown in the Claude app.
+- **3 Activity**: live log of every action (trim, command rules, JSON, guard, cache, brief, recall, fold...).
+- **4 Memory**: projects, sessions, digests, notes, hot files, graph + vault paths (`g` opens graph).
+- **5 Advice**: what grug *would* do but cannot do alone: low cache hit rate, too much top-tier model spend, terse mode, broken install.
+
+**How the headline % is worked out (an estimate, labelled as one):** net = tokens kept out of context (priced once at your main model's input rate) + prompt-cache savings grug added, minus grug's own costs (briefs, recalls, hints, cache misses). Percent = net / (spend + net). Token counts are estimates; spend is measured from real usage.
+
+`grug dash --once` prints it all without the TUI (for scripts / CI).
+
+---
+
+## grug tell you when to /clear (status line)
+
+grug adds one short line to Claude Code's status line (wrapping your own status line if you have one, and restoring it on uninstall):
+
+```text
+cache cold: next reply re-writes context (~$0.40) · saved ~4%
+ctx 310k: /clear at the end of this task · saved ~4%
+tip: ask Grep first, then Read with offset/limit · saved ~4%
 ```
 
-- **1 Overview**: what grug did (measured + estimated), 14-day sparkline, monthly projection
-- **2 Activity**: live log of every action (trim, guard, cache, brief, recall, fold…)
-- **3 Memory**: projects, sessions, digests, notes, hot files, graph + vault paths (`g` opens graph)
-- **4 Advice**: what grug *would* do but can't do alone: low cache hit rate, too much top-tier model spend (with $ estimate), terse mode, broken install
+- Priority: cache gone cold or about to expire, then context far over the limit (red), then over the limit (yellow `/clear at the end of this task`), then a rotating tip. `saved ~N%` is always shown.
+- **Honest note:** Claude Code draws the status line *below* the input box, not above it. It cannot be placed above. The in-chat notices (context alert, idle alert, new-task hint) still appear in the conversation as before.
+- Toggle: `grug config set statusLine.enabled false`. Wrap your own: `statusLine.wrap "<command>"`. Tips off: `statusLine.tips false`. `grug doctor` shows whether it is installed.
 
-`grug dash --once` print it all without the TUI (for scripts / CI).
+---
+
+## grug quiet noisy commands
+
+- **Per-command rules** (`commandRules.*`): npm/pnpm/yarn, pip/uv/poetry, cargo, go, apt, brew, docker, git transfers and make/gradle/mvn lose their progress lines; errors and warnings are always kept. Applied only if at least 5 lines go and the output shrinks by 25%+.
+- **Compact JSON**: big uniform arrays keep 3 items in full plus one identity line per remaining item.
+- **MCP results**: big text results from MCP tools get the same treatment as Bash output.
+- Every rewrite appends the path of the untouched original. Expect a few percent of the bill, most on big builds, docker, go and cargo.
 
 ---
 
@@ -221,6 +229,7 @@ grug compress <text | ->        strip filler from text you'll reuse (e.g. system
 grug config                     show config
 grug config set <key> <value>   e.g. terse full · readGuard.maxBytes 100000 · memory.briefTokens 500
 grug savings                    one-line summary
+grug statusline                 status line text (called by Claude Code, reads stdin)
 ```
 
 ## grug remember for Claude (auto-recall + code graph)
@@ -310,6 +319,9 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `idleAlert.enabled` / `minExtraUsd` | `true` / `0.25` | warn (you only) when idle cache expiry makes next reply expensive |
 | `autoRecall.enabled` / `maxTokens` / `sessionTokens` | `true` / `800` / `2500` | per-prompt recall from memory, code graph, old sessions; total cap per session |
 | `graphContext.enabled` / `mapTokens` | `true` / `600` | repo map at session start + code hints per prompt |
+| `commandRules.enabled` / `minChars` | `true` / `1500` | drop install/build progress lines |
+| `commandRules.json` / `jsonMinChars` / `mcp` | `true` / `12000` / `true` | compact big JSON; same rules for MCP results |
+| `statusLine.enabled` / `tips` / `wrap` | `true` / `true` / `''` | Claude Code status line: /clear and cache notices, saved %, your own line |
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
 | `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |
