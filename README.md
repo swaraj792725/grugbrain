@@ -53,8 +53,8 @@ grug **measure**, not guess. Proxy read real `usage` from every API reply (input
 
 Long session = big context = every reply re-read all of it. Real install: **~500k tokens re-read per reply.** Tool can't press `/clear` for you (Claude Code don't allow). But Claude Code can compact itself, and grug decide *when*:
 
-1. grug set Claude Code's auto-compact point to **200k** (not near 1M). No user action.
-2. Right before compaction: grug save a **handoff**: goal (latest ask), your standing rules and corrections, open todos, last test/build result, where it got to, decisions, files changed. Filled by priority within 1200 tokens. No AI call. grug also keep a text-only **archive** of the conversation (`~/.grug/archive`, 60 MB cap) that the `history` tool can search after Claude Code cleans up its own copy.
+1. grug set Claude Code's auto-compact point to **150k** (not near 1M). No user action.
+2. Right before compaction: grug save a **handoff**: goal (latest ask, plus a short "yes" / "merge it" with what it answered), your standing rules and corrections, a question Claude was still waiting on, the real git state (branch, unpushed commits, uncommitted files, commits made this session), open todos, last test/build result judged from its output, where it got to (replies keep their ending), decisions. Filled by priority within 1200 tokens. No AI call. grug also keep a text-only **archive** of the conversation (`~/.grug/archive`, 60 MB cap) that the `history` tool can search after Claude Code cleans up its own copy.
 3. Right after: grug put the handoff into the fresh context, and tell Claude about the **`history` tool**: search the full old conversation for an exact detail instead of guessing or carrying it.
 4. You type `/clear` yourself when switching tasks? Same handoff, next session pick up.
 
@@ -309,7 +309,8 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `updateCheck` | `true` | GitHub release check every 6h, notify only |
 | `contextAlert.enabled` / `firstTokens` | `true` / `150000` | one-line notice when context passes 150k, 300k, 600k… |
 | `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
-| `autoCompact.windowTokens` | `200000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
+| `handoff.git` | `true` | put the real git state in the handoff (read-only `git status` / `git log`, no lock, 2.5 s limit) |
+| `autoCompact.windowTokens` | `150000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
 | `graphContext.hints` / `readHintBytes` | `true` / `12000` | tool-time hints: symbol location on Grep, outline-first on mid-size full Reads |
 | `taskBoundary.enabled` / `minTokens` | `true` / `60000` | suggest `/clear` (to you) when a new task starts on a big context |

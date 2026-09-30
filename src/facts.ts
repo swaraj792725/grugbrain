@@ -6,7 +6,7 @@
  */
 
 import { similarity } from './memory/store.js';
-import { transcriptEntriesFrom } from './handoff.js';
+import { quotedOnly, transcriptEntriesFrom } from './handoff.js';
 
 export type FactKind = 'decision' | 'cause' | 'preference' | 'command';
 
@@ -115,6 +115,7 @@ export function scanFacts(transcriptPath: string | undefined, offset = 0, failed
     for (const s of sentences(t)) {
       if (NARRATION.test(s)) continue;
       // Causes count when they follow a failure, or say "root cause" outright.
+      if (quotedOnly(s, CAUSE) || quotedOnly(s, DECISION)) continue; // talking about the words, not stating a cause or decision
       if (CAUSE.test(s) && (idx - lastErrorAt <= 12 || /root cause/i.test(s))) push('cause', /^root cause/i.test(s) ? s : `Root cause: ${s}`, ts);
       else if (DECISION.test(s)) push('decision', s, ts);
     }

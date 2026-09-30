@@ -136,6 +136,8 @@ export interface GrugConfig {
     enabled: boolean;
     maxTokens: number;
     maxAgeHours: number;
+    /** Put the real git state (branch, unpushed, uncommitted files, last commit) in the handoff. Read-only, never takes a lock. */
+    git: boolean;
   };
   /** Per-prompt recall of memory, earlier sessions and code (UserPromptSubmit), only when something clearly matches. */
   autoRecall: {
@@ -244,7 +246,8 @@ export function defaultConfig(): GrugConfig {
     handoff: {
       enabled: true,
       maxTokens: 1200,
-      maxAgeHours: 48
+      maxAgeHours: 48,
+      git: true
     },
     autoRecall: {
       enabled: true,

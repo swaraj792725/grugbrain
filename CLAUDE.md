@@ -43,6 +43,13 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 
 - The desktop Code tab draws NO status line (confirmed by the user; terminal `claude` does). For the app, hooks.ts sends `appSummaryLine` (statusline.ts) as a user-only systemMessage at session start and every `appSummary.everyPrompts` prompts (v2.16).
 
+## Handoff restore quality (v2.19)
+- buildHandoff facts come from the things that cannot be wrong: git (gitState: read-only, GIT_OPTIONAL_LOCKS=0, LC_ALL=C, 2.5 s timeout; commits this session via `git log --since=<session start>`), the check's own output (lastCheck: passed / no failure output / FAILED), and the transcript. Shell edits (sed -i, python heredocs) never reach the buffer's file events, so "Files changed" from the buffer is only the no-git fallback. `handoff.git` turns git off.
+- Blocks fill by priority within the same cap: goal, latest short message with what it answered, open question, rules, git, todos, check, replies since the goal, decisions, commits, earlier requests. `squeeze` keeps a reply's start and its ending; replies from before the goal are labelled as the previous task.
+- Quoted mentions ("root cause" lines) are not facts: `quotedOnly` guards facts.ts and filters already stored facts at read time.
+- handoffText adds "Saved N ago" after 10 minutes, since git/check lines describe the moment of saving.
+- Not covered: TaskCreate/TaskUpdate todos (only TodoWrite is parsed); the Code tab restore is still unconfirmed; tested on one real transcript plus synthetic ones in tests/grug.test.ts.
+
 ## Open items
 - Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.

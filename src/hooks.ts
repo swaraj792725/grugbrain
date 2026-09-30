@@ -21,7 +21,7 @@ import { appSummaryLine } from './statusline.js';
 import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
-import { buildHandoff, coldCacheCost, contextSize, costPerReply, saveHandoff, takeHandoff } from './handoff.js';
+import { buildHandoff, coldCacheCost, contextSize, costPerReply, handoffText, saveHandoff, takeHandoff } from './handoff.js';
 import { autoRecall } from './recall.js';
 import { isCodeProject, refreshGraphSoon, sessionCodeMap } from './graph.js';
 import { scanFacts } from './facts.js';
@@ -85,7 +85,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (cfg.handoff.enabled) {
         const h = takeHandoff(projectKey(cwd), sid, cfg.handoff.maxAgeHours, input.source === 'compact');
         if (h) {
-          parts.push(h.text);
+          parts.push(handoffText(h));
           handedOff = true;
           const tok = estimateTokens(h.text);
           recordActivity({
@@ -410,7 +410,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           const prompts = readBuffer(sid).filter((e) => e.t === 'prompt').length;
           // /clear, compaction, or a real session ending: leave a handoff for the next one.
           if (event === 'pre-compact' || input.reason === 'clear' || prompts >= 2) {
-            const h = buildHandoff(sid, input.transcript_path, cwd, cfg.handoff.maxTokens);
+            const h = buildHandoff(sid, input.transcript_path, cwd, cfg.handoff.maxTokens, cfg.handoff.git);
             if (h) saveHandoff(h);
           }
         } catch {
@@ -530,7 +530,7 @@ function idleAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: string,
   appendBuffer(sid, { t: 'idle', ts: now, since: c.lastReplyTs });
   if (cfg.handoff.enabled) {
     try {
-      const h = buildHandoff(sid, transcript, cwd, cfg.handoff.maxTokens);
+      const h = buildHandoff(sid, transcript, cwd, cfg.handoff.maxTokens, cfg.handoff.git);
       if (h) saveHandoff(h);
     } catch {
       /* best-effort */
@@ -563,7 +563,7 @@ function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: stri
   appendBuffer(sid, { t: 'alert', ts: now, level } as any);
   if (cfg.handoff.enabled) {
     try {
-      const h = buildHandoff(sid, transcript, cwd, cfg.handoff.maxTokens);
+      const h = buildHandoff(sid, transcript, cwd, cfg.handoff.maxTokens, cfg.handoff.git);
       if (h) saveHandoff(h);
     } catch {
       /* best-effort */
