@@ -21,6 +21,7 @@ import { buildHandoff, coldCacheCost, contextSize, costPerReply, saveHandoff, ta
 import { autoRecall } from './recall.js';
 import { isCodeProject, refreshGraphSoon, sessionCodeMap } from './graph.js';
 import { scanFacts } from './facts.js';
+import { imageAlert, mediaPostTool, mediaPreTool } from './mediaguard.js';
 import { scoreRecalls } from './recalltune.js';
 
 export interface HookInput {
@@ -36,6 +37,7 @@ export interface HookInput {
   tool_output?: any;
   reason?: string;
   agent_id?: string;
+  scratchpad_dir?: string;
 }
 
 type HookOutput = Record<string, any> | null;
@@ -129,7 +131,14 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     case 'user-prompt': {
       const prompt = input.prompt || '';
       appendBuffer(sid, { t: 'prompt', ts: now, text: prompt.slice(0, 2000) });
-      const alert = [contextAlert(cfg, sid, cwd, input.transcript_path, now), idleAlert(cfg, sid, cwd, input.transcript_path, now)].filter(Boolean).join('\n') || undefined;
+      const alert =
+        [
+          contextAlert(cfg, sid, cwd, input.transcript_path, now),
+          idleAlert(cfg, sid, cwd, input.transcript_path, now),
+          imageAlert(cfg, sid, input.transcript_path ? contextSize(input.transcript_path).model : '', now)
+        ]
+          .filter(Boolean)
+          .join('\n') || undefined;
       const done = (extra?: HookOutput): HookOutput => (alert || extra ? { ...(alert ? { systemMessage: alert } : {}), ...(extra || {}) } : null);
       const project = projectKey(cwd);
       if (cfg.memory.enabled) {
@@ -171,6 +180,9 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     }
 
     case 'pre-tool': {
+      // Screenshots, images, PDFs, video: skip repeats, shrink, or point at the cheaper way in.
+      const media = mediaPreTool(cfg, input, sid, cwd, now, readKey);
+      if (media) return media;
       if (input.tool_name !== 'Read') return null;
       const ti = input.tool_input || {};
       const file: string | undefined = ti.file_path;
@@ -252,6 +264,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     case 'post-tool': {
       const ti = input.tool_input || {};
       const tool = input.tool_name || '';
+      const mediaOut = mediaPostTool(cfg, input, sid, now);
       if (ti.file_path && /^(Read|Edit|Write|MultiEdit|NotebookEdit)$/.test(tool)) {
         appendBuffer(sid, { t: 'file', ts: now, path: ti.file_path, op: tool === 'Read' ? 'read' : 'edit' });
         if (tool === 'Read') {
@@ -272,7 +285,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       } else if (tool === 'Bash' && ti.command) {
         appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
       }
-      if (tool !== 'Bash' && tool !== 'Grep') return null;
+      if (tool !== 'Bash' && tool !== 'Grep') return mediaOut;
       const original = toolOutputText(input);
       if (original === null) return null;
       let text = original;

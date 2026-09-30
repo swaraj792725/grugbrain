@@ -73,6 +73,22 @@ export interface GrugConfig {
     enabled: boolean;
     firstTokens: number;
   };
+  /** Images, screenshots, PDFs and video: skip repeats, shrink big image files, text-first PDFs, frame sheets for video. */
+  mediaGuard: {
+    enabled: boolean;
+    /** Skip a screenshot when nothing happened since the identical last one (ask again to override). */
+    dedupeScreenshots: boolean;
+    /** Skip re-reading an unchanged image that is still in context (ask again to override). */
+    dedupeImageReads: boolean;
+    /** One short hint, the first time a screenshot tool is used in a context: prefer text snapshots. */
+    guidance: boolean;
+    /** Image files inside the project longer than this (px, long edge) are read from a shrunken copy. 0 = never shrink. */
+    imageMaxEdge: number;
+    /** A PDF Read asking for more pages than this is first pointed at the text tool (ask again to override). */
+    pdfPages: number;
+    /** Tell the user when images in context pass this many tokens (then double). 0 = off. */
+    imageAlertTokens: number;
+  };
   /** Tell the user (not the model) when the prompt cache expired on a big session, so the next reply re-writes it all. */
   idleAlert: {
     enabled: boolean;
@@ -155,6 +171,15 @@ export function defaultConfig(): GrugConfig {
       enabled: true,
       firstTokens: 150000
     },
+    mediaGuard: {
+      enabled: true,
+      dedupeScreenshots: true,
+      dedupeImageReads: true,
+      guidance: true,
+      imageMaxEdge: 1200,
+      pdfPages: 4,
+      imageAlertTokens: 20000
+    },
     idleAlert: {
       enabled: true,
       minExtraUsd: 0.25
@@ -206,6 +231,7 @@ const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routi
 const RANGES: Record<string, [number, number]> = {
   'autoRecall.maxTokens': [100, 4000],
   'autoRecall.sessionTokens': [200, 20000],
+  'mediaGuard.pdfPages': [1, 100],
   'graphContext.mapTokens': [100, 3000]
 };
 
@@ -244,6 +270,8 @@ export function setConfigValue(key: string, value: string): GrugConfig {
     v = Number(v);
     if (key === 'autoCompact.windowTokens' && v !== 0 && (v < 100000 || v > 1000000))
       throw new Error(`${key} must be 0 (Claude Code default) or between 100000 and 1000000`);
+    if (key === 'mediaGuard.imageMaxEdge' && v !== 0 && (v < 512 || v > 4096)) throw new Error(`${key} must be 0 (never shrink) or between 512 and 4096`);
+    if (key === 'mediaGuard.imageAlertTokens' && v !== 0 && (v < 5000 || v > 500000)) throw new Error(`${key} must be 0 (off) or between 5000 and 500000`);
     const range = RANGES[key];
     if (range && (v < range[0] || v > range[1])) throw new Error(`${key} must be between ${range[0]} and ${range[1]}, got "${value}"`);
   } else if (ENUMS[key] && !ENUMS[key].includes(v)) {

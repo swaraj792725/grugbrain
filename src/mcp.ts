@@ -17,6 +17,7 @@ import { addNote, loadMemory, MemoryDB, projectKey, projectNodes, saveMemory } f
 import { recordActivity, summarize } from './stats.js';
 import { estimateTokens, fmtTokens, fmtUsd } from './tokens.js';
 import { searchHistory } from './history.js';
+import { estimateImageTokens, hasTool, imageSizeOfFile, IMAGE_RE, pdfPageCount, pdfText, PDF_RE, videoDuration, videoFrames, VIDEO_RE } from './media.js';
 
 const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const MAX_FILE = 5 * 1024 * 1024;
@@ -26,6 +27,7 @@ const INSTRUCTIONS = `grugbrain saves tokens. Prefer its tools over reading whol
 - repo_map(dir) instead of listing/reading many files to learn a codebase.
 - search(pattern, dir) to locate code before reading.
 - recall(query) to check memory of past sessions before re-exploring; remember(text) for durable facts/decisions.
+- pdf_text(path, pages) to read a PDF as text (cheap); Read pages as images only for scans/figures. video_frames(path) for a frame sheet of a video. media_info(path) to see what a file costs.
 - history(query) to fetch an exact detail from earlier in this project's conversations (e.g. after compaction) instead of guessing.`;
 
 type Json = any;
@@ -89,6 +91,29 @@ const TOOLS = [
       },
       required: ['query']
     }
+  },
+  {
+    name: 'pdf_text',
+    description: 'Text of PDF pages via pdftotext, far cheaper than page images. Lists pages that are scans/figures (Read those as images). Default first 20 pages.',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string' }, pages: { type: 'string', description: 'e.g. "3", "5-12" (default 1-20)' } },
+      required: ['path']
+    }
+  },
+  {
+    name: 'video_frames',
+    description: 'One contact-sheet image of evenly spaced frames of a video (ffmpeg), costing about one image instead of one per frame. Returns the image plus frame timestamps.',
+    inputSchema: {
+      type: 'object',
+      properties: { path: { type: 'string' }, count: { type: 'number', description: 'Frames (1-16, default 9)' }, from: { type: 'number', description: 'Start second' }, to: { type: 'number', description: 'End second' } },
+      required: ['path']
+    }
+  },
+  {
+    name: 'media_info',
+    description: 'Size, page count or duration of an image/PDF/video plus what reading it would cost and the cheapest way to look at it.',
+    inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] }
   },
   {
     name: 'recall',
@@ -168,9 +193,94 @@ function projectFor(db: MemoryDB, dir?: string): string | null {
   return null;
 }
 
+export interface ToolImage {
+  data: string;
+  mimeType: string;
+}
+
+/** Tool result with images (an MCP image block needs no file Read, so no permission prompt). */
+export function callToolRich(name: string, args: Json): { text: string; images: ToolImage[] } {
+  if (name === 'video_frames') return videoFramesTool(args);
+  return { text: callTool(name, args), images: [] };
+}
+
+function pageSpec(spec: unknown): { from: number; to: number } {
+  const m = /^\s*(\d+)\s*(?:-\s*(\d+))?\s*$/.exec(String(spec ?? ''));
+  if (!m) return { from: 1, to: 0 };
+  const from = Math.max(1, Number(m[1]));
+  return { from, to: m[2] ? Math.max(from, Number(m[2])) : from };
+}
+
+function pdfTextTool(args: Json): string {
+  const file = path.resolve(String(args.path));
+  const { from, to } = pageSpec(args.pages);
+  const r = pdfText(file, from, to);
+  if (!r.ok) return r.text;
+  const shown = r.to - r.from + 1;
+  const tok = estimateTokens(r.text);
+  const saved = Math.max(0, shown * 1500 - tok);
+  if (saved > 500) recordActivity({ kind: 'media', msg: `pdf_text: ${shown} page(s) of ${path.basename(file)} as text instead of images`, tokens: saved });
+  const notes: string[] = [];
+  if (r.imagePages.length) notes.push(`Pages with little or no text (scans/figures), Read these as images with pages="N": ${r.imagePages.join(', ')}.`);
+  if (r.truncated) notes.push('Output was cut to stay small; continue with a later pages range.');
+  if (r.pages && r.to < r.pages) notes.push(`${r.pages - r.to} more page(s) after ${r.to}; ask for pages="${r.to + 1}-${Math.min(r.pages, r.to + 20)}".`);
+  return `// ${file}: ${r.pages || '?'} pages, showing ${r.from}-${r.to}, ~${tok} tokens as text (page images would be ~${shown * 1500}+)\n${r.text}${notes.length ? '\n' + notes.join('\n') : ''}`;
+}
+
+function videoFramesTool(args: Json): { text: string; images: ToolImage[] } {
+  const file = path.resolve(String(args.path));
+  if (!fs.existsSync(file)) return { text: `No such file: ${file}`, images: [] };
+  const n = Math.max(1, Math.min(16, Number(args.count) || 9));
+  const r = videoFrames(file, path.join(paths.cache(), 'media'), n, Number(args.from) || 0, Number(args.to) || 0);
+  if (!r.ok || !r.sheet) return { text: r.message, images: [] };
+  const dur = videoDuration(file);
+  const cols = Math.ceil(Math.sqrt(r.times.length));
+  const saved = Math.max(0, (r.times.length - 1) * 1500);
+  if (saved) recordActivity({ kind: 'media', msg: `video_frames: ${r.times.length} frames of ${path.basename(file)} as one sheet`, tokens: saved });
+  return {
+    text:
+      `// ${path.basename(file)}${dur ? `, ${dur.toFixed(1)} s` : ''}: contact sheet of ${r.times.length} frames, ${cols} per row, left to right, top to bottom.\n` +
+      `Frame times (s): ${r.times.join(', ')}. Ask again with from/to (seconds) and a higher count to look closer at a stretch.`,
+    images: [{ data: fs.readFileSync(r.sheet).toString('base64'), mimeType: 'image/jpeg' }]
+  };
+}
+
+function mediaInfoTool(args: Json): string {
+  const file = path.resolve(String(args.path));
+  let st: fs.Stats;
+  try {
+    st = fs.statSync(file);
+  } catch {
+    return `No such file: ${file}`;
+  }
+  const kb = Math.round(st.size / 1024);
+  if (IMAGE_RE.test(file)) {
+    const s = imageSizeOfFile(file);
+    if (!s) return `${file}: image, ${kb} KB (size unreadable). Cost ≈ 1.5k tokens.`;
+    const cfg = loadConfig();
+    const tok = estimateImageTokens(s.w, s.h);
+    return `${file}: ${s.type} ${s.w}x${s.h}, ${kb} KB. Reading it costs ≈ ${tok + 330} tokens and it then stays in context; ${cfg.mediaGuard.imageMaxEdge && Math.max(s.w, s.h) > cfg.mediaGuard.imageMaxEdge ? `grug reads a copy shrunk to ${cfg.mediaGuard.imageMaxEdge}px (repeat the Read for full size)` : 'no shrinking needed'}.`;
+  }
+  if (PDF_RE.test(file)) {
+    const pages = pdfPageCount(file);
+    return `${file}: PDF, ${pages || '?'} pages, ${kb} KB. As page images ≈ ${pages ? pages * 1500 + '–' + pages * 3000 : '1.5–3k per page'} tokens; as text ≈ ${pages ? pages * 500 : '~500 per page'}. ${hasTool('pdftotext') ? 'Use pdf_text(path, pages); Read only scan/figure pages as images.' : 'pdftotext is not installed (brew install poppler); use Read with a pages range.'}`;
+  }
+  if (VIDEO_RE.test(file)) {
+    const d = videoDuration(file);
+    return `${file}: video, ${kb} KB${d ? `, ${d.toFixed(1)} s` : ''}. Cannot be read directly. ${hasTool('ffmpeg') ? 'Use video_frames(path, count, from, to): one sheet ≈ one image.' : 'ffmpeg is not installed (brew install ffmpeg).'}`;
+  }
+  return `${file}: ${kb} KB. Not an image, PDF or video.`;
+}
+
 export function callTool(name: string, args: Json): string {
   const cfg = loadConfig();
   switch (name) {
+    case 'pdf_text':
+      return pdfTextTool(args);
+    case 'video_frames':
+      return videoFramesTool(args).text;
+    case 'media_info':
+      return mediaInfoTool(args);
     case 'outline': {
       const code = readFileChecked(args.path);
       const r = skeletonize(code, args.path);
@@ -307,8 +417,8 @@ export function handleMessage(msg: Json): Json | null {
       const name = msg.params?.name;
       if (!TOOLS.some((t) => t.name === name)) return error(-32602, `Unknown tool: ${name}`);
       try {
-        const text = callTool(name, msg.params?.arguments || {});
-        return reply({ content: [{ type: 'text', text }] });
+        const r = callToolRich(name, msg.params?.arguments || {});
+        return reply({ content: [{ type: 'text', text: r.text }, ...r.images.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType }))] });
       } catch (err: any) {
         return reply({ content: [{ type: 'text', text: `Error: ${err?.message || err}` }], isError: true });
       }

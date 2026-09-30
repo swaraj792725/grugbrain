@@ -120,8 +120,8 @@ function ourHooks(): Record<string, any[]> {
   return {
     SessionStart: [{ hooks: [h('session-start', 10)] }],
     UserPromptSubmit: [{ hooks: [h('user-prompt', 10)] }],
-    PreToolUse: [{ matcher: 'Read', hooks: [h('pre-tool', 5)] }],
-    PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep', hooks: [h('post-tool', 10)] }],
+    PreToolUse: [{ matcher: 'Read|mcp__.*', hooks: [h('pre-tool', 8)] }],
+    PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep|mcp__.*', hooks: [h('post-tool', 10)] }],
     Stop: [{ hooks: [h('stop', 10)] }],
     PreCompact: [{ hooks: [h('pre-compact', 10)] }],
     SessionEnd: [{ hooks: [h('session-end', 5)] }]

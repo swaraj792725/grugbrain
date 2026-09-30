@@ -2,6 +2,22 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.10.0
+
+Images, screenshots, PDFs and video. Measured in Claude Code 2.1: an image costs about 1 token per 880 pixels plus ~330 of overhead and is capped near 1.3 megapixels (~1.5k tokens). One image is cheap; the cost is that every image stays in the context and is re-read on each later reply (40 screenshots is ~60k tokens of context). So grug stops the repeats and offers cheaper ways in. Nothing here removes information: each rule skips a repeat of something already in context, or points at a cheaper route, and repeating the call always overrides it.
+
+- **Duplicate-screenshot guard.** A screenshot (any MCP tool named like `*screenshot*`, or a computer-use style tool with `action: screenshot`) is skipped when it is identical to the last one and nothing changed since: no click/typing/other page-changing MCP call, no edit, no shell command. Read-only calls (snapshots, console, network) do not count as changes; a shot older than 2 minutes, or after compaction, is always allowed; ask again and it goes through. Verified live: the second identical screenshot was blocked, the one after a click was allowed.
+- **One-time screenshot hint** (first screenshot per context): prefer text/DOM snapshots for state; screenshots for how it looks, once per batch of changes, cropped to what you need.
+- **Duplicate image-Read guard.** Re-reading an unchanged image that is still in context is skipped once.
+- **Big image files are read from a shrunken copy** (`mediaGuard.imageMaxEdge`, default 1200 px long edge, 0 = never): PNGs are resized by grug itself (pure JS, no dependencies), other formats through `sips` (macOS), ImageMagick or ffmpeg when present. The copy goes to Claude Code's session scratchpad (no permission prompt, original untouched), only for files inside the project, only on the first look in a context, and Claude is told; repeating the Read gives the full-size image. Measured live: about 350 tokens less on a 2400x1500 screenshot, and the model still read it correctly. The default of 1200 trades a little legibility for that saving; raise it (or set 0) for text-heavy screenshots.
+- **PDFs, text first.** A Read of a PDF asking for more than `mediaGuard.pdfPages` (default 4) pages is pointed once at the new `pdf_text` tool (poppler's `pdftotext`, which Claude Code needs for PDF pages anyway): text pages cost a fraction of page images, and the tool lists pages with almost no text (scans, figures) to Read as images.
+- **Video, frame sheets.** A Read of a video file is pointed once at `video_frames`: one contact-sheet image of up to 16 evenly spaced frames via ffmpeg, returned as an MCP image (no file Read, no prompt), costing about one image instead of one per frame.
+- **`media_info`** tool: size, pages or duration, what reading it would cost, and the cheapest way in.
+- **Image pile-up notice** (user only): when images in a context pass `mediaGuard.imageAlertTokens` (default 20k, then doubling) grug tells you the count, size and cost per reply, and suggests `/clear` or working from text snapshots.
+- Dashboard row "media: repeats skipped/shrunk"; `grug doctor` shows the media guard and which optional helpers are installed (pdftotext, ffmpeg, sips, magick).
+- The hook matchers now cover MCP tools (`Read|mcp__.*`); run `grug update` to pick them up.
+- New settings (validated): `mediaGuard.enabled|dedupeScreenshots|dedupeImageReads|guidance|imageMaxEdge|pdfPages|imageAlertTokens`.
+
 ## 2.9.0
 
 - **Recall finds paraphrases.** Prompt words with no direct hit can match through small concept groups of developer vocabulary (authentication~login, slow~latency, webhook~callback, cache~invalidate, ~30 groups) at 0.6 credit each; the relevance gate is unchanged, and unknown words invent nothing. Measured on an offline eval (`tests/recall-eval.test.ts`, corpus in `tests/recall-corpus.ts`): recall of paraphrased questions 25% → 90% on the tuning set and 50% → 60% on a hold-out written afterwards, false positives unchanged (1/16 and 0/12).

@@ -102,6 +102,7 @@ function overview(width: number): string[] {
   L.push(did('redirected huge full-file reads', t('read-guard'), k('read-guard')));
   L.push(did('skipped unchanged re-reads', t('reread'), k('reread')));
   L.push(did('cache misses diagnosed (cost)', t('cache-miss'), k('cache-miss'), 'see Advice for culprits'));
+  L.push(did('media: repeats skipped/shrunk', t('media'), k('media'), 'screenshots, images, PDF text, video sheets'));
   L.push(did('outlines instead of full files', t('outline'), k('outline')));
   L.push(did('prompt-cache breakpoints added', 0, k('cache')));
   L.push(did('handoffs to a fresh session', t('handoff'), k('handoff'), 'old context not re-read'));
@@ -160,7 +161,7 @@ function activity(height: number): string[] {
   if (!acts.length) return [dim('  Nothing yet. Grug waits for Claude to do something.')];
   const color: Record<string, (s: string) => string> = {
     trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
-    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow, 'idle-alert': yellow,
+    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow, 'idle-alert': yellow, media: green,
     'auto-recall': cyan, graph: cyan, facts: cyan
   };
   return acts.map((a) => {

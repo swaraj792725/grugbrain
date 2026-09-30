@@ -16,5 +16,5 @@ export * from './memory/brief.js';
 export * from './memory/vault.js';
 export * from './memory/graphhtml.js';
 export * from './memory/maintain.js';
-export { handleMessage, callTool, findSymbol } from './mcp.js';
+export { handleMessage, callTool, callToolRich, findSymbol } from './mcp.js';
 export { install, uninstall, health } from './install.js';
