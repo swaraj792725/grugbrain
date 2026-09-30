@@ -75,18 +75,21 @@ export function autoRecall(opts: {
   transcriptPath?: string;
   now?: number;
   historyBudgetMs?: number;
+  /** A subagent's fresh context: nothing injected yet, no session budget, the cap is `maxTokens`. */
+  isolated?: boolean;
+  maxTokens?: number;
 }): AutoRecall | null {
   const { cfg, cwd, prompt } = opts;
   const now = opts.now ?? Date.now();
   if (isTrivialPrompt(prompt)) return null;
   const terms = queryTerms(prompt);
   if (terms.length < 2) return null;
-  const { keys: seen, lastCompact, spent, edited } = injectedKeys(readBuffer(opts.sessionId));
+  const { keys: seen, lastCompact, spent, edited } = opts.isolated ? { keys: new Set<string>(), lastCompact: 0, spent: 0, edited: [] as string[] } : injectedKeys(readBuffer(opts.sessionId));
   // Everything injected stays in context and is re-read every reply, so the session as a whole
   // has a budget: what is left caps this block, and the relevance bar rises as it fills.
   const remaining = cfg.autoRecall.sessionTokens - spent;
-  if (remaining < 120) return null;
-  const max = Math.min(cfg.autoRecall.maxTokens, remaining);
+  if (remaining < 120 && !opts.isolated) return null;
+  const max = opts.isolated ? opts.maxTokens ?? cfg.autoRecall.subagentTokens : Math.min(cfg.autoRecall.maxTokens, remaining);
   const bar = 1 + 0.5 * Math.min(1, spent / Math.max(1, cfg.autoRecall.sessionTokens));
   const strict = loadTune().strictness * bar;
   const share = Math.min(0.9, 0.34 * bar);

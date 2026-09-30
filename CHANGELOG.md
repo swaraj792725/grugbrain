@@ -2,6 +2,9 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.22.0
+- **Subagents get recall and code hints.** When Claude launches a subagent (Agent/Task tool), grug appends the recall block for that task (memory notes, code locations with line ranges, earlier-session excerpts) to the subagent's prompt, through the PreToolUse `updatedInput`. Each subagent is a fresh context, so nothing is deduped against the main session, and the block is capped by `autoRecall.subagentTokens` (default 500). Turn off with `grug config set autoRecall.subagents false`. Checked live: the subagent's transcript starts with the task plus the hints. The full per-session code map is not sent to subagents (600 tokens would often cost more than a short subagent saves). Run `grug update` to register the Agent matcher.
+
 ## 2.21.0
 - **Subagents save tokens too.** Checked live: the read guard and Bash output trim already run inside subagents (hooks receive `agent_id`). Two gaps closed: a new `SubagentStart` hook gives every subagent the terse style and the "Grep, then Read with offset/limit" rule (they get no SessionStart/prompt hooks), and metering now includes the separate `subagents/agent-*.jsonl` transcripts, so subagent spend shows in cost and savings. Run `grug update` to register the hook. Subagent model routing stays `grug config set routing.subagentModel sonnet`.
 

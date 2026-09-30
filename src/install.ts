@@ -136,7 +136,7 @@ function ourHooks(): Record<string, any[]> {
   return {
     SessionStart: [{ hooks: [h('session-start', 10)] }],
     UserPromptSubmit: [{ hooks: [h('user-prompt', 10)] }],
-    PreToolUse: [{ matcher: 'Read|Grep|mcp__.*', hooks: [h('pre-tool', 8)] }],
+    PreToolUse: [{ matcher: 'Read|Grep|Agent|Task|mcp__.*', hooks: [h('pre-tool', 8)] }],
     PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep|Glob|mcp__.*', hooks: [h('post-tool', 10)] }],
     Stop: [{ hooks: [h('stop', 10)] }],
     SubagentStart: [{ hooks: [h('subagent-start', 5)] }],

@@ -198,6 +198,16 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     }
 
     case 'pre-tool': {
+      // A subagent starts with an empty context: add recall + code hints for the task it is given.
+      if ((input.tool_name === 'Agent' || input.tool_name === 'Task') && cfg.autoRecall.enabled && cfg.autoRecall.subagents) {
+        const ti = input.tool_input || {};
+        const task: string = typeof ti.prompt === 'string' ? ti.prompt : '';
+        if (!task || task.includes('[grugbrain recall')) return null;
+        const r = autoRecall({ cfg, sessionId: sid, cwd, prompt: task, transcriptPath: input.transcript_path, now, isolated: true });
+        if (!r) return null;
+        recordActivity({ kind: 'subagent', msg: `Subagent task got ${r.counts.memory} memory, ${r.counts.code} code, ${r.counts.history} earlier-session hint(s) (${r.tokens} tok)`, tokens: -r.tokens, project: path.basename(cwd) });
+        return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...ti, prompt: `${task}\n\n${r.text}` } } };
+      }
       // Screenshots, images, PDFs, video: skip repeats, shrink, or point at the cheaper way in.
       const media = mediaPreTool(cfg, input, sid, cwd, now, readKey);
       if (media) return media;
