@@ -147,6 +147,10 @@ export interface GrugConfig {
     maxTokens: number;
     /** Total recall tokens per session (since its last compaction); the bar rises as it fills. */
     sessionTokens: number;
+    /** Give each subagent recall + code hints for the task it is launched with (appended to its prompt). */
+    subagents: boolean;
+    /** Hard cap for one subagent block. */
+    subagentTokens: number;
   };
   /** Graph-first code context: compact repo map at session start + relevant files/symbols per prompt (code projects only). */
   graphContext: {
@@ -254,7 +258,9 @@ export function defaultConfig(): GrugConfig {
     autoRecall: {
       enabled: true,
       maxTokens: 800,
-      sessionTokens: 2500
+      sessionTokens: 2500,
+      subagents: true,
+      subagentTokens: 500
     },
     graphContext: {
       enabled: true,
@@ -295,6 +301,7 @@ const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routi
 const RANGES: Record<string, [number, number]> = {
   'autoRecall.maxTokens': [100, 4000],
   'autoRecall.sessionTokens': [200, 20000],
+  'autoRecall.subagentTokens': [100, 2000],
   'mediaGuard.pdfPages': [1, 100],
   'taskBoundary.minTokens': [20000, 1000000],
   'graphContext.mapTokens': [100, 3000]

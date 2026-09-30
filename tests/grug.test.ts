@@ -1071,6 +1071,24 @@ describe('auto-recall', () => {
     fs.writeFileSync(paths.memory(), JSON.stringify(db));
   }
 
+  it('subagents: the Agent task prompt gets recall + code hints, in a fresh context each time', async () => {
+    const cwd = await setup();
+    const task = 'Fix the stripe webhook retry handling so it is idempotent';
+    const call = () => runHook('pre-tool', { session_id: 'sub1', cwd, tool_name: 'Agent', tool_input: { subagent_type: 'general-purpose', prompt: task } }) as Promise<any>;
+    const a = await call();
+    const p1: string = a.hookSpecificOutput.updatedInput.prompt;
+    expect(p1.startsWith(task)).toBe(true);
+    expect(p1).toMatch(/idempotent: dedupe on event id/);
+    expect(p1.length - task.length).toBeLessThan(2200);
+    const b = await call(); // a second subagent is a new context: same hints again
+    expect(b.hookSpecificOutput.updatedInput.prompt).toBe(p1);
+    expect(a.hookSpecificOutput.updatedInput.subagent_type).toBe('general-purpose');
+    expect(await runHook('pre-tool', { session_id: 'sub1', cwd, tool_name: 'Agent', tool_input: { prompt: p1 } })).toBeNull(); // never twice
+    const { setConfigValue } = await import('../src/config.js');
+    setConfigValue('autoRecall.subagents', 'false');
+    expect(await call()).toBeNull();
+  });
+
   it('injects memory, code locations and earlier-session excerpts under the cap, once', async () => {
     const cwd = await setup();
     const cur = path.join(tmp, 'current.jsonl');
@@ -1841,7 +1859,7 @@ describe('media wiring', () => {
   it('registers the hooks for MCP tools too, and shows media savings on the dashboard', async () => {
     installClaudeCode(false);
     const s = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
-    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|Grep|mcp__.*');
+    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|Grep|Agent|Task|mcp__.*');
     expect(s.hooks.PostToolUse[0].matcher).toContain('mcp__.*');
     const { recordActivity } = await import('../src/stats.js');
     recordActivity({ kind: 'media', msg: 'Skipped a repeat screenshot', tokens: 1800 });
