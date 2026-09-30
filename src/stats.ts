@@ -34,6 +34,8 @@ export type ActivityKind =
   | 'read-guard'
   | 'reread'
   | 'testsum'
+  | 'cmdrules'
+  | 'json'
   | 'cache-miss'
   | 'bench'
   | 'update'

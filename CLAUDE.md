@@ -40,3 +40,9 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 ## Open items
 - Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.
+
+## Output rules, dashboard, status line (v2.13)
+- cmdrules.ts (per-command progress-noise rules) and jsoncompact.ts run in PostToolUse via updatedToolOutput; MCP text-block results are handled the same way. Toggles under `commandRules.*`.
+- savings.ts computes the headline: net = kept tokens at main-model input price + grug cache savings - grug costs (negative-token entries); pct = net / (spend + net). It is an estimate, always label it so.
+- statusline.ts + `grug statusline` (install.ts applyStatusLine wraps the user's own command, `prevStatusLine` restores it). Claude Code shows the status line BELOW the input box; do not claim it is above.
+- Dashboard: src/tui/visual.ts (donut, bigText, pulse), dashboard.ts (5 tabs, 120 ms frames, 2 s reload).

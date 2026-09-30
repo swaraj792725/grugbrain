@@ -302,13 +302,15 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const original = toolOutputText(input);
       if (original === null) return mediaOut;
       let text = original;
-      let kind: 'testsum' | 'trim' | null = null;
+      let kind: 'testsum' | 'trim' | 'cmdrules' | 'json' | null = null;
+      let ruleName = '';
       const cmd = tool === 'Bash' ? String(ti.command || '') : '';
       if (cfg.commandRules.enabled && tool === 'Bash') {
         const c = applyCommandRules(cmd, text, cfg.commandRules.minChars);
         if (c.changed) {
           text = c.text;
-          kind = 'testsum';
+          kind = 'cmdrules';
+          ruleName = c.rule || '';
         }
       }
       if (cfg.testSummary.enabled && tool === 'Bash') {
@@ -322,7 +324,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         const j = compactJson(text, cfg.commandRules.jsonMinChars);
         if (j.changed) {
           text = j.text;
-          kind = kind || 'trim';
+          kind = kind || 'json';
         }
       }
       if (cfg.proxy.trimToolResults) {
@@ -351,7 +353,14 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (!kind || removed < 200) return null;
       recordActivity({
         kind,
-        msg: kind === 'testsum' ? `Summarized test/build output (${Math.round((removed / original.length) * 100)}% smaller)` : `Trimmed ${tool} output at source`,
+        msg:
+          kind === 'testsum'
+            ? `Summarized test/build output (${Math.round((removed / original.length) * 100)}% smaller)`
+            : kind === 'cmdrules'
+              ? `Dropped ${ruleName} progress noise (${Math.round((removed / original.length) * 100)}% smaller, errors kept)`
+              : kind === 'json'
+                ? `Compacted a big JSON result from ${tool} (${Math.round((removed / original.length) * 100)}% smaller)`
+                : `Trimmed ${tool} output at source`,
         tokens: Math.round(removed / 3.6),
         project: path.basename(cwd)
       });
@@ -664,6 +673,13 @@ function ensureDaemon(): void {
     /* not running or no pid file */
   }
   if (cfg.proxy.enabled) spawnDetached(['daemon']);
+}
+
+export async function readStdinText(): Promise<string> {
+  if (process.stdin.isTTY) return '';
+  const chunks: Buffer[] = [];
+  for await (const c of process.stdin) chunks.push(c as Buffer);
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 export async function readStdinJson(): Promise<HookInput> {

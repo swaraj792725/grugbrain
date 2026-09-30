@@ -1185,7 +1185,7 @@ describe('dashboard shows auto-recall and graph usage', () => {
     expect(s.countByKind['auto-recall']).toBe(2);
     expect(s.savedByKind['graph']).toBe(-500);
     const { renderOnce } = await import('../src/tui/dashboard.js');
-    const text = renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '');
+    const text = renderOnce({ tab: 1 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '');
     expect(text).toMatch(/auto-recall injections.*2×.*avg 200 tok/);
     expect(text).toMatch(/graph context: maps \+ code hints.*1×/);
   });
@@ -1281,7 +1281,7 @@ describe('recall usefulness tuning', () => {
     fs.writeFileSync(path.join(paths.home(), 'recall-tune.json'), JSON.stringify({ strictness: 9, codeShown: 'x' }));
     expect(loadTune()).toEqual({ codeShown: 0, codeHit: 0, strictness: 1.6 });
     const { renderOnce } = await import('../src/tui/dashboard.js');
-    expect(renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/recall usefulness.*strictness ×1\.60/);
+    expect(renderOnce({ tab: 1 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/recall usefulness.*strictness ×1\.60/);
   });
 });
 
@@ -1793,7 +1793,7 @@ describe('media wiring', () => {
     recordActivity({ kind: 'media', msg: 'Skipped a repeat screenshot', tokens: 1800 });
     recordActivity({ kind: 'media', msg: 'Shrunk shot.png', tokens: 700 });
     const { renderOnce } = await import('../src/tui/dashboard.js');
-    const dash = renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '');
+    const dash = renderOnce({ tab: 1 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '');
     expect(dash).toMatch(/media: repeats skipped\/shrunk.*~2500 tok.*2×/);
     const { setConfigValue } = await import('../src/config.js');
     expect(() => setConfigValue('mediaGuard.imageAlertTokens', '100')).toThrow(/0 \(off\) or between 5000 and 500000/);
@@ -1880,7 +1880,7 @@ describe('graph-first hints', () => {
     await runHook('session-end', { session_id: 'a1', cwd }); // second scoring adds nothing
     expect(loadAdoption()).toMatchObject({ grug: 1, read: 2, grep: 1, glob: 1, navShown: 1, navFollowed: 1 });
     const { renderOnce } = await import('../src/tui/dashboard.js');
-    expect(renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/graph-first hints.*100% followed by a ranged read; grug tools 1 vs Read\/Grep\/Glob 4/);
+    expect(renderOnce({ tab: 1 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/graph-first hints.*100% followed by a ranged read; grug tools 1 vs Read\/Grep\/Glob 4/);
   });
 });
 
@@ -2030,5 +2030,92 @@ describe('command rules and JSON compaction', () => {
     expect(compactJson(JSON.stringify(Array.from({ length: 3000 }, (_, i) => i)), 100).changed).toBe(false);
     expect(compactJson('{"a":' + '1,'.repeat(10) + '"not json', 10).changed).toBe(false);
     expect(compactJson(JSON.stringify({ a: { b: 'x'.repeat(20000) } })).changed).toBe(false);
+  });
+});
+
+describe('savings headline, visuals, status line', () => {
+  it('computes a conservative net savings percentage', async () => {
+    const { recordRequest, recordActivity } = await import('../src/stats.js');
+    const { computeSavings } = await import('../src/savings.js');
+    expect(computeSavings().pct).toBe(0);
+    recordRequest({ ts: Date.now(), model: 'claude-opus-5-5', usage: { input_tokens: 1000, output_tokens: 500, cache_read_input_tokens: 200000, cache_creation_input_tokens: 0 }, status: 200, trimmedTokens: 0, cacheBreakpointsAdded: 0 });
+    recordActivity({ kind: 'cmdrules', msg: 'x', tokens: 50000 });
+    recordActivity({ kind: 'brief', msg: 'cost', tokens: -10000 });
+    const s = computeSavings();
+    const price = 4 / 1e6;
+    expect(s.savedUsd).toBeCloseTo(50000 * price, 5);
+    expect(s.costUsd).toBeCloseTo(10000 * price, 5);
+    expect(s.netUsd).toBeCloseTo(40000 * price, 5);
+    expect(s.pct).toBeCloseTo(s.netUsd / (s.spendUsd + s.netUsd), 6);
+    expect(s.parts.find((p) => p.key === 'cmdrules')?.count).toBe(1);
+  });
+
+  it('draws big digits and a donut of the right size', async () => {
+    const { bigText, donut, ease } = await import('../src/tui/visual.js');
+    const b = bigText('34%');
+    expect(b).toHaveLength(5);
+    expect(b[0].length).toBeGreaterThanOrEqual(10);
+    const d = donut([{ value: 3, color: 1 }, { value: 1, color: 2 }], 20, 10, 0.25).map((l) => l.replace(/\x1b\[[0-9;]*m/g, ''));
+    expect(d).toHaveLength(10);
+    expect(d.every((l) => [...l].length === 20)).toBe(true);
+    expect(d.join('')).toMatch(/[⠁-⣿]/);
+    expect(ease(0, 10)).toBeGreaterThan(0);
+    expect(ease(9.9999, 10)).toBe(10);
+  });
+
+  it('dashboard shows the headline, live strip and the new features', async () => {
+    const { recordActivity } = await import('../src/stats.js');
+    recordActivity({ kind: 'cmdrules', msg: 'Dropped pip progress noise', tokens: 800 });
+    recordActivity({ kind: 'json', msg: 'Compacted JSON', tokens: 2000 });
+    const { renderOnce } = await import('../src/tui/dashboard.js');
+    const strip = (t: string) => t.replace(/\x1b\[[0-9;]*m/g, '');
+    const o = strip(renderOnce({ tab: 0 } as any, 160, 80));
+    expect(o).toContain('GRUG SAVED');
+    expect(o).toContain('LIVE');
+    const sv = strip(renderOnce({ tab: 1 } as any, 160, 80));
+    expect(sv).toMatch(/install\/build noise dropped\s+~800 tok/);
+    expect(sv).toMatch(/compacted big JSON results\s+~2000 tok/);
+    expect(sv).toContain('IN THE CLAUDE APP');
+  });
+
+  it('status line: clear notice, cache timer, tips, and never throws', async () => {
+    const { composeLine, renderStatusLine } = await import('../src/statusline.js');
+    const strip = (t: string) => t.replace(/\x1b\[[0-9;]*m/g, '');
+    const base = { model: 'claude-opus-5-5', idleMs: 1000, oneHour: false, windowTokens: 200000, firstTokens: 150000, tips: true, now: 1000 };
+    expect(strip(composeLine({ ...base, tokens: 170000 }))).toMatch(/⚠ context growing: \/clear/);
+    expect(strip(composeLine({ ...base, tokens: 300000 }))).toMatch(/\/clear when this task is done/);
+    expect(strip(composeLine({ ...base, tokens: 100000, idleMs: 5 * 60000 - 20000 }))).toMatch(/cache expires in 20s/);
+    expect(strip(composeLine({ ...base, tokens: 100000, idleMs: 6 * 60000 }))).toMatch(/cache cold: next reply re-writes 100k/);
+    const calm = strip(composeLine({ ...base, tokens: 20000, savedPct: 0.31 }));
+    expect(calm).toMatch(/Tip:/);
+    expect(calm).toContain('saved ~31%');
+    expect(strip(composeLine({ ...base, tokens: 20000, tips: false }))).not.toMatch(/Tip:/);
+    expect(strip(composeLine({ ...base, tokens: 20000, model: 'claude-sonnet-5-5', now: 0 }))).not.toMatch(/\/model sonnet/);
+    expect(() => renderStatusLine('not json')).not.toThrow();
+    expect(() => renderStatusLine('{"transcript_path":"/nope"}')).not.toThrow();
+  });
+
+  it('install puts the status line in, wraps the user\'s own, and restores it', async () => {
+    const { applyStatusLine } = await import('../src/install.js');
+    const { defaultConfig } = await import('../src/config.js');
+    const cfg = defaultConfig();
+    const state: any = {};
+    const settings: any = { statusLine: { type: 'command', command: 'echo mine' } };
+    applyStatusLine(settings, cfg, state);
+    expect(settings.statusLine.command).toContain(MARK);
+    expect(state.prevStatusLine.command).toBe('echo mine');
+    expect(cfg.statusLine.wrap).toBe('echo mine');
+    applyStatusLine(settings, cfg, state); // idempotent
+    expect(state.prevStatusLine.command).toBe('echo mine');
+    cfg.statusLine.enabled = false;
+    applyStatusLine(settings, cfg, state);
+    expect(settings.statusLine.command).toBe('echo mine');
+    const empty: any = {};
+    cfg.statusLine.enabled = true;
+    applyStatusLine(empty, cfg, {} as any);
+    expect(empty.statusLine.command).toContain('statusline');
+    cfg.statusLine.enabled = false;
+    applyStatusLine(empty, cfg, {} as any);
+    expect(empty.statusLine).toBeUndefined();
   });
 });

@@ -80,6 +80,14 @@ export interface GrugConfig {
   };
   /** Check GitHub releases for a newer grugbrain (once a day, notify only). */
   updateCheck: boolean;
+  /** Status line under Claude Code's input box: context size, cost per reply, when to /clear, cache timer, tips. */
+  statusLine: {
+    enabled: boolean;
+    /** The user's own status line command, run first; grug appends its notice. Set by install when one existed. */
+    wrap: string;
+    /** Rotate short user-side tips (/model, /compact...) when nothing more urgent shows. */
+    tips: boolean;
+  };
   /** Tell the user (not the model) when a session's context gets expensive; levels double from firstTokens. */
   contextAlert: {
     enabled: boolean;
@@ -196,6 +204,7 @@ export function defaultConfig(): GrugConfig {
       mcp: true
     },
     updateCheck: true,
+    statusLine: { enabled: true, wrap: '', tips: true },
     contextAlert: {
       enabled: true,
       firstTokens: 150000

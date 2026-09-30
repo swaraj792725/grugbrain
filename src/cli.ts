@@ -10,7 +10,7 @@ import { cavemanCompress } from './compress/caveman.js';
 import { repoMap } from './compress/repomap.js';
 import { skeletonize } from './compress/skeleton.js';
 import { runDaemon } from './daemon.js';
-import { readStdinJson, runHook, spawnDetached } from './hooks.js';
+import { readStdinJson, readStdinText, runHook, spawnDetached } from './hooks.js';
 import { health, install, Step, uninstall } from './install.js';
 import { runMcpServer } from './mcp.js';
 import { buildBrief, recall } from './memory/brief.js';
@@ -109,6 +109,7 @@ async function main() {
       console.log(`${ok(h.appInstalled)} runtime copied to ${paths.app()}`);
       console.log(`${ok(h.nodeExists)} node binary still exists`);
       console.log(`${ok(h.hooks)} Claude Code hooks in ${h.settingsPath}`);
+      console.log(`${ok(h.statusLine)} Claude Code status line (/clear and cache notices)`);
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
       {
@@ -223,6 +224,16 @@ async function main() {
         out = null; // never break Claude Code
       }
       if (out) process.stdout.write(JSON.stringify(out));
+      process.exit(0);
+    }
+
+    case 'statusline': {
+      try {
+        const { renderStatusLine } = await import('./statusline.js');
+        process.stdout.write(renderStatusLine(await readStdinText()));
+      } catch {
+        /* never break the status line */
+      }
       process.exit(0);
     }
 

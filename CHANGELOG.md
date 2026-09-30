@@ -4,7 +4,12 @@ Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes th
 
 ## 2.13.0
 
-Per-command output rules, compact JSON, and MCP results handled like Bash output.
+Per-command output rules, compact JSON, MCP results handled like Bash output, a redesigned live dashboard and a status line.
+
+- **New live dashboard.** 5 tabs (Overview, Savings, Activity, Memory, Advice), 120 ms animation (rotating donut chart of where savings come from, count-up headline, live pulse sparkline, "just now" flash, "synced Ns ago"), no flicker.
+- **Headline savings %.** Big "grug saved ~N%" on the Overview: tokens kept out of context priced at your main model's input rate, plus cache savings grug added, minus grug's own costs. A conservative estimate, labelled as one. Also in `src/savings.ts` for reuse.
+- **Status line notices.** `grug statusline` is installed as the Claude Code status line (wrapping yours, restored on uninstall): cache cold or expiring, `/clear` when context is over the limit, rotating tips, and `saved ~N%`. Claude Code draws the status line below the input box (it cannot be placed above). Toggle: `statusLine.enabled`.
+- **New activity kinds** (`cmdrules`, `json`) in the dashboard and stats.
 
 - **Install and build logs.** npm/pnpm/yarn, pip/uv/poetry, cargo, go, apt, brew, docker, git transfers and make/gradle/mvn print progress around the few lines that matter. Each family has its own list of progress lines; those are dropped (`... N progress lines omitted`) and deprecation notices become a count plus 3 samples. Any line that looks like a problem (error, fail, fatal, warning, denied, not found, conflict, vulnerability...) is never dropped. Only applied when at least 5 lines go and the output shrinks by 25% or more; otherwise untouched. Test runners keep their existing summary. Toggle: `commandRules.enabled`.
 - **Compact JSON.** Uniform arrays of objects (20+ items, 12k+ chars, for example `gh api`, `curl`, MCP tools) keep the first 3 items in full and one identity line per remaining item; null/empty fields and `*_url` templates are dropped. Toggle: `commandRules.json`.
