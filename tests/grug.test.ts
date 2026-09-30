@@ -2927,7 +2927,7 @@ describe('quality gates (v2.23)', () => {
     const cfg = defaultConfig();
     const cwd = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x' });
     let ran = 0;
-    const fail = () => (ran++, { status: 1, timedOut: false, output: 'ok 1\nok 2\n' + 'noise\n'.repeat(200) + 'FAIL a.test.js\nAssertionError: expected 3 to be 4\n    at a.test.js:9:1\n' });
+    const fail = () => (ran++, { status: 1, timedOut: false, output: 'ok 1\nok 2\n' + 'noise\n'.repeat(200) + `FAIL a.test.js\nAssertionError: expected 3 to be 4\n    at a.test.js:9:1\n${ran === 2 ? 'TypeError: different failure\n' : ''}` });
     // no edits this turn -> nothing runs
     appendBuffer('v1', { t: 'prompt', ts: Date.now() - 9000, text: 'hi' });
     expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
@@ -2948,6 +2948,23 @@ describe('quality gates (v2.23)', () => {
     expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
     expect(ran).toBe(2);
     expect(failureExcerpt('a\nb\nc')).toBe('a\nb\nc');
+  });
+
+  it('verify: a failure already shown this session does not send Claude back again', async () => {
+    const { verifyAtStop } = await import('../src/verify.js');
+    const cfg = defaultConfig();
+    const cwd = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x' });
+    const fail = (n: number) => () => ({ status: 1, timedOut: false, output: `FAIL old.test.js\nAssertionError: expected ${n} to be 4 (took ${n}ms)\n` });
+    edited('r1', cwd, 'a.js');
+    expect(verifyAtStop(cfg, 'r1', cwd, Date.now(), fail(3)).block).toBe(true);
+    // next prompt, new edit, same failure (only numbers differ) -> not blocked
+    appendBuffer('r1', { t: 'prompt', ts: Date.now() + 10, text: 'again' });
+    appendBuffer('r1', { t: 'file', ts: Date.now() + 20, path: path.join(cwd, 'a.js'), op: 'edit' });
+    fs.writeFileSync(path.join(cwd, 'a.js'), 'changed');
+    expect(verifyAtStop(cfg, 'r1', cwd, Date.now(), fail(7)).block).toBe(false);
+    // a different failure still blocks
+    fs.writeFileSync(path.join(cwd, 'a.js'), 'changed again');
+    expect(verifyAtStop(cfg, 'r1', cwd, Date.now(), () => ({ status: 1, timedOut: false, output: 'TypeError: x is not a function\n' })).block).toBe(true);
   });
 
   it('verify: pass, timeout, docs-only edits and the off switch never block', async () => {

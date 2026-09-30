@@ -138,8 +138,16 @@ export function verifyAtStop(
     recordActivity({ kind: 'verify', msg: `Checked the edits before finishing: \`${cmd}\` passed (${(ms / 1000).toFixed(1)}s)`, tokens: 0, project: path.basename(cwd) });
     return { block: false };
   }
-  appendBuffer(sid, { t: 'verify', ts: now, sig, ok: false, ms });
   const excerpt = failureExcerpt(r.output);
+  // Same failure as one already shown this session (any earlier round or prompt): Claude has seen it, it is most likely
+  // not caused by these edits. Sending it back again would only burn a full-context turn.
+  const fp = createHash('sha1').update(excerpt.replace(/\d+(\.\d+)?\s*(ms|s)\b/g, '').replace(/\d+/g, '#')).digest('hex').slice(0, 12);
+  const seen = events.some((e) => e.t === 'verify' && e.ok === false && e.fp === fp);
+  appendBuffer(sid, { t: 'verify', ts: now, sig, ok: false, ms, fp });
+  if (seen) {
+    recordActivity({ kind: 'verify', msg: `Check \`${cmd}\` fails the same way as before; not sending Claude back again`, tokens: 0, project: path.basename(cwd) });
+    return { block: false };
+  }
   const round = failedRounds + 1;
   const reason =
     `grugbrain verify: \`${cmd}\` FAILED after your edits (round ${round}/${q.verifyMaxRounds}). Failing output:\n${excerpt}\n` +
