@@ -56,7 +56,83 @@ process.exit(bad ? 1 : 0);
 `;
 }
 
+function csvTests(): string {
+  return `import { parseCsv } from './src/csv.js';
+const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const cases = [
+  ['a,b,c', [['a', 'b', 'c']]],
+  ['a,b\\nc,d\\n', [['a', 'b'], ['c', 'd']]],
+  ['a,b\\r\\nc,d\\r\\n', [['a', 'b'], ['c', 'd']]],
+  ['"x, y",z', [['x, y', 'z']]],
+  ['"say ""hi""",z', [['say "hi"', 'z']]],
+  ['"line1\\nline2",z', [['line1\\nline2', 'z']]],
+  ['a,,c', [['a', '', 'c']]],
+  ['a,b,', [['a', 'b', '']]],
+  ['', []],
+  ['\\n\\na,b\\n\\n', [['a', 'b']]]
+];
+let bad = 0;
+for (const [i, want] of cases) {
+  let got;
+  try { got = parseCsv(i); } catch (e) { got = 'threw ' + e.message; }
+  if (!eq(got, want)) { console.error('FAIL parseCsv(' + JSON.stringify(i) + ') expected ' + JSON.stringify(want) + ' got ' + JSON.stringify(got)); bad++; }
+}
+process.exit(bad ? 1 : 0);
+`;
+}
+
+function rippleFiles(): Record<string, string> {
+  return {
+    'package.json': JSON.stringify({ name: 'bench-ripple', type: 'module', private: true, scripts: { test: 'node test.js' } }, null, 2),
+    'test.js': `import { price } from './src/pricing.js';
+import { invoiceTotal } from './src/invoice.js';
+import { quote } from './src/quote.js';
+import { receiptLine } from './src/receipt.js';
+const checks = [
+  ['price eur', price(1000, { currency: 'EUR' }), 1000],
+  ['price usd', price(1000, { currency: 'USD' }), 1080],
+  ['price default', price(1000, {}), 1080],
+  ['invoice', invoiceTotal([{ cents: 1000 }, { cents: 500 }], 'EUR'), 1500],
+  ['quote', quote(2000, 'USD'), 2160],
+  ['receipt', receiptLine('tea', 500, 'USD'), 'tea: 540 USD']
+];
+let bad = 0;
+for (const [n, got, want] of checks) if (got !== want) { console.error('FAIL ' + n + ' expected ' + want + ' got ' + got); bad++; }
+process.exit(bad ? 1 : 0);
+`,
+    'src/pricing.js': `export const RATES = { USD: 1.08, EUR: 1.0 };\nexport function price(cents, currency = 'USD') {\n  return Math.round(cents * (RATES[currency] ?? 1.08));\n}\n`,
+    'src/invoice.js': `import { price } from './pricing.js';\nexport function invoiceTotal(lines, currency) {\n  return lines.reduce((sum, l) => sum + price(l.cents, currency), 0);\n}\n`,
+    'src/quote.js': `import { price } from './pricing.js';\nexport function quote(cents, currency) {\n  return price(cents, currency);\n}\n`,
+    'src/receipt.js': `import { price } from './pricing.js';\nexport function receiptLine(name, cents, currency) {\n  return name + ': ' + price(cents, currency) + ' ' + currency;\n}\n`
+  };
+}
+
 export const TASKS: BenchTask[] = [
+  {
+    id: 'csv-trap',
+    exercises: 'verify-before-done (many small edge cases, tests not mentioned in the prompt)',
+    prompt: 'Implement parseCsv(text) in src/csv.js as a named export. It returns an array of rows, each an array of string fields, for RFC 4180 style CSV.',
+    files: () => ({
+      'package.json': JSON.stringify({ name: 'bench-csv', type: 'module', private: true, scripts: { test: 'node test.js' } }, null, 2),
+      'test.js': csvTests(),
+      'src/csv.js': `// TODO: implement parseCsv\nexport {};\n`
+    }),
+    check: (dir) => {
+      if (sha(fs.readFileSync(path.join(dir, 'test.js'), 'utf8')) !== sha(csvTests())) return { pass: false, why: 'edited the test file' };
+      const r = spawnSync(process.execPath, ['test.js'], { cwd: dir, encoding: 'utf8', timeout: 20000 });
+      return r.status === 0 ? { pass: true, why: 'all CSV cases pass' } : { pass: false, why: (r.stderr || '').split('\n')[0].slice(0, 100) };
+    }
+  },
+  {
+    id: 'signature-ripple',
+    exercises: 'verify-before-done (a signature change must reach every caller)',
+    prompt: 'In src/pricing.js, change price(cents, currency) so its second argument is an options object { currency } instead of a bare currency string (default currency stays USD). Update the code so nothing else breaks.',
+    files: rippleFiles,
+    check: (dir) => {
+      const r = spawnSync(process.execPath, ['test.js'], { cwd: dir, encoding: 'utf8', timeout: 20000 });
+      return r.status === 0 ? { pass: true, why: 'every caller updated' } : { pass: false, why: (r.stderr || '').split('\n')[0].slice(0, 100) };
+    }
+  },
   {
     id: 'edge-case-trap',
     exercises: 'verify-before-done (quality gate: the project test catches an edge case the prompt does not list)',
