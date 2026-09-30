@@ -245,6 +245,25 @@ grug config set autoRecall.enabled false      # no recall
 grug config set graphContext.enabled false    # no code map / code hints
 ```
 
+## grug and pictures (screenshots, images, PDFs, video)
+
+One picture is cheap (~1.5k token max). The trouble: every picture stays in context and get re-read each reply. 40 screenshots = ~60k token, forever. So grug:
+
+- **skip same screenshot twice**: nothing clicked, edited, or run since last one? Same picture, already in context. Grug say no, once. Ask again, it go through. Click something, next screenshot fine.
+- **one hint** first screenshot: for page state use text snapshot; screenshot only to check how it looks.
+- **skip same image re-read** if file unchanged and still in context.
+- **shrink big image files** before reading (default long edge 1200px, PNG done by grug himself, others via `sips`/ImageMagick if there). Original untouched. Repeat the Read for full size.
+- **PDF text first**: `pdf_text` tool (needs `pdftotext`, comes with poppler) gives text cheap and says which pages are scans/figures, read those as images.
+- **video**: `video_frames` gives one sheet of many frames = one image cost. Needs ffmpeg.
+- **`media_info`**: what will this file cost, best way to look.
+- **pile-up notice** to you (not Claude) when images in context pass 20k token.
+
+```bash
+grug config set mediaGuard.imageMaxEdge 1600   # shrink less (512-4096), 0 = never shrink
+grug config set mediaGuard.dedupeScreenshots false
+grug config set mediaGuard.pdfPages 8          # allow bigger PDF page reads before the text hint
+```
+
 ### config grug understand
 
 | key | default | what |
@@ -264,6 +283,10 @@ grug config set graphContext.enabled false    # no code map / code hints
 | `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
 | `autoCompact.windowTokens` | `200000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
+| `mediaGuard.enabled` | `true` | screenshots / images / PDFs / video rules |
+| `mediaGuard.dedupeScreenshots` / `dedupeImageReads` / `guidance` | `true` | skip repeats, one-time hint |
+| `mediaGuard.imageMaxEdge` | `1200` | shrink image files longer than this (px); 0 = never |
+| `mediaGuard.pdfPages` / `imageAlertTokens` | `4` / `20000` | PDF text-first threshold; image pile-up notice |
 | `idleAlert.enabled` / `minExtraUsd` | `true` / `0.25` | warn (you only) when idle cache expiry makes next reply expensive |
 | `autoRecall.enabled` / `maxTokens` / `sessionTokens` | `true` / `800` / `2500` | per-prompt recall from memory, code graph, old sessions; total cap per session |
 | `graphContext.enabled` / `mapTokens` | `true` / `600` | repo map at session start + code hints per prompt |

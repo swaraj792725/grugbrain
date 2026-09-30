@@ -39,6 +39,7 @@ export type ActivityKind =
   | 'update'
   | 'context-alert'
   | 'idle-alert'
+  | 'media'
   | 'history'
   | 'handoff'
   | 'brief'

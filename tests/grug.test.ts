@@ -1408,3 +1408,377 @@ describe('cache-expiry notice', () => {
     expect((await ask('c5', cwd, t))?.systemMessage).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------- v2.10 features: media
+import * as zlib from 'node:zlib';
+import { decodePng, encodePng, estimateImageTokens, imageSizeOf, shrinkImage, imageSizeOfFile } from '../src/media.js';
+
+function pngFile(file: string, w: number, h: number, pattern: 'solid' | 'checker' | 'gradient' = 'gradient', ch = 3): string {
+  const data = new Uint8Array(w * h * ch);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      for (let c = 0; c < ch; c++) {
+        const v = pattern === 'solid' ? 90 : pattern === 'checker' ? ((x >> 3) + (y >> 3)) % 2 ? 250 : 10 : (x * 255) / w + c * 10;
+        data[(y * w + x) * ch + c] = Math.min(255, Math.round(v));
+      }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, encodePng({ w, h, channels: ch, data }));
+  return file;
+}
+
+/** Enough of a PNG for a header parse (dimensions) without allocating pixels. */
+const fakeImageB64 = (w: number, h: number) => {
+  const b = Buffer.alloc(200);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+  b.writeUInt32BE(13, 8);
+  b.write('IHDR', 12, 'latin1');
+  b.writeUInt32BE(w, 16);
+  b.writeUInt32BE(h, 20);
+  return b.toString('base64');
+};
+
+function stubBin(scripts: Record<string, string>): string {
+  const bin = path.join(tmp, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  for (const [name, body] of Object.entries(scripts)) {
+    fs.writeFileSync(path.join(bin, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  }
+  process.env.PATH = `${bin}:/usr/bin:/bin`;
+  return bin;
+}
+
+const scratch = () => path.join(tmp, 'scratchpad');
+const preRead = (sid: string, cwd: string, file: string, extra: any = {}) => runHook('pre-tool', { session_id: sid, cwd, tool_name: 'Read', tool_input: { file_path: file, ...extra }, scratchpad_dir: scratch() }) as Promise<any>;
+const postRead = (sid: string, cwd: string, file: string) =>
+  runHook('post-tool', { session_id: sid, cwd, tool_name: 'Read', tool_input: { file_path: file }, tool_response: { type: 'image', file: { base64: fakeImageB64(...(((s) => [s!.w, s!.h])(imageSizeOfFile(file))) as [number, number]) } } });
+
+describe('image parsing and PNG resizing', () => {
+  it('reads dimensions from PNG, JPEG, GIF and WebP headers and estimates tokens like the API', () => {
+    const p = Buffer.alloc(40);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(p);
+    p.writeUInt32BE(1000, 16);
+    p.writeUInt32BE(625, 20);
+    expect(imageSizeOf(p)).toEqual({ w: 1000, h: 625, type: 'png' });
+    const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x4a, 0x46, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x02, 0x71, 0x03, 0xe8, 0x03, 0x01, 0x11, 0x00, 0x00, 0x00, 0x00]);
+    expect(imageSizeOf(jpg)).toEqual({ w: 1000, h: 625, type: 'jpeg' });
+    const gif = Buffer.concat([Buffer.from('GIF89a'), Buffer.from([0x40, 0x01, 0xf0, 0x00]), Buffer.alloc(8)]);
+    expect(imageSizeOf(gif)).toEqual({ w: 320, h: 240, type: 'gif' });
+    const webp = Buffer.alloc(40);
+    webp.write('RIFF', 0, 'latin1');
+    webp.write('WEBP', 8, 'latin1');
+    webp.write('VP8X', 12, 'latin1');
+    webp.writeUIntLE(799, 24, 3);
+    webp.writeUIntLE(599, 27, 3);
+    expect(imageSizeOf(webp)).toEqual({ w: 800, h: 600, type: 'webp' });
+    expect(imageSizeOf(Buffer.from('not an image at all, just text'))).toBeNull();
+    // measured in Claude Code 2.1: ~1 token per 880 px, capped at ~1.3 megapixels (~1.5k tokens)
+    expect(estimateImageTokens(400, 250)).toBe(114);
+    expect(estimateImageTokens(1000, 625)).toBe(710);
+    expect(estimateImageTokens(2400, 1500)).toBe(estimateImageTokens(1568, 980));
+    expect(estimateImageTokens(2400, 1500)).toBeGreaterThan(1400);
+    expect(estimateImageTokens(2400, 1500)).toBeLessThan(1550);
+  });
+
+  it('decodes every PNG filter type and shrinks with area averaging', () => {
+    const w = 64;
+    const h = 40;
+    const stride = w * 3;
+    const px = new Uint8Array(stride * h);
+    for (let i = 0; i < px.length; i++) px[i] = (i * 7 + (i >> 5) * 13) & 0xff;
+    // encode by hand with a different filter on each row: None, Sub, Up, Average, Paeth
+    const raw = Buffer.alloc((stride + 1) * h);
+    const paeth = (a: number, b: number, c: number) => {
+      const p = a + b - c;
+      const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+      return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+    };
+    for (let y = 0; y < h; y++) {
+      const f = y % 5;
+      raw[y * (stride + 1)] = f;
+      for (let x = 0; x < stride; x++) {
+        const cur = px[y * stride + x];
+        const a = x >= 3 ? px[y * stride + x - 3] : 0;
+        const b = y > 0 ? px[(y - 1) * stride + x] : 0;
+        const c = x >= 3 && y > 0 ? px[(y - 1) * stride + x - 3] : 0;
+        const pred = f === 0 ? 0 : f === 1 ? a : f === 2 ? b : f === 3 ? (a + b) >> 1 : paeth(a, b, c);
+        raw[y * (stride + 1) + 1 + x] = (cur - pred) & 0xff;
+      }
+    }
+    const chunk = (t: string, d: Buffer) => {
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(d.length, 0);
+      head.write(t, 4, 'latin1');
+      return Buffer.concat([head, d, Buffer.alloc(4)]); // CRC is not checked by the decoder
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(w, 0);
+    ihdr.writeUInt32BE(h, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 2;
+    const file = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(raw)), chunk('IEND', Buffer.alloc(0))]);
+    const dec = decodePng(file)!;
+    expect(dec.w).toBe(64);
+    expect(Buffer.from(dec.data).equals(Buffer.from(px))).toBe(true);
+    // our own encoder round-trips
+    expect(Buffer.from(decodePng(encodePng(dec))!.data).equals(Buffer.from(px))).toBe(true);
+    // 16-bit and interlaced PNGs are declined (left untouched), not mangled
+    const deep = Buffer.from(file);
+    deep[8 + 8 + 8] = 16;
+    expect(decodePng(deep)).toBeNull();
+
+    const solid = shrinkImage({ w: 400, h: 200, channels: 3, data: new Uint8Array(400 * 200 * 3).fill(90) }, 100);
+    expect([solid.w, solid.h]).toEqual([100, 50]);
+    expect(new Set(solid.data)).toEqual(new Set([90]));
+    const checker = decodePng(fs.readFileSync(pngFile(path.join(tmp, 'chk.png'), 160, 160, 'checker')))!;
+    const small = shrinkImage(checker, 20); // 8x8 blocks averaged over a 2x2 block grid -> mid grey
+    const mean = small.data.reduce((a, b) => a + b, 0) / small.data.length;
+    expect(Math.abs(mean - 130)).toBeLessThan(12);
+    expect(shrinkImage(checker, 4000)).toBe(checker); // never upscales
+  });
+});
+
+describe('image reads: shrink and de-duplicate', () => {
+  const setup = (name: string, w = 2400, h = 1500) => {
+    const cwd = path.join(tmp, name);
+    fs.mkdirSync(cwd);
+    const img = pngFile(path.join(cwd, 'shot.png'), w, h);
+    return { cwd, img };
+  };
+
+  it('reads a shrunken copy of a big image from the scratchpad, the full one on request, and skips a repeat', async () => {
+    const { cwd, img } = setup('imgs');
+    const first = await preRead('m1', cwd, img);
+    const out = first.hookSpecificOutput;
+    expect(out.permissionDecision).toBeUndefined(); // no permission bypass: only the path changes
+    const copy: string = out.updatedInput.file_path;
+    expect(copy.startsWith(scratch())).toBe(true);
+    expect(imageSizeOfFile(copy)).toMatchObject({ w: 1200, h: 750 });
+    expect(imageSizeOfFile(img)).toMatchObject({ w: 2400, h: 1500 }); // the original is untouched
+    expect(out.additionalContext).toMatch(/shrunk to 1200x750.*repeat the same Read/);
+    const act = readActivity().find((a: any) => a.kind === 'media' && /Shrunk/.test(a.msg)) as any;
+    expect(act.tokens).toBeGreaterThanOrEqual(250);
+    await postRead('m1', cwd, copy);
+    // Repeating the Read asks for the full-size image: allowed untouched.
+    expect(await preRead('m1', cwd, img)).toBeNull();
+    await postRead('m1', cwd, img);
+    // Now it is in context at full size: a third Read is a pure repeat.
+    const third = await preRead('m1', cwd, img);
+    expect(third.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(third.hookSpecificOutput.permissionDecisionReason).toMatch(/already in your context/);
+    expect(await preRead('m1', cwd, img)).toBeNull(); // asked again: allowed
+    // After compaction the context is gone: shrinking starts over.
+    await runHook('pre-compact', { session_id: 'm1', cwd });
+    expect((await preRead('m1', cwd, img)).hookSpecificOutput.updatedInput.file_path).toBe(copy); // cached copy reused
+  });
+
+  it('leaves small images, files outside the project and disabled setups alone; skips only true repeats', async () => {
+    const { cwd, img } = setup('imgs2', 1000, 625);
+    expect(await preRead('m2', cwd, img)).toBeNull(); // 710 tokens: nothing to save
+    await postRead('m2', cwd, img);
+    const again = await preRead('m2', cwd, img);
+    expect(again.hookSpecificOutput.permissionDecision).toBe('deny');
+    await new Promise((r) => setTimeout(r, 15));
+    fs.appendFileSync(img, Buffer.alloc(1)); // edited on disk: not a repeat
+    expect(await preRead('m2', cwd, img)).toBeNull();
+    const outside = pngFile(path.join(tmp, 'elsewhere', 'big.png'), 2400, 1500);
+    expect(await preRead('m3', cwd, outside)).toBeNull(); // outside the project: normal permission flow
+    const { cwd: cwd2, img: img2 } = setup('imgs3');
+    const { setConfigValue } = await import('../src/config.js');
+    expect(() => setConfigValue('mediaGuard.imageMaxEdge', '100')).toThrow(/0 \(never shrink\) or between 512 and 4096/);
+    setConfigValue('mediaGuard.imageMaxEdge', '0');
+    expect(await preRead('m4', cwd2, img2)).toBeNull();
+    setConfigValue('mediaGuard.dedupeImageReads', 'false');
+    await postRead('m4', cwd2, img2);
+    expect(await preRead('m4', cwd2, img2)).toBeNull();
+    setConfigValue('mediaGuard.enabled', 'false');
+    setConfigValue('mediaGuard.dedupeImageReads', 'true');
+    expect(await preRead('m4', cwd2, img2)).toBeNull();
+  });
+
+  it('shrinks other formats through sips/ImageMagick when present, and is silent when nothing can', async () => {
+    const cwd = path.join(tmp, 'jpgs');
+    fs.mkdirSync(cwd);
+    const jpg = path.join(cwd, 'photo.jpg');
+    const head = Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x0b, 0x08, 0x05, 0xdc, 0x09, 0x60, 0x03, 0x01, 0x11, 0x00]); // 2400x1500
+    fs.writeFileSync(jpg, Buffer.concat([head, Buffer.alloc(2000)]));
+    expect(imageSizeOfFile(jpg)).toMatchObject({ w: 2400, h: 1500, type: 'jpeg' });
+    expect(await preRead('j1', cwd, jpg)).toBeNull(); // no tool: left alone
+    stubBin({ sips: 'while [ $# -gt 0 ]; do case "$1" in --out) out="$2";; esac; last="$1"; shift; done; cp "$src" "$out" 2>/dev/null || true; :', });
+    // stub that copies the file (first non-flag arg after -Z N)
+    stubBin({ sips: 'src="$3"; out="$5"; cp "$src" "$out"' });
+    const r = await preRead('j2', cwd, jpg);
+    expect(r.hookSpecificOutput.updatedInput.file_path).toMatch(/grug-img-.*\.jpg$/);
+    expect(fs.existsSync(r.hookSpecificOutput.updatedInput.file_path)).toBe(true);
+  });
+});
+
+describe('screenshot guard', () => {
+  const shot = (sid: string, cwd: string, name = 'mcp__browser__take_screenshot', input: any = {}) => runHook('pre-tool', { session_id: sid, cwd, tool_name: name, tool_input: input }) as Promise<any>;
+  const done = (sid: string, cwd: string, name = 'mcp__browser__take_screenshot', input: any = {}) =>
+    runHook('post-tool', { session_id: sid, cwd, tool_name: name, tool_input: input, tool_response: { content: [{ type: 'image', mimeType: 'image/png', data: fakeImageB64(1568, 980) }] } }) as Promise<any>;
+  const act = (sid: string, cwd: string, name: string, input: any = {}) => runHook('post-tool', { session_id: sid, cwd, tool_name: name, tool_input: input, tool_response: { content: [{ type: 'text', text: 'ok' }] } });
+  const cwd = () => {
+    const c = path.join(tmp, 'web');
+    fs.mkdirSync(c, { recursive: true });
+    return c;
+  };
+
+  it('skips an identical screenshot when nothing changed, allows it after a change or when asked again', async () => {
+    const c = cwd();
+    expect(await shot('s1', c)).toBeNull();
+    const g: any = await done('s1', c);
+    expect(g.hookSpecificOutput.additionalContext).toMatch(/text\/DOM snapshot/); // one-time hint
+    expect(((await done('s1', c)) as any)?.hookSpecificOutput).toBeUndefined(); // only once
+    await act('s1', c, 'mcp__browser__browser_snapshot'); // read-only: page unchanged
+    const denied = await shot('s1', c);
+    expect(denied.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(denied.hookSpecificOutput.permissionDecisionReason).toMatch(/nothing has changed since your identical screenshot/);
+    expect(await shot('s1', c)).toBeNull(); // asked again: allowed
+    const saved = (readActivity().filter((a: any) => a.kind === 'media') as any[])[0];
+    expect(saved.tokens).toBeGreaterThan(1500); // ~1.5k image + call overhead
+
+    await done('s1', c);
+    await act('s1', c, 'mcp__browser__browser_click', { ref: 'e5' }); // the page changed
+    expect(await shot('s1', c)).toBeNull();
+    await done('s1', c);
+    await runHook('post-tool', { session_id: 's1', cwd: c, tool_name: 'Edit', tool_input: { file_path: path.join(c, 'a.css') } }); // code changed
+    expect(await shot('s1', c)).toBeNull();
+    await done('s1', c);
+    await runHook('post-tool', { session_id: 's1', cwd: c, tool_name: 'Bash', tool_input: { command: 'npm run build' } });
+    expect(await shot('s1', c)).toBeNull();
+  });
+
+  it('treats different requests, stale shots and other sessions/contexts as new', async () => {
+    const c = cwd();
+    await done('s2', c, 'mcp__browser__take_screenshot', { fullPage: true });
+    expect(await shot('s2', c, 'mcp__browser__take_screenshot', { fullPage: false })).toBeNull(); // different request
+    expect((await shot('s2', c, 'mcp__browser__take_screenshot', { fullPage: true })).hookSpecificOutput.permissionDecision).toBe('deny');
+    // computer-use style: the action decides
+    await done('s3', c, 'mcp__computer__computer', { action: 'screenshot' });
+    await act('s3', c, 'mcp__computer__computer', { action: 'left_click', coordinate: [1, 2] });
+    expect(await shot('s3', c, 'mcp__computer__computer', { action: 'screenshot' })).toBeNull();
+    // older than two minutes the page may have changed on its own
+    const file = path.join(paths.sessions(), 's4.jsonl');
+    fs.mkdirSync(paths.sessions(), { recursive: true });
+    await done('s4', c);
+    fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/"ts":\d+/g, `"ts":${Date.now() - 5 * 60000}`));
+    expect(await shot('s4', c)).toBeNull();
+    // after compaction the earlier screenshot is out of context
+    await done('s5', c);
+    await runHook('pre-compact', { session_id: 's5', cwd: c });
+    expect(await shot('s5', c)).toBeNull();
+    expect((((await done('s5', c)) as any)?.hookSpecificOutput?.additionalContext || '')).toMatch(/snapshot/); // hint again in the new context
+    const { setConfigValue } = await import('../src/config.js');
+    setConfigValue('mediaGuard.dedupeScreenshots', 'false');
+    expect(await shot('s5', c)).toBeNull();
+  });
+
+  it('tells the user (only) when images pile up in the context, once per level', async () => {
+    const c = cwd();
+    const t = path.join(tmp, 'imgs.jsonl');
+    fs.writeFileSync(t, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'z', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 5, cache_read_input_tokens: 60000, output_tokens: 5 } } }) + '\n');
+    for (let i = 0; i < 12; i++) await done('s6', c, 'mcp__browser__take_screenshot', { i });
+    const ask = (p: string) => runHook('user-prompt', { session_id: 's6', cwd: c, transcript_path: t, prompt: p }) as Promise<any>;
+    expect((await ask('and now check the login page layout again'))?.systemMessage).toBeUndefined(); // 12 x ~1.5k < 20k
+    for (let i = 12; i < 15; i++) await done('s6', c, 'mcp__browser__take_screenshot', { i });
+    const out = await ask('and now check the login page layout again');
+    expect(out.systemMessage).toMatch(/15 images\/screenshots \(~2\dk tokens.*re-read on every reply.*\/clear/);
+    expect(JSON.stringify(out.hookSpecificOutput || {})).not.toMatch(/images\/screenshots/); // never sent to Claude
+    expect((await ask('one more tweak to the header spacing please'))?.systemMessage).toBeUndefined();
+  });
+});
+
+describe('PDFs and video', () => {
+  const pdf = (name = 'report.pdf', pages = 12) => {
+    const f = path.join(tmp, 'docs', name);
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, `%PDF-1.4\n1 0 obj << /Type /Pages /Kids [] /Count ${pages} >> endobj\n%%EOF`);
+    return f;
+  };
+  const PDFTOTEXT = `while [ $# -gt 0 ]; do case "$1" in -f) f="$2"; shift;; -l) l="$2"; shift;; esac; shift; done
+i=$f; while [ $i -le $l ]; do if [ $i -eq 3 ]; then printf '  \\n'; else printf 'Page %s ledger balances reconcile against the bank statement totals.\\nSecond line of page %s with more words to read.\\n' $i $i; fi; printf '\\f'; i=$((i+1)); done`;
+
+  it('points big PDF page reads at the text tool once, and leaves small ones alone', async () => {
+    const f = pdf();
+    const cwd = path.join(tmp, 'pdfs');
+    fs.mkdirSync(cwd);
+    expect(await preRead('p0', cwd, f, { pages: '1-10' })).toBeNull(); // no pdftotext: nothing better to offer
+    stubBin({ pdftotext: PDFTOTEXT });
+    const d = await preRead('p1', cwd, f, { pages: '1-10' });
+    expect(d.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(d.hookSpecificOutput.permissionDecisionReason).toMatch(/12 pages.*asks for 10.*pdf_text.*repeat the same Read/);
+    expect(await preRead('p1', cwd, f, { pages: '1-10' })).toBeNull(); // repeat: allowed
+    expect(await preRead('p1', cwd, f, { pages: '2-3' })).toBeNull(); // small request
+    expect(await preRead('p1', cwd, f, { pages: '5' })).toBeNull();
+    expect((await preRead('p2', cwd, f, {}))?.hookSpecificOutput.permissionDecision).toBe('deny'); // whole 12-page PDF
+  });
+
+  it('pdf_text returns page text, flags image-only pages and reports the saving', () => {
+    stubBin({ pdftotext: PDFTOTEXT });
+    const f = pdf();
+    const r = handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'pdf_text', arguments: { path: f, pages: '2-5' } } });
+    const text: string = r.result.content[0].text;
+    expect(text).toContain('12 pages, showing 2-5');
+    expect(text).toContain('--- page 2 ---\nPage 2 ledger balances reconcile');
+    expect(text).toContain('--- page 3 ---\n(no text: scan or figure)');
+    expect(text).toMatch(/Read these as images with pages="N": 3\./);
+    expect(text).toMatch(/7 more page\(s\) after 5; ask for pages="6-12"/);
+    const saved = (readActivity().find((a: any) => a.kind === 'media' && /pdf_text/.test(a.msg)) as any).tokens;
+    expect(saved).toBeGreaterThan(4000);
+    // without poppler the tool says how to get it instead of failing
+    process.env.PATH = '/usr/bin:/bin';
+    const none = handleMessage({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'pdf_text', arguments: { path: f } } });
+    expect(none.result.content[0].text).toMatch(/pdftotext is not installed.*Read with a pages range/);
+  });
+
+  it('turns a video Read into a frame-sheet suggestion, and video_frames returns one image via MCP', async () => {
+    const cwd = path.join(tmp, 'vids');
+    fs.mkdirSync(cwd);
+    const v = path.join(cwd, 'demo.mp4');
+    fs.writeFileSync(v, Buffer.alloc(5000));
+    const noff = await preRead('v0', cwd, v);
+    expect(noff.hookSpecificOutput.permissionDecisionReason).toMatch(/ffmpeg is not installed/);
+    stubBin({
+      ffprobe: 'echo 12.5',
+      ffmpeg: 'for a; do last="$a"; done; printf "FAKEJPEGDATA" > "$last"'
+    });
+    const d = await preRead('v1', cwd, v);
+    expect(d.hookSpecificOutput.permissionDecisionReason).toMatch(/video_frames/);
+    expect(await preRead('v1', cwd, v)).toBeNull(); // repeat allowed
+    const r = handleMessage({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'video_frames', arguments: { path: v, count: 4 } } });
+    const [text, img] = r.result.content;
+    expect(text.text).toMatch(/demo\.mp4, 12\.5 s: contact sheet of 4 frames/);
+    expect(text.text).toContain('Frame times (s): 1.6, 4.7, 7.8, 10.9');
+    expect(img).toMatchObject({ type: 'image', mimeType: 'image/jpeg' });
+    expect(Buffer.from(img.data, 'base64').toString()).toBe('FAKEJPEGDATA');
+    expect(readActivity().some((a: any) => a.kind === 'media' && /video_frames/.test(a.msg))).toBe(true);
+  });
+
+  it('media_info says what a file costs and the cheapest way in', () => {
+    const info = (p: string) => handleMessage({ jsonrpc: '2.0', id: 4, method: 'tools/call', params: { name: 'media_info', arguments: { path: p } } }).result.content[0].text as string;
+    const big = pngFile(path.join(tmp, 'mi', 'big.png'), 2400, 1500);
+    expect(info(big)).toMatch(/png 2400x1500.*≈ 1\d\d\d tokens.*shrunk to 1200px/);
+    expect(info(pdf('a.pdf', 20))).toMatch(/20 pages.*30000–60000 tokens.*as text ≈ 10000/);
+    expect(info(path.join(tmp, 'nope.png'))).toMatch(/No such file/);
+    const list = handleMessage({ jsonrpc: '2.0', id: 5, method: 'tools/list' }).result.tools.map((t: any) => t.name);
+    expect(list).toEqual(expect.arrayContaining(['pdf_text', 'video_frames', 'media_info']));
+  });
+});
+
+describe('media wiring', () => {
+  it('registers the hooks for MCP tools too, and shows media savings on the dashboard', async () => {
+    installClaudeCode(false);
+    const s = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
+    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|mcp__.*');
+    expect(s.hooks.PostToolUse[0].matcher).toContain('mcp__.*');
+    const { recordActivity } = await import('../src/stats.js');
+    recordActivity({ kind: 'media', msg: 'Skipped a repeat screenshot', tokens: 1800 });
+    recordActivity({ kind: 'media', msg: 'Shrunk shot.png', tokens: 700 });
+    const { renderOnce } = await import('../src/tui/dashboard.js');
+    const dash = renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '');
+    expect(dash).toMatch(/media: repeats skipped\/shrunk.*~2500 tok.*2×/);
+    const { setConfigValue } = await import('../src/config.js');
+    expect(() => setConfigValue('mediaGuard.imageAlertTokens', '100')).toThrow(/0 \(off\) or between 5000 and 500000/);
+    expect(() => setConfigValue('mediaGuard.pdfPages', '0')).toThrow(/between 1 and 100/);
+  });
+});

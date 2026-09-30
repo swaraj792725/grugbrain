@@ -55,6 +55,12 @@ export type BufferEvent =
   | { t: 'compact'; ts: number }
   | { t: 'alert'; ts: number; level: number }
   | { t: 'idle'; ts: number; since: number }
+  | { t: 'shot'; ts: number; key: string; tokens: number }
+  | { t: 'mcp'; ts: number; name: string; ro: boolean }
+  | { t: 'img'; ts: number; tokens: number; src: string }
+  | { t: 'guided'; ts: number }
+  | { t: 'shrunk'; ts: number; key: string }
+  | { t: 'imgalert'; ts: number; level: number }
   | { t: 'facts'; ts: number; items: Array<{ kind: string; text: string; ts: number }>; offset?: number; failed?: string[] }
   | { t: 'factscan'; ts: number; offset: number; failed: string[] }
   | { t: 'recall'; ts: number; keys: string[]; tokens: number; files?: string[] }

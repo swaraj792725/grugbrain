@@ -99,7 +99,27 @@ export function transcriptEntriesFrom(p: string | undefined, offset: number, max
 }
 
 /** Tokens in context for the latest request (what the next reply will re-read) + its model. */
-export function contextSize(transcriptPath?: string): { tokens: number; model: string; lastReplyTs: number; oneHourCache: boolean } {
+type ContextSize = { tokens: number; model: string; lastReplyTs: number; oneHourCache: boolean };
+let sizeMemo: { key: string; value: ContextSize } | null = null;
+
+export function contextSize(transcriptPath?: string): ContextSize {
+  // Several prompt-time checks ask for the same transcript: read it once per change.
+  let key = '';
+  try {
+    if (transcriptPath) {
+      const st = fs.statSync(transcriptPath);
+      key = `${transcriptPath}|${st.mtimeMs}|${st.size}`;
+    }
+  } catch {
+    /* no transcript */
+  }
+  if (key && sizeMemo?.key === key) return sizeMemo.value;
+  const value = computeContextSize(transcriptPath);
+  if (key) sizeMemo = { key, value };
+  return value;
+}
+
+function computeContextSize(transcriptPath?: string): ContextSize {
   const es = transcriptEntries(transcriptPath, 2 * 1024 * 1024);
   // Did any recent reply write the 1-hour cache tier? Then an idle gap under an hour keeps the cache warm.
   const oneHourCache = es.some((e) => e?.type === 'assistant' && (e.message?.usage?.cache_creation?.ephemeral_1h_input_tokens || 0) > 0);

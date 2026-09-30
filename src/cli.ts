@@ -138,6 +138,16 @@ async function main() {
         console.log(`${on(cfg.autoRecall.enabled)} auto-recall ${cfg.autoRecall.enabled ? `on (≤${cfg.autoRecall.maxTokens} tok): ${r.n} injection(s) in 7 days${r.n ? `, avg ${r.avg} tok` : ''}` : 'off (grug config set autoRecall.enabled true)'}`);
         console.log(`${on(cfg.graphContext.enabled)} graph context ${cfg.graphContext.enabled ? `on: ${g.n} code map(s)/hint(s) in 7 days${g.n ? `, avg ${g.avg} tok` : ''}` : 'off (grug config set graphContext.enabled true)'}`);
         {
+          const { hasTool } = await import('./media.js');
+          const m = cfg.mediaGuard;
+          const tools = ['pdftotext', 'ffmpeg', 'sips', 'magick'].map((x) => `${x} ${hasTool(x) || (x === 'magick' && hasTool('convert')) ? '✓' : '✗'}`).join('  ');
+          const n = week.filter((a) => a.kind === 'media').length;
+          console.log(
+            `${m.enabled ? '✅' : '➖'} media guard ${m.enabled ? `on: ${n} action(s) in 7 days; shrink images over ${m.imageMaxEdge || 'never'}px, PDFs over ${m.pdfPages} pages go text-first` : 'off (grug config set mediaGuard.enabled true)'}`
+          );
+          console.log(`   optional helpers: ${tools}   (PNG shrinking works without any; PDF text needs pdftotext, video needs ffmpeg)`);
+        }
+        {
           const { loadTune } = await import('./recalltune.js');
           const tu = loadTune();
           if (tu.codeShown >= 1) console.log(`ℹ️  code hints used: ${Math.round((tu.codeHit / tu.codeShown) * 100)}% of recent hints (recall strictness ×${tu.strictness.toFixed(2)}, adjusts itself)`);

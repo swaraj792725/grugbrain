@@ -25,6 +25,12 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - Live check of hooks in a real Claude Code: `claude -p "<q>" --model haiku --max-turns 1 --settings <file with hooks> --session-id $(uuidgen) --output-format json < /dev/null`, with GRUG_HOME sandboxed and GRUG_NO_SPAWN=1. Always pass a fresh --session-id: nested claude inherits the outer session id, and recall dedupes per session (looks like "no recall").
 - Idle cache expiry: cold reply re-writes context at 1.25x (5m tier) / 2x (1h tier) input price; grug warns the user (idleAlert), never the model.
 
+## Media (v2.10)
+- Measured in Claude Code 2.1: image = ~1 token per 880 px + ~330 overhead, capped ~1.3 MP (~1.5k tokens). Shrinking below ~1300 px long edge is the only way to save per image; the big cost is accumulation in context.
+- Hook facts (tested live): PreToolUse `updatedInput` redirects a Read; a redirect to a path outside the project is permission-denied unless `permissionDecision: allow`, but a redirect into `input.scratchpad_dir` needs no decision and prompts nothing. PreToolUse `additionalContext` reaches the model. PostToolUse cannot rewrite a built-in Read image's output. PostToolUse `tool_input` shows the redirected path.
+- Ask-once pattern everywhere: deny/redirect once, record a `skip`/`shrunk` event, let the identical repeat through. Never permanent.
+- pdf_text needs pdftotext (poppler), video_frames needs ffmpeg; neither is installed in the sandbox, so tests use PATH stubs and PDF/video were not measured live.
+
 ## Open items
 - Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.
