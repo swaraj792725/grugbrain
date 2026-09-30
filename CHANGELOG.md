@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.12.0
+
+Trim long command output earlier without losing anything.
+
+- **Earlier trim, nothing lost.** Output of noisy commands (build, test, install, logs) over 9000 chars (was 24000) is cut to head + tail, but the untouched original is saved to the session scratchpad (no permission prompt; grug's cache dir if there is none) and the marker says where, so Claude can Read the exact text with `offset`/`limit`. Lines that look like problems (error, fail, fatal, exception, warning, denied...) in the hidden part are kept (up to 20), so a failure in the middle is never hidden. Quality can only go up versus before: earlier, the cut part was gone.
+- **Content you asked for is never cut early.** Commands whose output is the point (`cat`, `sed -n`, `grep`, `git diff/show/log`, `find`, `ls`, `jq`, `curl`...) keep the old 24000-char limit (`proxy.trimContentChars`). In this session every large Bash result was of this kind, so the early cut would have hidden code that was asked for.
+- **Measured honestly.** Replayed on this session's real Bash results, the early cut alone saved 10.4% of Bash tokens, but nearly all of that was content-type output, which is now left alone. So expect well under 10% of Bash tokens on a session like this, and the real gain on build, install and test logs.
+
 ## 2.11.0
 
 Make Claude use what grug already knows before it burns context exploring, and show (and fix) what fills the context.

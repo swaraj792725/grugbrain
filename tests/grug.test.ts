@@ -74,6 +74,14 @@ describe('skeletonizer', () => {
   });
 });
 
+describe('wantsContent', () => {
+  it('separates content commands from noisy runs', async () => {
+    const { wantsContent } = await import('../src/hooks.js');
+    for (const c of ['sed -n 1,200p src/a.ts', 'cat src/x.ts && ls', 'git show abc --stat', 'grep -rn foo src | head', 'cd x && git diff']) expect(wantsContent(c)).toBe(true);
+    for (const c of ['npm test', 'npm ci && npm run build', 'pip install -r requirements.txt', 'docker build .']) expect(wantsContent(c)).toBe(false);
+  });
+});
+
 describe('trimmer', () => {
   const noisy = '\u001b[31mred\u001b[0m\n' + 'dup\n'.repeat(20) + Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n');
 
@@ -92,6 +100,16 @@ describe('trimmer', () => {
     const read = Array.from({ length: 500 }, (_, i) => `${i + 1}\tconst x${i} = ${i};`).join('\n');
     expect(looksLikeFileRead(read)).toBe(true);
     expect(trimToolOutput(read, trimOpts).changed).toBe(false);
+  });
+
+  it('keeps problem lines from the cut part and points at the saved original', () => {
+    const body = Array.from({ length: 600 }, (_, i) => (i === 300 ? 'FATAL: database connection refused' : `ok step ${i}`)).join('\n');
+    let saved = '';
+    const r = trimToolOutput(body, { ...trimOpts, saveFull: (full) => ((saved = full), '/tmp/full.txt') });
+    expect(r.text).toContain('FATAL: database connection refused');
+    expect(r.text).toContain('/tmp/full.txt');
+    expect(saved).toBe(body);
+    expect(r.text).not.toContain('ok step 300');
   });
 });
 

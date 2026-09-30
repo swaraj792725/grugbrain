@@ -10,6 +10,8 @@ export interface TrimOptions {
   thresholdChars: number;
   keepHeadChars: number;
   keepTailChars: number;
+  /** Stores the untouched original and returns where to read it (so a cut is never a loss). */
+  saveFull?: (original: string) => string | null;
 }
 
 export interface TrimResult {
@@ -17,6 +19,9 @@ export interface TrimResult {
   changed: boolean;
   removedChars: number;
 }
+
+const SIGNAL_RE = /\b(error|errors|fail|failed|failure|fatal|panic|exception|traceback|warn|warning|denied|cannot|can't|not found|undefined|timeout)\b/i;
+const MAX_SIGNAL_LINES = 20;
 
 const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007]*(\u0007|\u001b\\)/g;
 
@@ -61,10 +66,20 @@ export function trimToolOutput(text: string, opts: TrimOptions): TrimResult {
     const s = tailStart > h ? tailStart : t.length - opts.keepTailChars;
     const cut = t.slice(h, s);
     const cutLines = cut.split('\n').length;
+    // Lines that look like problems survive the cut, so a failure in the middle is never hidden.
+    const keep = cut.split('\n').filter((l) => SIGNAL_RE.test(l)).slice(0, MAX_SIGNAL_LINES).map((l) => (l.length > 300 ? l.slice(0, 300) + '…' : l));
+    let where: string | null = null;
+    try {
+      where = opts.saveFull ? opts.saveFull(text) : null;
+    } catch {
+      where = null;
+    }
+    const recover = where ? `Full original output: ${where} (Read it with offset/limit if you need more).` : 'Re-run a narrower command (grep, head, tail, sed -n) if you need them.';
     t =
       t.slice(0, h) +
-      `\n\n[grug: ${cutLines} lines (${cut.length} chars) of repetitive/long output hidden here. ` +
-      `Re-run a narrower command (grep, head, tail, sed -n) if you need them.]\n\n` +
+      `\n\n[grug: ${cutLines} lines (${cut.length} chars) hidden here. ${recover}]\n` +
+      (keep.length ? `[grug: problem lines from the hidden part]\n${keep.join('\n')}\n` : '') +
+      `\n` +
       t.slice(s);
   }
   return { text: t, changed: t !== text, removedChars: Math.max(0, text.length - t.length) };

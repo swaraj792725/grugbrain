@@ -47,6 +47,8 @@ export interface GrugConfig {
     dedupeReads: boolean;
     /** tool_result text longer than this (chars) gets head/tail trimmed. */
     trimThresholdChars: number;
+    /** Limit for commands whose output is the point (cat, sed -n, grep, git diff): never cut early. */
+    trimContentChars: number;
     trimKeepHeadChars: number;
     trimKeepTailChars: number;
   };
@@ -157,9 +159,10 @@ export function defaultConfig(): GrugConfig {
       autoCache: true,
       trimToolResults: true,
       dedupeReads: true,
-      trimThresholdChars: 24000,
-      trimKeepHeadChars: 10000,
-      trimKeepTailChars: 6000
+      trimThresholdChars: 9000,
+      trimContentChars: 24000,
+      trimKeepHeadChars: 4500,
+      trimKeepTailChars: 3000
     },
     readGuard: {
       enabled: true,

@@ -33,7 +33,7 @@ Claude burn token on:
 | fat | how much | what grug do |
 |---|---|---|
 | same big prompt sent every turn, no cache | pay 100% each turn | **cache autopilot**: add cache breakpoints when app forget. Cache read cost 0.1×. |
-| giant `npm test` / log / build output | 10k–100k token each | **trim**: strip colour junk, squash repeat lines (`[×50]`), keep head + tail, say what cut |
+| giant `npm test` / log / build output | 10k–100k token each | **trim**: strip colour junk, squash repeat lines (`[×50]`), keep head + tail + problem lines, save the full original and say where |
 | same tool output twice in one chat | pay twice | **dedupe**: second copy become pointer to first |
 | 400 passing tests + 1 failure dumped into chat | 5–50k token | **test summarizer**: keep every failure (assertion, diff, code frame) + summary, drop passing noise. jest, vitest, mocha, pytest, go, cargo, TAP, rspec, phpunit, tsc |
 | `Read` whole 5,000-line file to find one function | ~30k token | **read guard**: say "grep first, read range". Ranged read always allowed. |
