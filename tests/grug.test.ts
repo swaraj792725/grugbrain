@@ -403,7 +403,7 @@ describe('installer safety', () => {
     installClaudeCode(true);
     const after = JSON.parse(fs.readFileSync(settings, 'utf8'));
     expect(after.permissions).toEqual(original.permissions);
-    expect(JSON.stringify(after.hooks).split(MARK).length - 1).toBe(7);
+    expect(JSON.stringify(after.hooks).split(MARK).length - 1).toBe(8);
     expect(after.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:4747');
     uninstall();
     expect(JSON.parse(fs.readFileSync(settings, 'utf8'))).toEqual(original);
@@ -887,6 +887,24 @@ describe('auto-compaction + restore', () => {
     const s = JSON.parse(fs.readFileSync(settings, 'utf8'));
     expect(s.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('sonnet');
     expect(s.autoCompactWindow).toBeUndefined();
+  });
+
+  it('subagents: start hook carries the style and read rule; their separate transcripts are metered', async () => {
+    const cwd = path.join(tmp, 'sub');
+    fs.mkdirSync(cwd);
+    const out: any = await runHook('subagent-start', { session_id: 'sa1', cwd, agent_id: 'a1', agent_type: 'general-purpose' });
+    expect(out.hookSpecificOutput.hookEventName).toBe('SubagentStart');
+    expect(out.hookSpecificOutput.additionalContext).toMatch(/offset\/limit/);
+    const { meterTranscript } = await import('../src/meter.js');
+    const main = path.join(tmp, 'sess1.jsonl');
+    const dir = path.join(tmp, 'sess1', 'subagents');
+    fs.mkdirSync(dir, { recursive: true });
+    const reply = (id: string) => JSON.stringify({ type: 'assistant', isSidechain: true, timestamp: new Date().toISOString(), message: { id, model: 'claude-haiku-4-5-20251001', content: [{ type: 'text', text: 'x' }], usage: { input_tokens: 5, cache_read_input_tokens: 4000, output_tokens: 7 } } }) + '\n';
+    fs.writeFileSync(main, reply('m1').replace('"isSidechain":true,', ''));
+    fs.writeFileSync(path.join(dir, 'agent-a1.jsonl'), reply('s1') + reply('s2'));
+    const r = meterTranscript('sa1', main, 'sub');
+    expect(r.replies).toBe(3);
+    expect(meterTranscript('sa1', main, 'sub').replies).toBe(0); // offsets kept per file
   });
 
   it('app plugin: copied beside the runtime, registered through CLAUDE_CODE_PLUGIN_DIRS, user dirs kept, removed on disable', async () => {

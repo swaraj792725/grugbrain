@@ -60,7 +60,27 @@ export interface MeterResult {
   skippedProxy: number;
 }
 
-export function meterTranscript(_sessionId: string, transcriptPath: string | undefined, project?: string): MeterResult {
+/** Meter a session transcript and the transcripts of the subagents it launched (separate files, same spend). */
+export function meterTranscript(sessionId: string, transcriptPath: string | undefined, project?: string): MeterResult {
+  const total = meterFile(sessionId, transcriptPath, project);
+  if (!transcriptPath) return total;
+  const dir = path.join(transcriptPath.replace(/\.jsonl$/, ''), 'subagents');
+  let files: string[] = [];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return total;
+  }
+  for (const f of files) {
+    const r = meterFile(sessionId, path.join(dir, f), project);
+    total.replies += r.replies;
+    total.recorded += r.recorded;
+    total.skippedProxy += r.skippedProxy;
+  }
+  return total;
+}
+
+function meterFile(_sessionId: string, transcriptPath: string | undefined, project?: string): MeterResult {
   const res: MeterResult = { replies: 0, recorded: 0, skippedProxy: 0 };
   if (!transcriptPath) return res;
   let size = 0;

@@ -139,6 +139,7 @@ function ourHooks(): Record<string, any[]> {
     PreToolUse: [{ matcher: 'Read|Grep|mcp__.*', hooks: [h('pre-tool', 8)] }],
     PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep|Glob|mcp__.*', hooks: [h('post-tool', 10)] }],
     Stop: [{ hooks: [h('stop', 10)] }],
+    SubagentStart: [{ hooks: [h('subagent-start', 5)] }],
     PreCompact: [{ hooks: [h('pre-compact', 10)] }],
     SessionEnd: [{ hooks: [h('session-end', 5)] }]
   };
