@@ -1,12 +1,16 @@
 /**
- * One honest headline number: what grug saved, as a share of what you would have spent.
+ * One headline number: what grug saved overall, as a share of what you would have spent.
  * saved = tokens grug kept out of context (valued once at the input price of the model you use most)
+ *       + the smaller chat from auto-compaction (tokens not re-read on later replies, at cache-read price)
+ *       + prompt-cache savings on requests where grug added the cache
  *       - what grug's own additions cost (memory briefs, recalls, code hints, avoidable cache misses).
- * The headline counts only MEASURED savings: content grug actually removed before it entered context
- * (sizes before/after are real; tokens are estimated from text length). Modeled savings (a handoff
- * replacing an old context, prompt-cache attribution) are reported separately as `estimatedUsd` and never
- * enter the headline. Conservative: the later replies that no longer re-read those tokens are not counted, and neither
- * is the benefit of memory. Estimates, labelled as such in the UI.
+ * Each part carries a tier so the UI can say how sure it is:
+ *   measured = content grug really removed (sizes are real, tokens estimated from text length);
+ *   derived  = computed from real context-size drops in your transcripts, assuming the chat would
+ *              otherwise have stayed that big (capped at your usual chat size);
+ *   estimate = prompt-cache attribution.
+ * Conservative: memory's benefit is not counted. The handoff after /clear or compact has no dollar value of its
+ * own (the smaller-chat part already counts the benefit; counting both would double count it).
  */
 
 import { summarize, Summary } from './stats.js';
@@ -18,26 +22,29 @@ export interface SavingPart {
   usd: number;
   tokens: number;
   count: number;
-  /** false = modeled (assumes what would have happened); excluded from the headline. */
+  /** How sure: measured (really removed), derived (from real context drops), estimate (modeled). */
+  tier: 'measured' | 'derived' | 'estimate';
   measured: boolean;
 }
 
 export interface Savings {
   spendUsd: number;
-  /** Measured savings before grug's own costs. */
+  /** All savings before grug's own costs. */
   savedUsd: number;
   costUsd: number;
-  /** Headline: measured savings minus grug's costs. */
+  /** Headline: overall savings minus grug's costs. */
   netUsd: number;
   /** net / (spend + net), 0..1 */
   pct: number;
-  /** Modeled extra (handoff, cache attribution), not in the headline. */
+  /** Of the gross savings, the part that is not plain measured text cutting (derived + estimate). */
   estimatedUsd: number;
+  /** Headline restricted to measured text cutting only, for "of which". */
+  measuredNetUsd: number;
+  measuredPct: number;
   parts: SavingPart[];
   requests: number;
 }
 
-const MODELED = new Set(['handoff', 'cache']);
 const GROUPS: Array<{ key: string; label: string; kinds: string[] }> = [
   { key: 'trim', label: 'Shortened long tool output', kinds: ['trim', 'dedupe'] },
   { key: 'cmdrules', label: 'Cut install/build clutter', kinds: ['cmdrules'] },
@@ -47,6 +54,9 @@ const GROUPS: Array<{ key: string; label: string; kinds: string[] }> = [
   { key: 'media', label: 'Smaller images, PDFs, video', kinds: ['media'] },
   { key: 'handoff', label: 'Kept the work after /clear or compact', kinds: ['handoff'] }
 ];
+
+/** Counted for how often it happened, not priced (see the header note). */
+const UNPRICED = new Set(['handoff']);
 
 function topModel(s: Summary): string {
   const top = Object.entries(s.byModel).sort((a, b) => b[1].costUsd - a[1].costUsd)[0];
@@ -60,14 +70,28 @@ export function computeSavings(sinceMs = 0, s: Summary = summarize(sinceMs)): Sa
     let tokens = g.kinds.reduce((n, k) => n + Math.max(0, s.savedByKind[k] || 0), 0);
     if (g.key === 'trim') tokens += s.trimmedTokens;
     const count = g.kinds.reduce((n, k) => n + (s.countByKind[k] || 0), 0);
-    parts.push({ key: g.key, label: g.label, tokens, usd: tokens * price, count, measured: !MODELED.has(g.key) });
+    const usd = UNPRICED.has(g.key) ? 0 : tokens * price;
+    parts.push({ key: g.key, label: g.label, tokens: UNPRICED.has(g.key) ? 0 : tokens, usd, count, tier: 'measured', measured: true });
   }
-  parts.push({ key: 'cache', label: 'Better prompt caching', tokens: 0, usd: s.grugCacheSavedUsd, count: 0, measured: false });
+  parts.push({ key: 'context', label: 'Smaller chat (auto-compaction)', tokens: s.ctxCutTokens, usd: s.ctxCutUsd, count: 0, tier: 'derived', measured: false });
+  parts.push({ key: 'cache', label: 'Better prompt caching', tokens: 0, usd: s.grugCacheSavedUsd, count: 0, tier: 'estimate', measured: false });
   const spentTokens = Object.values(s.savedByKind).reduce((n, v) => n + (v < 0 ? -v : 0), 0);
   const costUsd = spentTokens * price;
-  const savedUsd = parts.filter((p) => p.measured).reduce((n, p) => n + p.usd, 0);
-  const estimatedUsd = parts.filter((p) => !p.measured).reduce((n, p) => n + p.usd, 0);
+  const savedUsd = parts.reduce((n, p) => n + p.usd, 0);
+  const measuredUsd = parts.filter((p) => p.measured).reduce((n, p) => n + p.usd, 0);
   const netUsd = Math.max(0, savedUsd - costUsd);
-  const denom = s.costUsd + netUsd;
-  return { spendUsd: s.costUsd, savedUsd, estimatedUsd, costUsd, netUsd, pct: denom > 0 ? netUsd / denom : 0, parts: parts.filter((p) => p.usd > 0 || p.count > 0), requests: s.requests };
+  const measuredNetUsd = Math.max(0, measuredUsd - costUsd);
+  const share = (n: number) => (s.costUsd + n > 0 ? n / (s.costUsd + n) : 0);
+  return {
+    spendUsd: s.costUsd,
+    savedUsd,
+    estimatedUsd: savedUsd - measuredUsd,
+    costUsd,
+    netUsd,
+    pct: share(netUsd),
+    measuredNetUsd,
+    measuredPct: share(measuredNetUsd),
+    parts: parts.filter((p) => p.usd > 0 || p.count > 0),
+    requests: s.requests
+  };
 }

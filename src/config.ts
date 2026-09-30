@@ -94,6 +94,8 @@ export interface GrugConfig {
   };
   /** One-line grug summary (savings bar, context bar) as a user-only message, for the desktop app where no status line is drawn. */
   appSummary: { enabled: boolean; everyPrompts: number };
+  /** Chat size you would typically run at without grug; the smaller-chat saving is counted against it, never above. */
+  savings: { baselineContextTokens: number };
   /** Tell the user (not the model) when a session's context gets expensive; levels double from firstTokens. */
   contextAlert: {
     enabled: boolean;
@@ -215,6 +217,7 @@ export function defaultConfig(): GrugConfig {
     updateCheck: true,
     statusLine: { enabled: true, wrap: '', tips: true, panel: true, refreshSeconds: 2 },
     appSummary: { enabled: true, everyPrompts: 8 },
+    savings: { baselineContextTokens: 500000 },
     contextAlert: {
       enabled: true,
       firstTokens: 150000
@@ -233,7 +236,7 @@ export function defaultConfig(): GrugConfig {
       minExtraUsd: 0.25
     },
     autoCompact: {
-      windowTokens: 200000
+      windowTokens: 150000
     },
     routing: {
       subagentModel: ''

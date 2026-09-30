@@ -53,5 +53,5 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - statusline.ts + `grug statusline` (install.ts applyStatusLine wraps the user's own command, `prevStatusLine` restores it). Claude Code shows the status line BELOW the input box; do not claim it is above.
 - Dashboard: src/tui/visual.ts (donut, bigText, pulse), dashboard.ts (5 tabs, 120 ms frames, 2 s reload).
 
-## Headline honesty (v2.17)
-- savings.ts: headline (netUsd, pct) = measured parts only minus grug costs. `handoff` and `cache` are modeled, flagged `measured:false`, reported as `estimatedUsd`, never in the headline. Dashboard shows 24h figure and a since-opened ticker.
+## Overall headline (v2.18)
+- savings.ts: headline (netUsd, pct) = all parts minus grug costs. Parts carry a tier: measured (text really cut), derived (`context`: smaller chat from auto-compaction, computed in meter.ts `ctxCut` from real context drops near autoCompact.windowTokens, capped at savings.baselineContextTokens, priced at cache-read), estimate (`cache`). `measuredPct`/`measuredNetUsd` = text-only "of which". The handoff has no dollar value (it would double count the context credit). The credit is recorded per reply as RequestEvent.ctxCutTokens. Default window 150k.
