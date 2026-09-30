@@ -258,3 +258,27 @@ export function appSummaryLine(transcriptPath: string | undefined, now = Date.no
     return undefined;
   }
 }
+
+export interface AppStatus {
+  savedPct?: number;
+  netUsd?: number;
+  tokens: number;
+  limit: number;
+  idleMs: number;
+  recent?: string;
+  /** User-only notices: context size, cold cache. */
+  alerts: string[];
+}
+
+/** Machine-readable status for the grug-live app plugin (same numbers as the status line). */
+export function appStatus(transcriptPath: string | undefined, now = Date.now()): AppStatus {
+  const cfg = loadConfig();
+  const saved = cachedSaved(now);
+  const cs = contextSize(transcriptPath);
+  const limit = cfg.autoCompact.windowTokens > 0 ? cfg.autoCompact.windowTokens * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
+  const idleMs = cs.lastReplyTs ? now - cs.lastReplyTs : 0;
+  const alerts: string[] = [];
+  if (cs.tokens >= limit) alerts.push(`context is ${k(cs.tokens)}: /clear soon (grug restores a handoff)`);
+  if (idleMs > (cs.oneHourCache ? 3600000 : 300000) && cs.tokens > 0) alerts.push('cache expired while idle: next reply re-reads the context at full price');
+  return { savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, idleMs, recent: lastAction(now)?.msg, alerts };
+}

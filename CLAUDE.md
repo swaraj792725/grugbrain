@@ -62,3 +62,7 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 
 ## Overall headline (v2.18)
 - savings.ts: headline (netUsd, pct) = all parts minus grug costs. Parts carry a tier: measured (text really cut), derived (`context`: smaller chat from auto-compaction, computed in meter.ts `ctxCut` from real context drops near autoCompact.windowTokens, capped at savings.baselineContextTokens, priced at cache-read), estimate (`cache`). `measuredPct`/`measuredNetUsd` = text-only "of which". The handoff has no dollar value (it would double count the context credit). The credit is recorded per reply as RequestEvent.ctxCutTokens. Default window 150k.
+
+## App visibility (v2.20)
+- The desktop Code tab draws no status line and hides hook systemMessages for the user, so grug ships `plugin/grug-live` (Claude Code plugin-authoring API: `ui.render` AbovePrompt band, `$.ui.status`, `$.ui.toast`). install.ts `copyPlugin` copies it to ~/.grug/plugins/grug-live, writes grug.json (node + cli + `app-status`), `applyTuning` adds the dir to env CLAUDE_CODE_PLUGIN_DIRS (user's own dirs kept). Validator rule: `$` may only be used as `$.noun.method(...)` or passed to a top-level function declaration.
+- Verified: `claude plugin validate`, loads in `claude -p --plugin-dir`, tests. NOT verified: actual drawing in the user's desktop Code tab. Ask the user.

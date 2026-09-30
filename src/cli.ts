@@ -11,7 +11,7 @@ import { repoMap } from './compress/repomap.js';
 import { skeletonize } from './compress/skeleton.js';
 import { runDaemon } from './daemon.js';
 import { readStdinJson, readStdinText, runHook, spawnDetached } from './hooks.js';
-import { health, install, Step, uninstall } from './install.js';
+import { health, install, pluginDir, Step, uninstall } from './install.js';
 import { runMcpServer } from './mcp.js';
 import { buildBrief, recall } from './memory/brief.js';
 import { maintain, withMemoryLock } from './memory/maintain.js';
@@ -110,6 +110,15 @@ async function main() {
       console.log(`${ok(h.nodeExists)} node binary still exists`);
       console.log(`${ok(h.hooks)} Claude Code hooks in ${h.settingsPath}`);
       console.log(`${ok(h.statusLine)} Claude Code status line (/clear and cache notices)`);
+      if (cfg.appPlugin.enabled) {
+        let dirs = '';
+        try {
+          dirs = JSON.parse(fs.readFileSync(h.settingsPath, 'utf8')).env?.CLAUDE_CODE_PLUGIN_DIRS || '';
+        } catch {
+          /* no settings */
+        }
+        console.log(`${ok(dirs.includes('grug-live') && fs.existsSync(pluginDir()))} grug-live band above the prompt (app plugin; needs a new session, drawn by Claude Code 2.1.286+)`);
+      }
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
       {
@@ -233,6 +242,17 @@ async function main() {
         process.stdout.write(renderStatusLine(await readStdinText()));
       } catch {
         /* never break the status line */
+      }
+      process.exit(0);
+    }
+
+    case 'app-status': {
+      try {
+        const { appStatus } = await import('./statusline.js');
+        const { latestTranscript } = await import('./ctxbreak.js');
+        process.stdout.write(JSON.stringify(appStatus(latestTranscript(process.cwd()) || undefined)));
+      } catch {
+        process.stdout.write('{}');
       }
       process.exit(0);
     }

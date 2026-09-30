@@ -889,6 +889,38 @@ describe('auto-compaction + restore', () => {
     expect(s.autoCompactWindow).toBeUndefined();
   });
 
+  it('app plugin: copied beside the runtime, registered through CLAUDE_CODE_PLUGIN_DIRS, user dirs kept, removed on disable', async () => {
+    const { copyPlugin, applyTuningNow, pluginDir, installedCli } = await import('../src/install.js');
+    const { setConfigValue } = await import('../src/config.js');
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, JSON.stringify({ env: { CLAUDE_CODE_PLUGIN_DIRS: '/mine' } }));
+    expect(copyPlugin(path.join(process.cwd(), 'dist'))).toBe(true);
+    expect(fs.existsSync(path.join(pluginDir(), 'hooks', 'register.tsx'))).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(pluginDir(), 'grug.json'), 'utf8')).argv.slice(1)).toEqual([installedCli(), 'app-status']);
+    applyTuningNow();
+    let s = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(s.env.CLAUDE_CODE_PLUGIN_DIRS.split(path.delimiter)).toEqual(['/mine', pluginDir()]);
+    applyTuningNow(); // idempotent
+    s = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(s.env.CLAUDE_CODE_PLUGIN_DIRS.split(path.delimiter)).toEqual(['/mine', pluginDir()]);
+    setConfigValue('appPlugin.enabled', 'false');
+    applyTuningNow();
+    s = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(s.env.CLAUDE_CODE_PLUGIN_DIRS).toBe('/mine');
+  });
+
+  it('appStatus: savings, context and the cold-cache alert as data', async () => {
+    const { appStatus } = await import('../src/statusline.js');
+    const t = path.join(tmp, 'st.jsonl');
+    const old = Date.now() - 20 * 60000;
+    fs.writeFileSync(t, JSON.stringify({ type: 'assistant', timestamp: new Date(old).toISOString(), message: { id: 'q', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 1, cache_read_input_tokens: 90000, output_tokens: 1 } } }) + '\n');
+    const st = appStatus(t);
+    expect(st.tokens).toBeGreaterThan(80000);
+    expect(st.alerts.some((a) => /cache expired/.test(a))).toBe(true);
+    expect(appStatus(undefined).alerts).toEqual([]);
+  });
+
   it('after auto-compaction the same session gets its own handoff back', async () => {
     const cwd = path.join(tmp, 'svc');
     fs.mkdirSync(cwd);
