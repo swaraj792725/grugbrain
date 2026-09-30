@@ -7,7 +7,7 @@
 import * as fs from 'node:fs';
 import * as nodePath from 'node:path';
 import { ensureDir, paths } from './config.js';
-import { cacheSavingsOf, costOf, priceFor, Usage } from './tokens.js';
+import { cacheSavingsOf, CACHE_READ_MULT, costOf, priceFor, Usage } from './tokens.js';
 
 const MAX_LOG_BYTES = 8 * 1024 * 1024;
 
@@ -23,6 +23,8 @@ export interface RequestEvent {
   project?: string;
   /** Set for synthetic traffic (e.g. `grug bench`); excluded from dashboard totals. */
   tag?: string;
+  /** Context tokens auto-compaction kept out of this reply versus the no-compaction baseline (derived from real context drops). */
+  ctxCutTokens?: number;
   /** 'transcript' = measured from the session transcript (proxy not in the path). */
   source?: 'proxy' | 'transcript';
 }
@@ -132,6 +134,9 @@ export interface Summary {
   grugCacheSavedUsd: number;
   /** Trimmed/deduped tokens valued once at the request's input price (estimate). */
   trimSavedUsd: number;
+  /** Smaller chat from auto-compaction: tokens not re-read, and their cache-read price. */
+  ctxCutTokens: number;
+  ctxCutUsd: number;
   cacheHitRate: number;
   trimmedTokens: number;
   savedByKind: Record<string, number>;
@@ -154,6 +159,8 @@ export function summarize(sinceMs = 0): Summary {
     cacheSavedUsd: 0,
     grugCacheSavedUsd: 0,
     trimSavedUsd: 0,
+    ctxCutTokens: 0,
+    ctxCutUsd: 0,
     cacheHitRate: 0,
     trimmedTokens: 0,
     savedByKind: {},
@@ -176,6 +183,10 @@ export function summarize(sinceMs = 0): Summary {
     s.trimmedTokens += r.trimmedTokens || 0;
     if (r.cacheBreakpointsAdded > 0) s.grugCacheSavedUsd += saved;
     s.trimSavedUsd += ((r.trimmedTokens || 0) * priceFor(r.model).input) / 1e6;
+    if (r.ctxCutTokens) {
+      s.ctxCutTokens += r.ctxCutTokens;
+      s.ctxCutUsd += (r.ctxCutTokens * priceFor(r.model).input * CACHE_READ_MULT) / 1e6;
+    }
     if (r.fallback) s.fallbacks++;
     const m = (s.byModel[r.model || 'unknown'] ||= { requests: 0, costUsd: 0 });
     m.requests++;

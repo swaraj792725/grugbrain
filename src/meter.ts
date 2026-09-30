@@ -12,7 +12,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { userHome } from './config.js';
+import { loadConfig, userHome } from './config.js';
 import { ensureDir, paths, readJson, writeJsonAtomic } from './config.js';
 import { readRequests, recordRequest } from './stats.js';
 import { Usage } from './tokens.js';
@@ -20,6 +20,32 @@ import { Usage } from './tokens.js';
 interface MeterState {
   offset: number;
   ids: string[];
+  /** Context size of the previous main-chain reply in this transcript. */
+  prevCtx?: number;
+  /** Tokens auto-compaction removed so far (the chat would be this much bigger without it). */
+  carry?: number;
+}
+
+/** Context a reply read: fresh + cached input. */
+function ctxOf(u: Usage): number {
+  return (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+}
+
+/**
+ * Smaller-chat credit for one reply. A compaction is a big drop in context that starts near the
+ * window grug set (so it is grug's auto-compaction, not a /compact you typed at a random size).
+ * The chat would have stayed that much bigger, up to the size you typically run at.
+ * Returns the tokens of context that reply did not have to re-read.
+ */
+export function ctxCut(st: { prevCtx?: number; carry?: number }, ctx: number, window: number, baseline: number): number {
+  const prev = st.prevCtx || 0;
+  if (window > 0 && prev >= 50000 && ctx <= prev * 0.6 && prev >= window * 0.5 && prev <= window * 1.35) {
+    st.carry = (st.carry || 0) + (prev - ctx);
+  }
+  st.prevCtx = ctx;
+  const carry = st.carry || 0;
+  if (carry <= 0 || baseline <= 0) return 0;
+  return Math.max(0, Math.min(ctx + carry, baseline) - ctx);
 }
 
 const MAX_READ = 16 * 1024 * 1024;
@@ -62,7 +88,7 @@ export function meterTranscript(_sessionId: string, transcriptPath: string | und
   const complete = text.slice(0, lastNl);
 
   const seen = new Set(st.ids);
-  const replies = new Map<string, { model: string; usage: Usage; ts: number }>();
+  const replies = new Map<string, { model: string; usage: Usage; ts: number; side: boolean }>();
   for (const line of complete.split('\n')) {
     if (!line.includes('"usage"')) continue;
     let e: any;
@@ -73,7 +99,7 @@ export function meterTranscript(_sessionId: string, transcriptPath: string | und
     }
     const m = e?.message;
     if (e?.type !== 'assistant' || !m?.id || !m.usage || seen.has(m.id)) continue;
-    replies.set(m.id, { model: m.model || '', usage: m.usage, ts: Date.parse(e.timestamp) || Date.now() });
+    replies.set(m.id, { model: m.model || '', usage: m.usage, ts: Date.parse(e.timestamp) || Date.now(), side: e.isSidechain === true });
   }
   st.offset += Buffer.byteLength(complete, 'utf8') + 1;
   res.replies = replies.size;
@@ -82,8 +108,13 @@ export function meterTranscript(_sessionId: string, transcriptPath: string | und
     const first = Math.min(...[...replies.values()].map((x) => x.ts));
     // Proxy already saw calls in this window? Then it counted this traffic; don't double count.
     const proxied = readRequests().some((q) => !q.tag && q.source !== 'transcript' && q.ts >= first - 60000);
-    for (const [id, rep] of replies) {
+    const cfg = loadConfig();
+    const window = cfg.autoCompact.windowTokens;
+    const baseline = cfg.savings.baselineContextTokens;
+    const ordered = [...replies.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    for (const [id, rep] of ordered) {
       seen.add(id);
+      const cut = rep.side ? 0 : ctxCut(st, ctxOf(rep.usage), window, baseline);
       if (proxied) {
         res.skippedProxy++;
         continue;
@@ -101,6 +132,7 @@ export function meterTranscript(_sessionId: string, transcriptPath: string | und
         status: 200,
         trimmedTokens: 0,
         cacheBreakpointsAdded: 0,
+        ...(cut > 0 && !proxied ? { ctxCutTokens: cut } : {}),
         project,
         source: 'transcript',
         ...(process.env.GRUG_TAG ? { tag: process.env.GRUG_TAG } : {})
@@ -109,7 +141,7 @@ export function meterTranscript(_sessionId: string, transcriptPath: string | und
     }
   }
   ensureDir(path.dirname(stateFile(transcriptPath)));
-  writeJsonAtomic(stateFile(transcriptPath), { offset: st.offset, ids: [...seen].slice(-3000) });
+  writeJsonAtomic(stateFile(transcriptPath), { offset: st.offset, ids: [...seen].slice(-3000), prevCtx: st.prevCtx, carry: st.carry });
   return res;
 }
 

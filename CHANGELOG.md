@@ -2,6 +2,15 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.18.0
+
+One overall savings percentage, and a smaller chat.
+
+- The headline is now the overall saving: text grug cut out, plus the smaller chat from auto-compaction, plus better caching, minus grug's own costs. The dashboard says how sure each part is: measured (really removed), `~` worked out from your real chat sizes, `≈` estimate. The "of which measured" share is shown under the headline.
+- New smaller-chat saving: when the chat drops sharply near the auto-compaction window grug set, later replies no longer re-read those tokens. Counted at cache-read price and capped at your usual chat size (`savings.baselineContextTokens`, default 500k). Starts counting from this version.
+- The handoff after /clear or compact no longer has its own dollar figure (it double counted the smaller-chat saving).
+- Default auto-compaction window is now 150k (was 200k), so chats stay smaller. Existing installs keep their saved value: `grug config set autoCompact.windowTokens 150000`.
+
 ## 2.17.2
 
 Small savings no longer read as 0.

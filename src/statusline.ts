@@ -233,7 +233,7 @@ export function composeAppLine(o: {
   const parts = ['🪨 grug'];
   if (o.savedPct !== undefined) {
     const pct = Math.round(o.savedPct * 100);
-    parts.push(`saved ${plainBar(o.savedPct, 10)} ~${pct}% (7d measured${o.netUsd && o.netUsd >= 0.01 ? `, ${usd(o.netUsd)}` : ''})`);
+    parts.push(`saved ${plainBar(o.savedPct, 10)} ~${pct}% (7d overall${o.netUsd && o.netUsd >= 0.01 ? `, ${usd(o.netUsd)}` : ''})`);
   }
   if (o.tokens > 0 && o.limit > 0) {
     const fr = o.tokens / o.limit;

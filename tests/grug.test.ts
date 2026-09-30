@@ -862,8 +862,8 @@ describe('auto-compaction + restore', () => {
     fs.writeFileSync(settings, JSON.stringify({ autoCompactWindow: 500000, env: { KEEP: '1' } }));
     installClaudeCode(false);
     const s1 = JSON.parse(fs.readFileSync(settings, 'utf8'));
-    expect(s1.autoCompactWindow).toBe(200000);
-    expect(s1.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('200000');
+    expect(s1.autoCompactWindow).toBe(150000);
+    expect(s1.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('150000');
     expect(s1.env.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
     installClaudeCode(false); // idempotent, still remembers the original 500000
     uninstall();
@@ -2303,18 +2303,36 @@ describe('dashboard in plain words', () => {
   });
 });
 
-describe('headline counts only measured savings', () => {
-  it('handoff estimates stay out of savedUsd and netUsd', async () => {
-    const { recordActivity } = await import('../src/stats.js');
+describe('headline is the overall saving', () => {
+  it('handoffs carry no dollar value of their own; the smaller chat is counted with its tier', async () => {
+    const { recordActivity, recordRequest } = await import('../src/stats.js');
     const { computeSavings } = await import('../src/savings.js');
     recordActivity({ kind: 'handoff', msg: 'restored', tokens: 50000 });
+    recordRequest({ ts: Date.now(), model: 'claude-opus-5-5', usage: { input_tokens: 10, cache_read_input_tokens: 100000, output_tokens: 10 }, status: 200, trimmedTokens: 0, cacheBreakpointsAdded: 0, ctxCutTokens: 300000 });
     const sv = computeSavings(0);
-    const h = sv.parts.find((p) => p.key === 'handoff')!;
-    expect(h.measured).toBe(false);
-    expect(h.usd).toBeGreaterThan(0);
-    expect(sv.savedUsd).toBe(0);
-    expect(sv.estimatedUsd).toBeGreaterThanOrEqual(h.usd);
-    expect(sv.pct).toBe(0);
+    expect(sv.parts.find((p) => p.key === 'handoff')?.usd ?? 0).toBe(0);
+    const c = sv.parts.find((p) => p.key === 'context')!;
+    expect(c.tier).toBe('derived');
+    expect(c.usd).toBeCloseTo((300000 * 4 * 0.1) / 1e6, 6);
+    expect(sv.netUsd).toBeGreaterThan(0);
+    expect(sv.pct).toBeGreaterThan(sv.measuredPct);
+    expect(sv.measuredNetUsd).toBe(0);
+  });
+
+  it('credits a compaction only near the window, never beyond the usual chat size', async () => {
+    const { ctxCut } = await import('../src/meter.js');
+    const st: { prevCtx?: number; carry?: number } = {};
+    const W = 150000;
+    const B = 500000;
+    expect(ctxCut(st, 100000, W, B)).toBe(0); // no compaction yet
+    expect(ctxCut(st, 140000, W, B)).toBe(0);
+    expect(ctxCut(st, 30000, W, B)).toBe(110000); // compacted near the window: chat is 110k smaller
+    expect(ctxCut(st, 60000, W, B)).toBe(110000); // still smaller on later replies
+    const far: { prevCtx?: number; carry?: number } = {};
+    ctxCut(far, 600000, W, B);
+    expect(ctxCut(far, 50000, W, B)).toBe(0); // a drop far from the window is not grug's
+    const cap: { prevCtx?: number; carry?: number } = { prevCtx: 140000, carry: 900000 };
+    expect(ctxCut(cap, 400000, W, B)).toBe(100000); // never above the 500k baseline
   });
 });
 
@@ -2322,5 +2340,6 @@ async function quietSummary(): Promise<void> {
   const { loadConfig, saveConfig } = await import('../src/config.js');
   const c = loadConfig();
   c.appSummary.enabled = false; // the test below is about another notice only
+  c.autoCompact.windowTokens = 200000; // keep the context alert quiet at the 200k sizes these tests use
   saveConfig(c);
 }

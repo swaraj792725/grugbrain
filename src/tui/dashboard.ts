@@ -12,7 +12,7 @@ import { loadAdoption } from '../adoption.js';
 import { loadMemory, projectName, score } from '../memory/store.js';
 import { proxyHealth } from '../proxy/server.js';
 import { Activity, readActivity, summarize, Summary, trafficCheck } from '../stats.js';
-import { computeSavings, Savings } from '../savings.js';
+import { computeSavings, SavingPart, Savings } from '../savings.js';
 import { bigText, boldFg, colorBar, donut, ease, fg, PALETTE, pulse, SPINNER } from './visual.js';
 import { fmtTokens, fmtUsd, priceFor } from '../tokens.js';
 import { cachedUpdate } from '../update.js';
@@ -123,12 +123,12 @@ function sideBySide(left: string[], right: string[], gap: number): string[] {
 
 const money = (n: number) => fmtUsd(n);
 
-/** Hero: the headline percentage (counts up), the donut of where it comes from, and a live sync strip. */
 /** Percent with enough digits that a small but real saving does not read as 0. */
 function pctText(v: number): string {
   return v >= 9.95 ? `${Math.round(v)}%` : v >= 0.995 ? `${v.toFixed(2)}%` : v >= 0.0005 ? `${v.toFixed(3)}%` : v > 0 ? '<0.001%' : '0%';
 }
 
+/** Hero: the headline percentage (counts up), the donut of where it comes from, and a live sync strip. */
 function hero(st: State, width: number): string[] {
   const d = dataOf(st);
   const sv = d.savings;
@@ -139,31 +139,27 @@ function hero(st: State, width: number): string[] {
   const sinceOpen = st.baseNet === undefined ? 0 : sv.netUsd - st.baseNet;
   const day24 = computeSavings(Date.now() - DAY, d.day);
   const left: string[] = [
-    bold('GRUG SAVED') + dim('  (measured, last 7 days)'),
+    bold('GRUG SAVED') + dim('  (overall, last 7 days)'),
     '',
     ...big,
     '',
     `${bold(money(sv.netUsd))} ${dim('kept in your pocket, out of')} ${money(sv.spendUsd + sv.netUsd)} ${dim('you would have paid')}`,
     `${colorBar(sv.pct, 28, 120)} ${dim('share of your bill')}`,
     `${dim('Last 24 hours:')} ${bold(money(day24.netUsd))} ${dim(`(${pctText(day24.pct * 100)})`)}   ${sinceOpen >= 0.0001 ? boldFg(120)(`▲ +${money(sinceOpen)} while you watched`) : dim('live: nothing new since you opened this')}`,
-    dim('Only counts text grug really cut out of your chats, priced at your model.'),
-    ...(sv.pct > 0 && sv.pct < 0.01 ? [dim('Small on purpose: most of your bill is Claude re-reading a long chat. /clear between tasks is the big lever.')] : [])
+    dim('Everything together: text grug cut out, the smaller chat, and better caching.'),
+    ...(sv.pct > 0 && sv.pct < 0.01 ? [dim('Small so far: most of your bill is Claude re-reading a long chat. /clear between tasks is the big lever.')] : [])
   ];
   if (sv.costUsd > 0) left.push(dim(`Already subtracted: ${money(sv.costUsd)} that grug's own notes cost.`));
-  if (sv.estimatedUsd > 0.005) left.push(dim(`Not counted (estimates): about ${money(sv.estimatedUsd)} more from handoffs and cache.`));
-  const sorted = [...sv.parts].sort((a, b) => b.usd - a.usd);
-  const parts = sorted.filter((p) => p.measured);
-  const modeled = sorted.filter((p) => !p.measured && p.usd > 0.005);
+  if (sv.estimatedUsd > 0.0001) left.push(dim(`How sure: ${pctText(sv.measuredPct * 100)} is text really cut out; the rest is worked out from your chat sizes and cache (estimates).`));
+  const parts = [...sv.parts].sort((a, b) => b.usd - a.usd).filter((p) => p.usd > 0);
   const sweep = st.frame === undefined ? -1 : (st.frame % 48) / 48;
   const slices = parts.map((p, i) => ({ value: p.usd, color: PALETTE[i % PALETTE.length] }));
   const ring = donut(slices, 22, 11, sweep);
   const totalUsd = parts.reduce((n, p) => n + p.usd, 0) || 1;
-  const legend = parts.slice(0, 8).map((p, i) => `${fg(PALETTE[i % PALETTE.length])('●')} ${pad(p.label, 28)}${pad(Math.round((p.usd / totalUsd) * 100) + '%', 5, true)} ${dim(pad(money(p.usd), 8, true))}`);
-  if (!parts.length) legend.push(dim('nothing measured yet: use Claude Code and this fills in'));
-  if (modeled.length) {
-    legend.push('', dim('Estimates, not in the number:'));
-    for (const p of modeled) legend.push(dim(`○ ${pad(p.label, 28)}${pad('≈', 5, true)} ${pad(money(p.usd), 8, true)}`));
-  }
+  const mark = (p: SavingPart) => (p.tier === 'measured' ? ' ' : p.tier === 'derived' ? '~' : '≈');
+  const legend = parts.slice(0, 8).map((p, i) => `${fg(PALETTE[i % PALETTE.length])('●')} ${pad(p.label, 30)}${pad(Math.round((p.usd / totalUsd) * 100) + '%', 5, true)} ${dim(pad(money(p.usd), 8, true))}${dim(mark(p))}`);
+  if (!parts.length) legend.push(dim('nothing saved yet: use Claude Code and this fills in'));
+  else legend.push('', dim('  ~ worked out from chat sizes   ≈ estimate'));
   const right = sideBySide(ring, [bold('WHERE IT CAME FROM'), '', ...legend], 2);
   return width >= 112 ? sideBySide(left, right, 4) : [...left, '', ...right];
 }
@@ -260,7 +256,7 @@ function savingsView(st: State, width: number): string[] {
   const sv = d.savings;
   const parts = [...sv.parts].sort((a, b) => b.usd - a.usd);
   const maxUsd = Math.max(...parts.map((p) => p.usd), 1e-9);
-  L.push(bold('WHERE THE SAVINGS COME FROM') + dim('  last 7 days, estimate: tokens kept out of context priced once at your main model\'s input rate'));
+  L.push(bold('WHERE THE SAVINGS COME FROM') + dim('  last 7 days, overall estimate; ~ = worked out from chat sizes, ≈ = cache estimate'));
   parts.forEach((p, i) => L.push(`  ${fg(PALETTE[i % PALETTE.length])('●')} ${pad(p.label, 28)}${colorBar(p.usd / maxUsd, 24, PALETTE[i % PALETTE.length])} ${pad(money(p.usd), 9, true)} ${dim(p.count ? p.count + '×' : '')}`));
   if (!parts.length) L.push(dim('  nothing yet'));
   L.push(dim(`  net ${money(sv.netUsd)} = ${money(sv.savedUsd)} saved − ${money(sv.costUsd)} grug's own additions (briefs, recalls, code hints)`));
