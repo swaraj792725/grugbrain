@@ -22,6 +22,10 @@ import { autoRecall } from './recall.js';
 import { isCodeProject, refreshGraphSoon, sessionCodeMap } from './graph.js';
 import { scanFacts } from './facts.js';
 import { imageAlert, mediaPostTool, mediaPreTool } from './mediaguard.js';
+import { navPreTool } from './navhint.js';
+import { scoreAdoption } from './adoption.js';
+import { analyzeTranscript, topConsumers } from './ctxbreak.js';
+import { looksLikeNewTask } from './taskshift.js';
 import { scoreRecalls } from './recalltune.js';
 
 export interface HookInput {
@@ -130,12 +134,14 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
 
     case 'user-prompt': {
       const prompt = input.prompt || '';
+      const priorEvents = cfg.taskBoundary.enabled ? readBuffer(sid) : [];
       appendBuffer(sid, { t: 'prompt', ts: now, text: prompt.slice(0, 2000) });
       const alert =
         [
           contextAlert(cfg, sid, cwd, input.transcript_path, now),
           idleAlert(cfg, sid, cwd, input.transcript_path, now),
-          imageAlert(cfg, sid, input.transcript_path ? contextSize(input.transcript_path).model : '', now)
+          imageAlert(cfg, sid, input.transcript_path ? contextSize(input.transcript_path).model : '', now),
+          taskShiftNotice(cfg, sid, cwd, input.transcript_path, prompt, priorEvents, now)
         ]
           .filter(Boolean)
           .join('\n') || undefined;
@@ -183,6 +189,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       // Screenshots, images, PDFs, video: skip repeats, shrink, or point at the cheaper way in.
       const media = mediaPreTool(cfg, input, sid, cwd, now, readKey);
       if (media) return media;
+      const nav = navPreTool(cfg, input, sid, cwd, now);
+      if (nav) return nav;
       if (input.tool_name !== 'Read') return null;
       const ti = input.tool_input || {};
       const file: string | undefined = ti.file_path;
@@ -255,7 +263,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           permissionDecision: 'deny',
           permissionDecisionReason:
             `grugbrain: ${path.basename(file)} is ${Math.round(size / 1024)} KB / ${totalLines || '?'} lines (~${est} tokens for a full read). ` +
-            `Find what you need first (Grep, or the grugbrain outline/read_symbol tools), then Read with offset/limit. ` +
+            `Find what you need first (Grep, or the grugbrain outline tool), then Read with offset/limit. ` +
             `A ranged Read is always allowed.`
         }
       };
@@ -265,8 +273,10 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const ti = input.tool_input || {};
       const tool = input.tool_name || '';
       const mediaOut = mediaPostTool(cfg, input, sid, now);
+      const useKind = tool === 'Read' ? 'read' : tool === 'Grep' ? 'grep' : tool === 'Glob' ? 'glob' : /^mcp__grugbrain__/.test(tool) ? 'grug' : null;
+      if (useKind) appendBuffer(sid, { t: 'use', ts: now, k: useKind });
       if (ti.file_path && /^(Read|Edit|Write|MultiEdit|NotebookEdit)$/.test(tool)) {
-        appendBuffer(sid, { t: 'file', ts: now, path: ti.file_path, op: tool === 'Read' ? 'read' : 'edit' });
+        appendBuffer(sid, { t: 'file', ts: now, path: ti.file_path, op: tool === 'Read' ? 'read' : 'edit', ...(tool === 'Read' && (ti.offset !== undefined || ti.limit !== undefined) ? { ranged: true } : {}) });
         if (tool === 'Read') {
           try {
             const st = fs.statSync(ti.file_path);
@@ -281,7 +291,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         }
       } else if (ti.path && /grugbrain__(outline|read_symbol|read_lines)$/.test(tool)) {
         // Reading via grug's own tools counts as a file read (recall usefulness, handoff files).
-        appendBuffer(sid, { t: 'file', ts: now, path: String(ti.path), op: 'read' });
+        appendBuffer(sid, { t: 'file', ts: now, path: String(ti.path), op: 'read', ranged: true });
       } else if (tool === 'Bash' && ti.command) {
         appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
       }
@@ -359,6 +369,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (cfg.memory.enabled) captureFacts(sid, input.transcript_path, cwd, now, true);
       try {
         scoreRecalls(sid, cwd);
+        scoreAdoption(sid, cwd);
       } catch {
         /* best-effort */
       }
@@ -421,6 +432,28 @@ function captureFacts(sid: string, transcript: string | undefined, cwd: string, 
 }
 
 /**
+ * User-only notice: this prompt looks like a different job while the context is big. /clear is free
+ * (memory and the code map come back at session start; recall fetches what is relevant), whereas
+ * dragging the old context along is re-read on every reply.
+ */
+function taskShiftNotice(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: string, transcript: string | undefined, prompt: string, prior: ReturnType<typeof readBuffer>, now: number): string | undefined {
+  if (!cfg.taskBoundary.enabled || !transcript || !prior.length) return undefined;
+  const { tokens, model } = contextSize(transcript);
+  if (tokens < cfg.taskBoundary.minTokens) return undefined;
+  const nPrompts = prior.filter((e) => e.t === 'prompt').length;
+  const lastShift = prior.reduce((m, e) => (e.t === 'boundary' ? Math.max(m, e.prompts) : m), -99);
+  if (nPrompts - lastShift < 8) return undefined; // not more than once per few prompts
+  if (!looksLikeNewTask(prompt, prior)) return undefined;
+  appendBuffer(sid, { t: 'boundary', ts: now, prompts: nPrompts });
+  const per = costPerReply(tokens, model);
+  recordActivity({ kind: 'task-shift', msg: `New task while the context was ${Math.round(tokens / 1000)}k tokens (~$${per.toFixed(2)}/reply): suggested /clear`, project: path.basename(cwd) });
+  return (
+    `🪨 grugbrain: this looks like a new task, and the current context is ${Math.round(tokens / 1000)}k tokens (~$${per.toFixed(2)} per reply, re-read every time). ` +
+    `Type /clear to start it clean: grug's memory and code map come back at session start and relevant notes are recalled as you go. Ignore this if it continues the same work.`
+  );
+}
+
+/**
  * User-only notice when the prompt cache has expired on a big session. Cache lifetime is 5 minutes
  * (1 hour when Claude Code writes the long tier); after that gap the next reply re-writes the whole
  * context at 1.25-2x the input price instead of reading it at 0.1x. If the user is switching tasks,
@@ -479,15 +512,22 @@ function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: stri
     }
   }
   const per = costPerReply(tokens, model);
+  let mostly = '';
+  try {
+    const top = topConsumers(analyzeTranscript(transcript));
+    if (top) mostly = ` Mostly: ${top}.`;
+  } catch {
+    /* breakdown is optional */
+  }
   recordActivity({ kind: 'context-alert', msg: `Context reached ${Math.round(tokens / 1000)}k tokens (~$${per.toFixed(2)}/reply)`, project: path.basename(cwd) });
   if (win > 0)
     return (
       `🪨 grugbrain: context is ${Math.round(tokens / 1000)}k tokens (~$${per.toFixed(2)}/reply) and Claude Code has not auto-compacted at ${Math.round(win / 1000)}k yet. ` +
-      `Type /clear when this task is done: grug hands the work to the fresh session (~1k tokens).`
+      `Type /clear when this task is done: grug hands the work to the fresh session (~1k tokens).${mostly}`
     );
   return (
     `🪨 grugbrain: this session's context is ${Math.round(tokens / 1000)}k tokens, so every reply re-reads it (~$${per.toFixed(2)}/reply in API terms). ` +
-    `When this task is done, type /clear: grug hands the work over to the fresh session (~1k tokens) at no cost.`
+    `When this task is done, type /clear: grug hands the work over to the fresh session (~1k tokens) at no cost.${mostly}`
   );
 }
 

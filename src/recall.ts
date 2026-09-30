@@ -193,7 +193,7 @@ export function autoRecall(opts: {
   if (!counts.memory && !counts.code && !counts.history) return null;
   const out = [RECALL_HEADER];
   if (counts.memory) out.push('Memory:', ...sections.memory);
-  if (counts.code) out.push('Code (from the repo graph; read just these ranges with read_symbol/read_lines):', ...sections.code);
+  if (counts.code) out.push('Code (from the repo graph; Read just these line ranges with offset/limit):', ...sections.code);
   if (counts.history) out.push('Earlier sessions:', ...sections.history);
   // Estimates are not exactly additive: enforce the hard cap on the final block.
   while (out.length > 2 && estimateTokens(out.join('\n')) > max) out.pop();

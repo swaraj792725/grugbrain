@@ -31,6 +31,12 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - Ask-once pattern everywhere: deny/redirect once, record a `skip`/`shrunk` event, let the identical repeat through. Never permanent.
 - pdf_text needs pdftotext (poppler), video_frames needs ffmpeg; neither is installed in the sandbox, so tests use PATH stubs and PDF/video were not measured live.
 
+## Steering Claude (v2.11)
+- Do NOT steer Claude toward grug MCP tools in hints: MCP tools are deferred (ToolSearch round trips) and Edit fails unless the file was Read (a ranged Read counts). Tell it: Grep, then Read with offset/limit. Measured live: reworded hints -> edit task 55% cheaper, context -31%; MCP-steering hints were sometimes worse than no grug.
+- Automatic (context injection) works; Claude choosing tools does not, so measure adoption (`~/.grug/adoption.json`, `grug dash`) before adding more nudges.
+- /clear cannot be run by a hook. The ceiling is a user-only notice (contextAlert size, idleAlert cache expiry, taskShift new task) with the reason (`grug context` breakdown).
+- Live A/B recipe: a git-initialised synthetic project, `claude -p ... --output-format stream-json --verbose --strict-mcp-config --allowedTools ...`, count tool_use names and take max context per run; reset the tree between runs with `git checkout -- .`; use several runs (variance is real).
+
 ## Open items
 - Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.

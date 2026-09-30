@@ -46,7 +46,7 @@ export interface MemoryDB {
 export type BufferEvent =
   | { t: 'start'; ts: number; cwd: string; source?: string }
   | { t: 'prompt'; ts: number; text: string }
-  | { t: 'file'; ts: number; path: string; op: 'read' | 'edit' }
+  | { t: 'file'; ts: number; path: string; op: 'read' | 'edit'; ranged?: boolean }
   | { t: 'cmd'; ts: number; cmd: string }
   | { t: 'assistant'; ts: number; text: string }
   | { t: 'injected'; ts: number; ids: string[] }
@@ -59,6 +59,10 @@ export type BufferEvent =
   | { t: 'mcp'; ts: number; name: string; ro: boolean }
   | { t: 'img'; ts: number; tokens: number; src: string }
   | { t: 'guided'; ts: number }
+  | { t: 'use'; ts: number; k: 'grug' | 'read' | 'grep' | 'glob' }
+  | { t: 'nav'; ts: number; key: string; files: string[] }
+  | { t: 'adopted'; ts: number }
+  | { t: 'boundary'; ts: number; prompts: number }
   | { t: 'shrunk'; ts: number; key: string }
   | { t: 'imgalert'; ts: number; level: number }
   | { t: 'facts'; ts: number; items: Array<{ kind: string; text: string; ts: number }>; offset?: number; failed?: string[] }
