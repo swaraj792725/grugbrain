@@ -18,3 +18,4 @@ export * from './memory/graphhtml.js';
 export * from './memory/maintain.js';
 export { handleMessage, callTool, callToolRich, findSymbol } from './mcp.js';
 export { install, uninstall, health } from './install.js';
+export { applyCommandRules } from "./compress/cmdrules.js"; export { compactJson } from "./compress/jsoncompact.js";

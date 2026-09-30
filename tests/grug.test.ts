@@ -1983,3 +1983,52 @@ describe('what fills the context, and when to /clear', () => {
     expect(out.hookSpecificOutput.additionalContext).toMatch(/Check these notes \(and the code map\) before re-exploring/);
   });
 });
+
+describe('command rules and JSON compaction', () => {
+  it('reads MCP text-block results and ignores blocks with images', async () => {
+    const { toolOutputText } = await import('../src/hooks.js');
+    const base: any = { tool_name: 'mcp__x__y', tool_input: {} };
+    expect(toolOutputText({ ...base, tool_response: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] })).toBe('a\nb');
+    expect(toolOutputText({ ...base, tool_response: [{ type: 'text', text: 'a' }, { type: 'image', source: {} }] })).toBeNull();
+  });
+  it('drops install/build progress but keeps errors, warnings and the result', async () => {
+    const { applyCommandRules } = await import('../src/compress/cmdrules.js');
+    const pip = [...Array.from({ length: 40 }, (_, i) => `Collecting pkg${i}`), ...Array.from({ length: 40 }, (_, i) => `  Downloading pkg${i}-1.0.whl (12 kB)`), 'ERROR: Could not find a version that satisfies the requirement nope', 'Successfully installed a-1 b-2'].join('\n');
+    const r = applyCommandRules('pip install -r req.txt', pip);
+    expect(r.changed).toBe(true);
+    expect(r.text).toContain('ERROR: Could not find a version');
+    expect(r.text).toContain('Successfully installed a-1 b-2');
+    expect(r.text).not.toContain('Collecting pkg7');
+    const cargo = [...Array.from({ length: 30 }, (_, i) => `   Compiling crate${i} v1.0.0`), 'warning: unused variable: `x`', ' --> src/main.rs:3:9', '  |', '3 |     let x = 1;', '    Finished `dev` profile in 4s'].join('\n');
+    const c = applyCommandRules('cargo build', cargo, 100);
+    expect(c.text).toContain('warning: unused variable');
+    expect(c.text).toContain('src/main.rs:3:9');
+    expect(c.text).not.toContain('Compiling crate5');
+  });
+
+  it('leaves unknown commands and small output alone', async () => {
+    const { applyCommandRules } = await import('../src/compress/cmdrules.js');
+    const big = Array.from({ length: 200 }, (_, i) => `Collecting line ${i}`).join('\n');
+    expect(applyCommandRules('echo hi', big).changed).toBe(false);
+    expect(applyCommandRules('pip install x', 'Collecting a\nSuccessfully installed a').changed).toBe(false);
+  });
+
+  it('compacts big uniform JSON arrays and keeps identity of every item', async () => {
+    const { compactJson } = await import('../src/compress/jsoncompact.js');
+    const items = Array.from({ length: 80 }, (_, i) => ({ id: 1000 + i, number: i, title: `Issue ${i}`, state: 'open', body: null, labels: [], avatar_url: 'https://api.example.com/u/' + i, html_url: `https://example.com/i/${i}`, extra: 'x'.repeat(200) }));
+    const raw = JSON.stringify(items);
+    const r = compactJson(raw, 1000);
+    expect(r.changed).toBe(true);
+    expect(r.text.length).toBeLessThan(raw.length * 0.5);
+    expect(r.text).not.toContain('avatar_url');
+    expect(r.text).toContain('title=Issue 79');
+    expect(r.text).toContain('html_url');
+  });
+
+  it('does not touch JSON it cannot summarise safely', async () => {
+    const { compactJson } = await import('../src/compress/jsoncompact.js');
+    expect(compactJson(JSON.stringify(Array.from({ length: 3000 }, (_, i) => i)), 100).changed).toBe(false);
+    expect(compactJson('{"a":' + '1,'.repeat(10) + '"not json', 10).changed).toBe(false);
+    expect(compactJson(JSON.stringify({ a: { b: 'x'.repeat(20000) } })).changed).toBe(false);
+  });
+});

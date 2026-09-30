@@ -2,6 +2,16 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.13.0
+
+Per-command output rules, compact JSON, and MCP results handled like Bash output.
+
+- **Install and build logs.** npm/pnpm/yarn, pip/uv/poetry, cargo, go, apt, brew, docker, git transfers and make/gradle/mvn print progress around the few lines that matter. Each family has its own list of progress lines; those are dropped (`... N progress lines omitted`) and deprecation notices become a count plus 3 samples. Any line that looks like a problem (error, fail, fatal, warning, denied, not found, conflict, vulnerability...) is never dropped. Only applied when at least 5 lines go and the output shrinks by 25% or more; otherwise untouched. Test runners keep their existing summary. Toggle: `commandRules.enabled`.
+- **Compact JSON.** Uniform arrays of objects (20+ items, 12k+ chars, for example `gh api`, `curl`, MCP tools) keep the first 3 items in full and one identity line per remaining item; null/empty fields and `*_url` templates are dropped. Toggle: `commandRules.json`.
+- **MCP tool results.** Big text results from MCP tools get the same trim and JSON compaction as Bash output (verified live: the model receives the rewritten result and the marker). Results with images are left alone. Toggle: `commandRules.mcp`.
+- **Nothing is lost.** Every rewrite appends the path of the untouched original, so Claude can Read the exact text.
+- **Measured honestly.** On real captured output: pip 3324 to 438 chars, cargo 1245 to 183. npm ci (365 B) and apt (207 B) are already terse and stay as they are. Install/build noise is usually a few KB per call, so expect a few percent of the bill, not a step change; it matters most on big builds, docker, go and cargo.
+
 ## 2.12.0
 
 Trim long command output earlier without losing anything.

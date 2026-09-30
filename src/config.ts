@@ -68,6 +68,16 @@ export interface GrugConfig {
     enabled: boolean;
     minChars: number;
   };
+  /** Per-command output rules (installs, builds, git transfers) and JSON compaction; originals are always saved. */
+  commandRules: {
+    enabled: boolean;
+    minChars: number;
+    /** Compact big JSON arrays of objects (first items in full, then one identity line each). */
+    json: boolean;
+    jsonMinChars: number;
+    /** Also apply to MCP tool results. */
+    mcp: boolean;
+  };
   /** Check GitHub releases for a newer grugbrain (once a day, notify only). */
   updateCheck: boolean;
   /** Tell the user (not the model) when a session's context gets expensive; levels double from firstTokens. */
@@ -177,6 +187,13 @@ export function defaultConfig(): GrugConfig {
     testSummary: {
       enabled: true,
       minChars: 3000
+    },
+    commandRules: {
+      enabled: true,
+      minChars: 1500,
+      json: true,
+      jsonMinChars: 12000,
+      mcp: true
     },
     updateCheck: true,
     contextAlert: {
