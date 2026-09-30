@@ -24,6 +24,7 @@ import { buildHandoff, coldCacheCost, contextSize, costPerReply, saveHandoff, ta
 import { autoRecall } from './recall.js';
 import { isCodeProject, refreshGraphSoon, sessionCodeMap } from './graph.js';
 import { scanFacts } from './facts.js';
+import { archiveSession } from './archive.js';
 import { imageAlert, mediaPostTool, mediaPreTool } from './mediaguard.js';
 import { navPreTool } from './navhint.js';
 import { scoreAdoption } from './adoption.js';
@@ -461,6 +462,13 @@ function captureFacts(sid: string, transcript: string | undefined, cwd: string, 
         return;
       }
       if (size >= offset && size - offset < MIN_SCAN_BYTES) return;
+    }
+    // Text-only archive of the conversation, on the same cadence (every ~24 KB, and at compaction / end).
+    try {
+      const cfg = loadConfig();
+      if (cfg.memory.archive) archiveSession(cwd, sid, transcript, cfg.memory.archiveMaxMb);
+    } catch {
+      /* best-effort */
     }
     const scan = scanFacts(transcript, offset, failed, force ? 8 : 4);
     const room = Math.max(0, MAX_FACTS_PER_SESSION - stored);

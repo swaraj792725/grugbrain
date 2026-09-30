@@ -37,6 +37,10 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - /clear cannot be run by a hook. The ceiling is a user-only notice (contextAlert size, idleAlert cache expiry, taskShift new task) with the reason (`grug context` breakdown).
 - Live A/B recipe: a git-initialised synthetic project, `claude -p ... --output-format stream-json --verbose --strict-mcp-config --allowedTools ...`, count tool_use names and take max context per run; reset the tree between runs with `git checkout -- .`; use several runs (variance is real).
 
+## Handoff v2 + archive (v2.15)
+- handoff.ts fills priority blocks within the same 1200-token cap; archive.ts keeps a text-only conversation copy (memory.archive, archiveMaxMb) read only by deep `history`; standing rules auto-pin (MAX_AUTO_PINS=6).
+- A random-indexing semantic layer was measured on the real corpus and was no better than BM25 + synonyms (7/10 vs 5/10 vs fused 6/10), so it was not shipped. Revisit only with a real embedding model, opt-in.
+
 ## Open items
 - Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.

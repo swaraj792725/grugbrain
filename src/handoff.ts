@@ -10,7 +10,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { paths, readJson, writeJsonAtomic } from './config.js';
-import { projectKey, readBuffer } from './memory/store.js';
+import { projectKey, readBuffer, similarity } from './memory/store.js';
+import { isTrivialPrompt } from './relevance.js';
 import { estimateTokens, priceFor, CACHE_READ_MULT, CACHE_WRITE_MULT, CACHE_WRITE_1H_MULT } from './tokens.js';
 
 export interface Handoff {
@@ -181,6 +182,52 @@ function openTodos(es: any[]): string[] {
   return [];
 }
 
+const CHECK_CMD = /\b(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|build|lint|typecheck|check)|npx\s+(?:vitest|jest|tsc|eslint)|vitest|jest|pytest|tox|ruff|mypy|cargo\s+(?:test|build|clippy)|go\s+(?:test|build|vet)|tsc|make|gradle|mvn|dotnet\s+(?:test|build))\b/;
+const FAIL_OUT = /\b(exit code [1-9]|command failed|npm ERR!|FAILED|FAIL\b|error TS\d+|Traceback \(most recent|panic:|\d+ failed)/;
+const PASS_LINE = /\b(\d+\s+(?:passed|passing)|Tests?\s+.*passed|test result: ok|build succeeded|0 errors|All checks passed|ok\s+\S+\s+[\d.]+s)\b/i;
+
+function resultText(c: any): string {
+  if (typeof c === 'string') return c;
+  if (!Array.isArray(c)) return '';
+  return c.filter((b: any) => b?.type === 'text' && b.text).map((b: any) => b.text).join('\n');
+}
+
+/** Where the work stands: the last test/build/lint command and whether it passed (by output, not by claim). */
+export function lastCheck(es: any[]): string | null {
+  const pending = new Map<string, string>();
+  let last: { cmd: string; ok: boolean; line: string } | null = null;
+  for (const e of es) {
+    if (!e || e.isSidechain) continue;
+    const c = e.message?.content;
+    if (!Array.isArray(c)) continue;
+    for (const b of c) {
+      if (e.type === 'assistant' && b?.type === 'tool_use' && b.name === 'Bash' && typeof b.input?.command === 'string') {
+        const cmd = b.input.command.replace(/^\s*cd\s+[^&;]+&&\s*/, '').trim();
+        if (cmd.length <= 140 && !cmd.includes('\n') && CHECK_CMD.test(cmd)) pending.set(b.id, cmd);
+      } else if (e.type === 'user' && b?.type === 'tool_result' && pending.has(b.tool_use_id)) {
+        const cmd = pending.get(b.tool_use_id)!;
+        pending.delete(b.tool_use_id);
+        const out = resultText(b.content);
+        const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+        const bad = b.is_error === true || FAIL_OUT.test(out.replace(/\b0 failed\b/gi, ''));
+        const line = bad ? lines.find((l) => FAIL_OUT.test(l)) || lines[0] || '' : lines.find((l) => PASS_LINE.test(l)) || '';
+        last = { cmd, ok: !bad, line: oneLine(line, 110) };
+      }
+    }
+  }
+  if (!last) return null;
+  return `Last check: \`${oneLine(last.cmd, 70)}\` → ${last.ok ? 'passed' : 'FAILED'}${last.line ? ` (${last.line})` : ''}`;
+}
+
+const CORRECTION = /^(?:no[,.!]?\s|nope|wrong|that'?s not|not like that|don'?t|do not|stop|never|always|instead|actually|i said|i meant|from now on|please don'?t)/i;
+const SUBSTANTIVE = 25;
+
+interface Block {
+  pri: number;
+  order: number;
+  lines: string[];
+}
+
 export function buildHandoff(sessionId: string, transcriptPath: string | undefined, cwd: string, maxTokens = 1200): Handoff | null {
   const buf = readBuffer(sessionId);
   const prompts = buf.filter((e) => e.t === 'prompt') as Array<{ t: 'prompt'; ts: number; text: string }>;
@@ -201,42 +248,65 @@ export function buildHandoff(sessionId: string, transcriptPath: string | undefin
   const ctx = contextSize(transcriptPath);
   const project = projectKey(cwd);
 
-  const lines: string[] = [];
-  const add = (l: string) => {
-    if (estimateTokens(lines.join('\n') + '\n' + l) <= maxTokens) {
-      lines.push(l);
-      return true;
-    }
-    return false;
-  };
-  add(
+  const header =
     `[grugbrain handoff: continuing work from a previous session in ${path.basename(cwd)} (its context was ${Math.round(ctx.tokens / 1000)}k tokens; not loaded). ` +
-      `Pick up from here; check files before assuming, and ask the user if something is unclear.]`
-  );
-  if (prompts[0]) add(`Goal: ${oneLine(prompts[0].text, 300)}`);
-  const recent = prompts.slice(1).slice(-4);
-  if (recent.length) {
-    add('Latest requests:');
-    for (const p of recent) add(`- ${oneLine(p.text, 220)}`);
-  }
-  const todos = openTodos(es);
-  if (todos.length) {
-    add('Open todos:');
-    for (const t of todos.slice(0, 10)) add(`- ${t}`);
-  }
-  // Prefer the last substantive replies over one-line progress notes.
-  const substantive = replies.filter((r) => r.trim().length >= 160);
-  const last = (substantive.length ? substantive : replies).slice(-2);
-  if (last.length) {
-    add('Where it got to (last replies):');
-    for (const r of last) add(`> ${oneLine(r, 700)}`);
-  }
-  const top = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1]).map(([f]) => f);
-  if (edited.size) add(`Files changed: ${top(edited).slice(0, 15).join(', ')}`);
-  if (read.size) add(`Files read: ${top(read).filter((f) => !edited.has(f)).slice(0, 12).join(', ')}`);
-  if (cmds.length) add(`Recent commands: ${[...new Set(cmds.slice(-8))].join(' · ')}`);
-  add('Need an exact detail from before (an error, a decision, a snippet)? Search the full earlier conversation with the grugbrain `history` tool instead of guessing.');
+    `Pick up from here; check files before assuming, and ask the user if something is unclear.]`;
+  const footer = 'Need an exact detail from before (an error, a decision, a snippet)? Search the full earlier conversation with the grugbrain `history` tool instead of guessing.';
 
+  // The current task is the latest substantive request, not the first message (which may be long gone).
+  const substantive = prompts.filter((p) => !isTrivialPrompt(p.text) && p.text.trim().length >= SUBSTANTIVE);
+  const current = substantive[substantive.length - 1] || prompts[prompts.length - 1];
+  const first = prompts[0];
+  const facts = buf.flatMap((e) => (e.t === 'facts' ? e.items || [] : []));
+  const factLines = (kinds: string[], n: number) => {
+    const seen: string[] = [];
+    for (const f of facts.slice().reverse()) {
+      if (!kinds.includes(f.kind) || seen.some((x) => similarity(x, f.text) >= 0.6)) continue;
+      seen.push(f.text);
+      if (seen.length >= n) break;
+    }
+    return seen.reverse();
+  };
+  const prefs = factLines(['preference'], 4);
+  for (const p of prompts.slice(-12)) {
+    const t = p.text.trim().split(/\n/)[0];
+    if (t.length >= 15 && t.length <= 200 && CORRECTION.test(t) && !t.endsWith('?') && !prefs.some((x) => similarity(x, t) >= 0.5)) prefs.push(`User: ${oneLine(t, 180)}`);
+  }
+
+  const blocks: Block[] = [];
+  const block = (pri: number, order: number, lines: string[]) => lines.length && blocks.push({ pri, order, lines });
+  if (current) block(1, 1, [`Goal: ${oneLine(current.text, 320)}`]);
+  if (first && current && first !== current && !isTrivialPrompt(first.text)) block(8, 2, [`Started with: ${oneLine(first.text, 140)}`]);
+  block(2, 3, prefs.length ? ['Rules from the user (keep following them):', ...prefs.slice(-5).map((x) => `- ${oneLine(x, 180)}`)] : []);
+  const todos = openTodos(es);
+  block(3, 4, todos.length ? ['Open todos:', ...todos.slice(0, 10).map((t) => `- ${t}`)] : []);
+  const check = lastCheck(es);
+  block(3, 5, check ? [check] : []);
+  // Prefer the last substantive replies over one-line progress notes; the newest gets the most room.
+  const subst = replies.filter((r) => r.trim().length >= 160);
+  const last = (subst.length ? subst : replies).slice(-2);
+  block(4, 6, last.length ? ['Where it got to (last replies):', ...last.map((r, i) => `> ${oneLine(r, i === last.length - 1 ? 700 : 350)}`)] : []);
+  const dec = factLines(['decision', 'cause'], 4);
+  block(5, 7, dec.length ? ['Decisions and causes so far:', ...dec.map((x) => `- ${oneLine(x, 200)}`)] : []);
+  const top = (m: Map<string, number>) => [...m.entries()].sort((a, b) => b[1] - a[1]).map(([f]) => f);
+  block(6, 8, edited.size ? [`Files changed: ${top(edited).slice(0, 15).join(', ')}`] : []);
+  const recent = substantive.filter((p) => p !== current).slice(-3);
+  block(7, 9, recent.length ? ['Earlier requests:', ...recent.map((p) => `- ${oneLine(p.text, 200)}`)] : []);
+  block(9, 10, cmds.length ? [`Recent commands: ${[...new Set(cmds.slice(-8))].join(' · ')}`] : []);
+  const readOnly = top(read).filter((f) => !edited.has(f));
+  block(10, 11, readOnly.length ? [`Files read: ${readOnly.slice(0, 12).join(', ')}`] : []);
+
+  // Fill by priority within the budget (a block that does not fit is skipped; smaller ones below may), then show in reading order.
+  let used = estimateTokens(header + '\n' + footer);
+  const chosen: Block[] = [];
+  for (const b of blocks.sort((x, y) => x.pri - y.pri || x.order - y.order)) {
+    const cost = estimateTokens(b.lines.join('\n') + '\n');
+    if (used + cost > maxTokens) continue;
+    used += cost;
+    chosen.push(b);
+  }
+  chosen.sort((x, y) => x.order - y.order);
+  const lines = [header, ...chosen.flatMap((b) => b.lines), footer];
   return { ts: Date.now(), sessionId, project, contextTokens: ctx.tokens, text: lines.join('\n') };
 }
 

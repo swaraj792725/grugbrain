@@ -1166,7 +1166,7 @@ describe('durable fact capture', () => {
     addNote(db, p, 'pinned: keep this forever please', Date.now(), { pinned: true });
     consolidate(db, defaultConfig().memory);
     const left = Object.values(db.nodes).filter((n) => n.type === 'note' && n.project === p);
-    expect(left.filter((n) => n.data?.kind).length).toBeLessThanOrEqual(60);
+    expect(left.filter((n) => n.data?.kind && !n.data?.pinned).length).toBeLessThanOrEqual(60); // the auto-pinned standing rule (always use pnpm) is exempt
     expect(left.some((n) => n.data?.pinned)).toBe(true);
     // Recall picks the captured fact up later.
     fs.writeFileSync(paths.memory(), JSON.stringify(db));
@@ -2141,5 +2141,106 @@ describe('status line panel', () => {
     const settings: any = {};
     applyStatusLine(settings, cfg, {} as any);
     expect(settings.statusLine.refreshInterval).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------- v2.15 handoff v2, archive, pinned rules
+describe('handoff v2', () => {
+  const tool = (id: string, command: string) => line('assistant', [{ type: 'tool_use', id, name: 'Bash', input: { command } }]);
+  const result = (id: string, text: string) => line('user', [{ type: 'tool_result', tool_use_id: id, content: text }]);
+
+  it('reports the last check result', async () => {
+    const { lastCheck } = await import('../src/handoff.js');
+    const es = [tool('a', 'npm test'), result('a', 'Tests 2 failed | 10 passed\nFAIL x')].map((l) => JSON.parse(l));
+    expect(lastCheck(es)).toMatch(/npm test.*FAILED/);
+    const ok = [tool('b', 'npm test'), result('b', 'Tests 12 passed (12)')].map((l) => JSON.parse(l));
+    expect(lastCheck(ok)).toMatch(/npm test.*passed/);
+    expect(lastCheck([])).toBeNull();
+  });
+
+  it('uses the latest request as goal, keeps rules, and stays inside the budget', async () => {
+    const { buildHandoff } = await import('../src/handoff.js');
+    const { estimateTokens } = await import('../src/tokens.js');
+    const cwd = path.join(tmp, 'hproj');
+    fs.mkdirSync(cwd, { recursive: true });
+    const t = writeTranscript(cwd, 'h.jsonl', [
+      line('user', 'build the billing export feature for the admin page'),
+      line('assistant', [{ type: 'text', text: 'Working on it. ' + 'x'.repeat(400) }]),
+      tool('c', 'npm test'), result('c', 'Tests 1 failed | 4 passed')
+    ]);
+    const sid = 'hv2';
+    appendBuffer(sid, { t: 'start', ts: Date.now(), cwd });
+    appendBuffer(sid, { t: 'prompt', ts: Date.now(), text: 'build the billing export feature for the admin page' });
+    appendBuffer(sid, { t: 'prompt', ts: Date.now(), text: 'never commit to main, always open a pull request' });
+    appendBuffer(sid, { t: 'prompt', ts: Date.now(), text: 'now fix the csv escaping bug in the export module' });
+    for (let i = 0; i < 40; i++) appendBuffer(sid, { t: 'file', ts: Date.now(), path: path.join(cwd, `src/file${i}.ts`), op: 'edit' });
+    const h = buildHandoff(sid, t, cwd, 1200)!;
+    expect(h.text).toContain('Goal: now fix the csv escaping bug');
+    expect(h.text).toContain('Started with: build the billing export');
+    expect(h.text).toContain('never commit to main');
+    expect(h.text).toContain('npm test');
+    expect(estimateTokens(h.text)).toBeLessThanOrEqual(1200);
+    const tiny = buildHandoff(sid, t, cwd, 150)!;
+    expect(tiny.text).toContain('Goal:');
+    expect(estimateTokens(tiny.text)).toBeLessThanOrEqual(260);
+  });
+});
+
+describe('archive', () => {
+  it('keeps text only, appends incrementally, and feeds deep history after the live transcript is gone', async () => {
+    const { archiveSession, archiveDir } = await import('../src/archive.js');
+    const { searchHistory } = await import('../src/history.js');
+    const cwd = path.join(tmp, 'arch app');
+    const t = writeTranscript(cwd, 'old1.jsonl', [
+      line('user', 'why does the invoice worker crash on zorblax payloads'),
+      line('assistant', [{ type: 'text', text: 'Root cause: zorblax payloads overflow the parser buffer.' }, { type: 'tool_use', id: 'q', name: 'Bash', input: { command: 'secret-tool-call' } }]),
+      line('user', [{ type: 'tool_result', tool_use_id: 'q', content: 'HUGE TOOL OUTPUT' }])
+    ]);
+    expect(archiveSession(cwd, 'old1', t)).toBe(2);
+    expect(archiveSession(cwd, 'old1', t)).toBe(0); // nothing new
+    fs.appendFileSync(t, line('assistant', [{ type: 'text', text: 'Fixed by raising the buffer to 64k.' }]) + '\n');
+    expect(archiveSession(cwd, 'old1', t)).toBe(1);
+    const stored = fs.readFileSync(path.join(archiveDir(cwd), 'old1.jsonl'), 'utf8');
+    expect(stored).toContain('zorblax');
+    expect(stored).not.toContain('HUGE TOOL OUTPUT');
+    expect(stored).not.toContain('secret-tool-call');
+    fs.rmSync(t); // Claude Code cleaned its copy up
+    const out = searchHistory(cwd, 'zorblax parser buffer');
+    expect(out).toContain('overflow the parser buffer');
+  });
+
+  it('prunes the oldest sessions past the size cap', async () => {
+    const { archiveSession, archiveDir } = await import('../src/archive.js');
+    const cwd = path.join(tmp, 'prune app');
+    const big = 'lorem ipsum dolor sit amet '.repeat(100);
+    for (const [i, n] of ['a', 'b', 'c'].entries()) {
+      const t = writeTranscript(cwd, `${n}.jsonl`, Array.from({ length: 40 }, () => line('user', big)));
+      archiveSession(cwd, n, t, 0.1);
+      const f = path.join(archiveDir(cwd), `${n}.jsonl`);
+      if (fs.existsSync(f)) fs.utimesSync(f, new Date(Date.now() + i * 1000), new Date(Date.now() + i * 1000));
+    }
+    const left = fs.readdirSync(archiveDir(cwd)).filter((f) => f.endsWith('.jsonl'));
+    expect(left.length).toBeLessThan(3);
+  });
+});
+
+describe('auto-pinned rules', () => {
+  it('recognises standing rules only', async () => {
+    const { isStandingRule } = await import('../src/memory/store.js');
+    expect(isStandingRule({ kind: 'preference', text: 'User preference: never merge until I say merge it' })).toBe(true);
+    expect(isStandingRule({ kind: 'preference', text: 'User preference: please add a button to the page' })).toBe(false);
+    expect(isStandingRule({ kind: 'decision', text: 'never merge until I say merge it' })).toBe(false);
+  });
+
+  it('caps auto pins and leaves manual pins alone', async () => {
+    const { capAutoPins, MAX_AUTO_PINS, addNote: add, loadMemory: load } = await import('../src/memory/store.js');
+    const db = load();
+    const p = 'proj';
+    const manual = add(db, p, 'manual pinned note about deploys', 1, { pinned: true });
+    for (let i = 0; i < MAX_AUTO_PINS + 3; i++) add(db, p, `never do thing number ${i} alpha${i} beta${i * 7}`, 100 + i, { pinned: true, auto: true });
+    capAutoPins(db, p);
+    const autos = Object.values(db.nodes).filter((n) => n.data?.pinned && n.data?.auto);
+    expect(autos.length).toBe(MAX_AUTO_PINS);
+    expect(db.nodes[manual.id].data?.pinned).toBe(true);
   });
 });
