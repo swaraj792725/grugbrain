@@ -168,6 +168,9 @@ export interface GrugConfig {
     maxNodesPerProject: number;
     /** Markdown vault (Obsidian-compatible). Defaults to ~/.grug/vault. */
     vaultDir: string;
+    /** Keep a text-only copy of every conversation so `history` still finds it after Claude Code cleans up its transcripts. */
+    archive: boolean;
+    archiveMaxMb: number;
   };
 }
 
@@ -259,7 +262,9 @@ export function defaultConfig(): GrugConfig {
       halfLifeDays: 14,
       foldAfterDays: 21,
       maxNodesPerProject: 400,
-      vaultDir: path.join(grugHome(), 'vault')
+      vaultDir: path.join(grugHome(), 'vault'),
+      archive: true,
+      archiveMaxMb: 60
     }
   };
 }

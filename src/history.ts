@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { paths, userHome, writeJsonAtomic } from './config.js';
 import { estimateTokens } from './tokens.js';
 import { queryTerms, rankPrompt, Ranked } from './relevance.js';
+import { archiveOnlyFiles } from './archive.js';
 
 export function projectTranscriptDir(cwd: string): string {
   const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'projects');
@@ -40,6 +41,8 @@ const MAX_TEXT = 3000;
 const MAX_TOOL_TEXT = 1200;
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_FILES = 25;
+/** `history` tool: live transcripts plus this many archived sessions whose transcript is gone. */
+const DEEP_FILES = 300;
 // Text grug itself injected, or harness chatter: never worth recalling.
 const NOISE = /^\s*(\[grugbrain |<system-reminder>|<command-(name|message|args)>|<local-command-stdout>|Caveat: The messages below)/;
 
@@ -141,7 +144,12 @@ export function transcriptItems(file: string, allowParse = true): Item[] | null 
 }
 
 /** Newest transcripts of a project (most recent first). */
-export function projectTranscripts(cwd: string, max = MAX_FILES): string[] {
+export function projectTranscripts(cwd: string, max = MAX_FILES, deep = false): string[] {
+  const live = liveTranscripts(cwd, max);
+  return deep ? [...live, ...archiveOnlyFiles(cwd, DEEP_FILES)] : live;
+}
+
+function liveTranscripts(cwd: string, max: number): string[] {
   const dir = projectTranscriptDir(cwd);
   try {
     return fs
@@ -184,6 +192,8 @@ export interface HistoryOptions {
   excludeFile?: string;
   /** ...except items older than this (what auto-compaction removed from context). */
   excludeFileBefore?: number;
+  /** Also search the full archive (every past session, even after Claude Code deleted its transcript). For the on-demand `history` tool, not hooks. */
+  deep?: boolean;
 }
 
 const DECISION = /\b(decided|decision|we chose|chose to|going with|settled on|root cause|caused by|the fix|fixed by|because|workaround|must not|never|always|convention)\b/i;
@@ -191,7 +201,7 @@ const DECISION = /\b(decided|decision|we chose|chose to|going with|settled on|ro
 /** Rank earlier conversation items for a query. */
 export function historyHits(cwd: string, query: string, opts: HistoryOptions = {}): { hits: HistoryHit[]; terms: string[]; files: number; partial: boolean } {
   const terms = queryTerms(query);
-  const files = projectTranscripts(cwd);
+  const files = projectTranscripts(cwd, opts.deep ? 100 : MAX_FILES, !!opts.deep);
   if (!terms.length || !files.length) return { hits: [], terms, files: files.length, partial: false };
   const deadline = opts.budgetMs ? Date.now() + opts.budgetMs : 0;
   const all: Array<{ item: Item; file: string }> = [];
@@ -238,8 +248,8 @@ export function excerpt(h: HistoryHit, len = 600): string {
 }
 
 export function searchHistory(cwd: string, query: string, maxTokens = 2500, maxResults = 10): string {
-  if (!fs.existsSync(projectTranscriptDir(cwd))) return `No earlier Claude Code conversations found for ${cwd}.`;
-  const { hits, terms } = historyHits(cwd, query);
+  if (!fs.existsSync(projectTranscriptDir(cwd)) && !archiveOnlyFiles(cwd, 1).length) return `No earlier Claude Code conversations found for ${cwd}.`;
+  const { hits, terms } = historyHits(cwd, query, { deep: true });
   if (!terms.length) return 'Give a more specific query (a filename, error text, function name or topic).';
   if (!hits.length) return `Nothing in this project's earlier conversations matches "${query}".`;
 

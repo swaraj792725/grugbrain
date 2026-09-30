@@ -54,7 +54,7 @@ grug **measure**, not guess. Proxy read real `usage` from every API reply (input
 Long session = big context = every reply re-read all of it. Real install: **~500k tokens re-read per reply.** Tool can't press `/clear` for you (Claude Code don't allow). But Claude Code can compact itself, and grug decide *when*:
 
 1. grug set Claude Code's auto-compact point to **200k** (not near 1M). No user action.
-2. Right before compaction: grug save a **handoff**: goal, latest asks, open todos, where it got to, files changed, recent commands. No AI call, no tokens.
+2. Right before compaction: grug save a **handoff**: goal (latest ask), your standing rules and corrections, open todos, last test/build result, where it got to, decisions, files changed. Filled by priority within 1200 tokens. No AI call. grug also keep a text-only **archive** of the conversation (`~/.grug/archive`, 60 MB cap) that the `history` tool can search after Claude Code cleans up its own copy.
 3. Right after: grug put the handoff into the fresh context, and tell Claude about the **`history` tool**: search the full old conversation for an exact detail instead of guessing or carrying it.
 4. You type `/clear` yourself when switching tasks? Same handoff, next session pick up.
 
@@ -327,6 +327,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
 | `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |
+| `memory.archive` / `archiveMaxMb` | `true` / `60` | keep text-only copy of conversations for deep `history` search (never loaded into context) |
 | `memory.vaultDir` | `~/.grug/vault` | Obsidian output |
 
 ---

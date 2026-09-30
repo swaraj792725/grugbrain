@@ -233,7 +233,7 @@ function oneLine(s: string, n: number): string {
 
 // ---------- ingest ----------
 
-export function addNote(db: MemoryDB, project: string, text: string, ts = Date.now(), opts: { pinned?: boolean; from?: string; kind?: string } = {}): MemNode {
+export function addNote(db: MemoryDB, project: string, text: string, ts = Date.now(), opts: { pinned?: boolean; from?: string; kind?: string; auto?: boolean } = {}): MemNode {
   // Merge into an existing similar note instead of piling up.
   for (const n of Object.values(db.nodes)) {
     if (n.type === 'note' && n.project === project && similarity(n.label, text) >= 0.6) {
@@ -245,7 +245,7 @@ export function addNote(db: MemoryDB, project: string, text: string, ts = Date.n
         if (opts.from) n.data = { ...n.data, sources: [...sources, opts.from].slice(-20) };
       }
       if (text.length > n.label.length) n.label = text;
-      if (opts.pinned) n.data = { ...n.data, pinned: true };
+      if (opts.pinned && !n.data?.pinned) n.data = { ...n.data, pinned: true, ...(opts.auto ? { auto: true } : {}) };
       if (opts.kind && !n.data?.kind) n.data = { ...n.data, kind: opts.kind };
       if (opts.from) link(db, n.id, opts.from);
       return n;
@@ -260,7 +260,7 @@ export function addNote(db: MemoryDB, project: string, text: string, ts = Date.n
       label: text,
       project,
       weight: opts.pinned ? 3 : opts.kind === 'preference' ? 2.2 : 1.5,
-      data: { pinned: !!opts.pinned, sources: opts.from ? [opts.from] : [], ...(opts.kind ? { kind: opts.kind } : {}) }
+      data: { pinned: !!opts.pinned, ...(opts.pinned && opts.auto ? { auto: true } : {}), sources: opts.from ? [opts.from] : [], ...(opts.kind ? { kind: opts.kind } : {}) }
     },
     ts
   );
@@ -350,11 +350,30 @@ export function ingestSession(db: MemoryDB, sessionId: string, events = readBuff
   }
   if (lastAssistant) for (const n of extractNotes(lastAssistant.text)) addNote(db, project, n, lastAssistant.ts, { from: sid });
   // Durable facts picked from the transcript at handoff time (decisions, root causes, preferences, commands).
-  for (const ev of events) if (ev.t === 'facts') for (const f of ev.items || []) if (f?.text) addNote(db, project, String(f.text).slice(0, 400), f.ts || ev.ts, { from: sid, kind: f.kind });
+  for (const ev of events)
+    if (ev.t === 'facts')
+      for (const f of ev.items || [])
+        if (f?.text) addNote(db, project, String(f.text).slice(0, 400), f.ts || ev.ts, { from: sid, kind: f.kind, ...(isStandingRule(f) ? { pinned: true, auto: true } : {}) });
+  capAutoPins(db, project);
 
   recomputeTouches(db, project);
   session.data.ingestedAt = Date.now();
   return session;
+}
+
+/** A standing instruction from the user ("never merge until I say", "always use pnpm"), not a one-off request. */
+const STANDING_RULE = /^(?:User preference:\s*)?(?:please\s+)?(?:always|never|from now on|don'?t|do not|no more|stop|make sure (?:to|you)|prefer)\b/i;
+export function isStandingRule(f: { kind?: string; text?: string }): boolean {
+  return f.kind === 'preference' && STANDING_RULE.test(String(f.text || '')) && String(f.text).length >= 25;
+}
+
+/** Auto-pinned rules never decay or fold, so keep their number small (the brief budget stays fixed). Manual pins are untouched. */
+export const MAX_AUTO_PINS = 6;
+export function capAutoPins(db: MemoryDB, project: string): void {
+  const auto = Object.values(db.nodes)
+    .filter((n) => n.type === 'note' && n.project === project && n.data?.pinned && n.data?.auto)
+    .sort((a, b) => b.updated - a.updated);
+  for (const n of auto.slice(MAX_AUTO_PINS)) n.data = { ...n.data, pinned: false, auto: false };
 }
 
 /** touches for files/topics are derived from edges, so re-ingesting never double counts. */

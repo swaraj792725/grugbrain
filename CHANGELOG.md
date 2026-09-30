@@ -2,6 +2,17 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.15.0
+
+Better handoff, and grug keeps the whole conversation so nothing is lost.
+
+- **Handoff v2** (same 1200-token cap, filled by priority). Goal is now the *latest* substantive request (the first one is kept as "Started with"). New blocks: **Rules from the user** (your "never/always/don't" instructions and corrections), **Last check** (last test/build/lint command and whether it passed or FAILED), **Decisions and causes**. Low-value blocks (commands, files read) are dropped first when space is short. Still model-free, still heuristic.
+- **Conversation archive.** Claude Code deletes its own transcripts after about 30 days. Grug now keeps a text-only copy (your messages and Claude's replies; no tool output, calls or thinking) in `~/.grug/archive`, capped by `memory.archiveMaxMb` (60), oldest sessions dropped first. Turn off with `memory.archive false`. It is never loaded into context.
+- **Deep `history` search.** The `history` tool also searches archived sessions whose live transcript is gone. Hooks and auto-recall do not (no extra latency or tokens).
+- **Standing rules are pinned.** "Always use pnpm", "never merge until I say" become auto-pinned notes that survive folding and lead the memory brief. At most 6 auto-pins, inside the fixed brief budget; your own `remember:` pins are untouched.
+- Evaluated and not shipped: a local semantic (embedding-style) ranking layer. On real data it was no better than BM25 plus synonyms (lexical 7/10, semantic 5/10, fused 6/10 on paraphrase queries), so it was dropped.
+- Token impact: handoff cap unchanged, brief budget unchanged, archive never injected. Limit: Claude must still choose to call `history`.
+
 ## 2.14.0
 
 Status line becomes an always-on, animated grug panel.
