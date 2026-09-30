@@ -93,6 +93,16 @@ describe('trimmer', () => {
     expect(looksLikeFileRead(read)).toBe(true);
     expect(trimToolOutput(read, trimOpts).changed).toBe(false);
   });
+
+  it('keeps problem lines from the cut part and points at the saved original', () => {
+    const body = Array.from({ length: 600 }, (_, i) => (i === 300 ? 'FATAL: database connection refused' : `ok step ${i}`)).join('\n');
+    let saved = '';
+    const r = trimToolOutput(body, { ...trimOpts, saveFull: (full) => ((saved = full), '/tmp/full.txt') });
+    expect(r.text).toContain('FATAL: database connection refused');
+    expect(r.text).toContain('/tmp/full.txt');
+    expect(saved).toBe(body);
+    expect(r.text).not.toContain('ok step 300');
+  });
 });
 
 describe('caveman', () => {

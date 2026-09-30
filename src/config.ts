@@ -157,9 +157,9 @@ export function defaultConfig(): GrugConfig {
       autoCache: true,
       trimToolResults: true,
       dedupeReads: true,
-      trimThresholdChars: 24000,
-      trimKeepHeadChars: 10000,
-      trimKeepTailChars: 6000
+      trimThresholdChars: 9000,
+      trimKeepHeadChars: 4500,
+      trimKeepTailChars: 3000
     },
     readGuard: {
       enabled: true,

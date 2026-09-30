@@ -6,6 +6,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { loadConfig, paths } from './config.js';
 import { terseStyle } from './compress/caveman.js';
 import { trimToolOutput } from './compress/trim.js';
@@ -311,7 +312,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         const r = trimToolOutput(text, {
           thresholdChars: cfg.proxy.trimThresholdChars,
           keepHeadChars: cfg.proxy.trimKeepHeadChars,
-          keepTailChars: cfg.proxy.trimKeepTailChars
+          keepTailChars: cfg.proxy.trimKeepTailChars,
+          saveFull: (full) => saveFullOutput(full, input.scratchpad_dir)
         });
         if (r.changed) {
           text = r.text;
@@ -545,6 +547,15 @@ function readKey(file: string, ti: any, agent?: string): string {
 }
 
 /** Plain-text tool output from a PostToolUse payload (string, or Bash's {stdout, stderr}). */
+/** The untouched output of a trimmed command: in the session scratchpad (no permission prompt), else grug's cache. */
+function saveFullOutput(full: string, scratchpad?: string): string | null {
+  const dir = scratchpad && fs.existsSync(scratchpad) ? scratchpad : path.join(paths.cache(), 'outputs');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `grug-out-${createHash('sha1').update(full).digest('hex').slice(0, 12)}.txt`);
+  if (!fs.existsSync(file)) fs.writeFileSync(file, full);
+  return file;
+}
+
 export function toolOutputText(input: HookInput): string | null {
   if (typeof input.tool_output === 'string') return input.tool_output;
   const r = input.tool_response;
