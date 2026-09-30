@@ -87,6 +87,10 @@ export interface GrugConfig {
     wrap: string;
     /** Rotate short user-side tips (/model, /compact...) when nothing more urgent shows. */
     tips: boolean;
+    /** Always-on panel: second row with animation and savings bar. */
+    panel: boolean;
+    /** Re-run the status line every N seconds so the animation and timers move (Claude Code refreshInterval, min 1). */
+    refreshSeconds: number;
   };
   /** Tell the user (not the model) when a session's context gets expensive; levels double from firstTokens. */
   contextAlert: {
@@ -204,7 +208,7 @@ export function defaultConfig(): GrugConfig {
       mcp: true
     },
     updateCheck: true,
-    statusLine: { enabled: true, wrap: '', tips: true },
+    statusLine: { enabled: true, wrap: '', tips: true, panel: true, refreshSeconds: 2 },
     contextAlert: {
       enabled: true,
       firstTokens: 150000

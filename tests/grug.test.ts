@@ -2119,3 +2119,27 @@ describe('savings headline, visuals, status line', () => {
     expect(empty.statusLine).toBeUndefined();
   });
 });
+
+describe('status line panel', () => {
+  it('draws an animated panel with a savings bar and context bar', async () => {
+    const { composePanel, barCells } = await import('../src/statusline.js');
+    expect(barCells(0.04, 10).trim().length).toBeGreaterThan(0);
+    expect(barCells(1, 4)).toBe('████');
+    const idle = composePanel({ now: 1000, active: false, savedPct: 0.04, netUsd: 2.35, tokens: 0, limit: 160000 });
+    expect(idle).toContain('idle');
+    expect(idle).toContain('~4%');
+    const a = composePanel({ now: 1000, active: true, savedPct: 0.5, tokens: 200000, limit: 160000, recent: { ts: 1, msg: 'Trimmed npm output' } });
+    const b = composePanel({ now: 2000, active: true, savedPct: 0.5, tokens: 200000, limit: 160000 });
+    expect(a).toContain('working');
+    expect(a).toContain('125%');
+    expect(a).toContain('Trimmed npm output');
+    expect(a.replace(/\x1b\[[0-9;]*m/g, '').slice(0, 12)).not.toBe(b.replace(/\x1b\[[0-9;]*m/g, '').slice(0, 12));
+  });
+  it('installs refreshInterval so the panel keeps moving', async () => {
+    const { applyStatusLine } = await import('../src/install.js');
+    const cfg = defaultConfig();
+    const settings: any = {};
+    applyStatusLine(settings, cfg, {} as any);
+    expect(settings.statusLine.refreshInterval).toBe(2);
+  });
+});

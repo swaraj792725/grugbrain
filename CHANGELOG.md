@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.14.0
+
+Status line becomes an always-on, animated grug panel.
+
+- **Second row, always there.** Below the notice line: a moving pulse and spinner while Claude is producing a reply (calm when idle), a **savings bar** (`saved ▌░░░░ ~4%`, eighth-block resolution so a few percent still shows), a **context bar** against your /clear limit (green, yellow at 100%, red at 120%), and the latest grug action for 45 s (`✦ Trimmed npm output`). Alerts (cache cold or expiring, /clear) stay on the first row in colour.
+- **Keeps moving.** Install sets Claude Code's `statusLine.refreshInterval` (default 2 s, `statusLine.refreshSeconds`, min 1), so timers and the animation update without waiting for an event. Re-run `grug install` (or `grug update`) to write it. Toggle the row: `statusLine.panel`.
+- Honest limits: Claude Code draws the status line below the input box, and the animation is a 1-2 frames-per-second redraw, not a smooth video. The `saved` % is the same 7-day estimate as the dashboard headline.
+
 ## 2.13.0
 
 Per-command output rules, compact JSON, MCP results handled like Bash output, a redesigned live dashboard and a status line.

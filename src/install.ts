@@ -156,6 +156,7 @@ export function applyStatusLine(settings: any, cfg: ReturnType<typeof loadConfig
     }
   }
   settings.statusLine = { type: 'command', command: statusLineCommand(), padding: 0 };
+  if (cfg.statusLine.refreshSeconds >= 1) settings.statusLine.refreshInterval = Math.round(cfg.statusLine.refreshSeconds);
 }
 
 export function installClaudeCode(withProxy: boolean): Step[] {

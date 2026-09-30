@@ -146,6 +146,7 @@ tip: ask Grep first, then Read with offset/limit · saved ~4%
 
 - Priority: cache gone cold or about to expire, then context far over the limit (red), then over the limit (yellow `/clear at the end of this task`), then a rotating tip. `saved ~N%` is always shown.
 - **Honest note:** Claude Code draws the status line *below* the input box, not above it. It cannot be placed above. The in-chat notices (context alert, idle alert, new-task hint) still appear in the conversation as before.
+- **Always-on panel (2.14):** a second row with a moving pulse while Claude works, a **savings bar**, a **context bar** against the /clear limit, and the latest grug action. It redraws every 2 s (`statusLine.refreshSeconds`, Claude Code `refreshInterval`). Hide it: `statusLine.panel false`.
 - Toggle: `grug config set statusLine.enabled false`. Wrap your own: `statusLine.wrap "<command>"`. Tips off: `statusLine.tips false`. `grug doctor` shows whether it is installed.
 
 ---
@@ -321,6 +322,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `graphContext.enabled` / `mapTokens` | `true` / `600` | repo map at session start + code hints per prompt |
 | `commandRules.enabled` / `minChars` | `true` / `1500` | drop install/build progress lines |
 | `commandRules.json` / `jsonMinChars` / `mcp` | `true` / `12000` / `true` | compact big JSON; same rules for MCP results |
+| `statusLine.panel` / `refreshSeconds` | `true` / `2` | animated second row with savings + context bars; redraw interval |
 | `statusLine.enabled` / `tips` / `wrap` | `true` / `true` / `''` | Claude Code status line: /clear and cache notices, saved %, your own line |
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
