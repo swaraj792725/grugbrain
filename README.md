@@ -235,6 +235,8 @@ Small context still need good memory, or quality drop. So grug feed Claude the r
 - **grug learn what help**: after a code hint, did Claude open that file? Hint mostly ignored, grug get pickier. Mostly used, grug relax. Small steps, bounded, self-adjusting.
 - **fresh map**: file Claude just wrote is found at once, and graph rescan quietly in background.
 - **notes as you go**: grug read only new transcript bytes at each stop, so early decisions in very long session not lost.
+- **grug understand other words**: "authentication" finds the note that say "login". Small groups of dev words (~30), half-credit, same strict gate. Long prompt with many asks: grug also try each ask alone.
+- **cold cache warning**: come back to big session after cache expired, next reply pay 10-20x to re-read everything. grug tell you (you only, not Claude) and have handoff ready. Switching task? `/clear`.
 - `grug dash` and `grug doctor` show how many injections, average token cost, and how often hints got used.
 
 ```bash
@@ -262,6 +264,7 @@ grug config set graphContext.enabled false    # no code map / code hints
 | `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
 | `autoCompact.windowTokens` | `200000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
+| `idleAlert.enabled` / `minExtraUsd` | `true` / `0.25` | warn (you only) when idle cache expiry makes next reply expensive |
 | `autoRecall.enabled` / `maxTokens` / `sessionTokens` | `true` / `800` / `2500` | per-prompt recall from memory, code graph, old sessions; total cap per session |
 | `graphContext.enabled` / `mapTokens` | `true` / `600` | repo map at session start + code hints per prompt |
 | `memory.enabled` | `true` | memory capture + brief + recall |

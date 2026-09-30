@@ -22,7 +22,9 @@ import { trafficCheck } from './stats.js';
 
 const argv = process.argv.slice(2).filter((a) => a !== '--from=grugbrain');
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
-const pos = argv.filter((a) => !a.startsWith('--'));
+// Flags that take a value: `--dir path` must not leak `path` into the positional words.
+const VALUE_FLAGS = new Set(['--dir', '--port', '--budget', '--model', '--runs', '--tasks']);
+const pos = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && VALUE_FLAGS.has(argv[i - 1])));
 const cmd = pos[0] || 'help';
 
 const flagValue = (name: string): string | undefined => {

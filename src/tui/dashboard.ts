@@ -106,6 +106,7 @@ function overview(width: number): string[] {
   L.push(did('prompt-cache breakpoints added', 0, k('cache')));
   L.push(did('handoffs to a fresh session', t('handoff'), k('handoff'), 'old context not re-read'));
   L.push(did('context-size alerts', 0, k('context-alert')));
+  L.push(did('cache-expiry notices (cold replies)', 0, k('idle-alert'), 'told you before a big idle session re-wrote its cache'));
   L.push(did('memory briefs + recalls (cost)', t('brief') + t('recall'), k('brief') + k('recall'), 'context carried over instead of re-exploring'));
   const avg = (kind: string) => (k(kind) ? `avg ${Math.round(Math.abs(t(kind)) / k(kind))} tok` : '');
   L.push(did('auto-recall injections (cost)', t('auto-recall'), k('auto-recall'), [avg('auto-recall'), 'only when something clearly matches'].filter(Boolean).join(', ')));
@@ -159,7 +160,7 @@ function activity(height: number): string[] {
   if (!acts.length) return [dim('  Nothing yet. Grug waits for Claude to do something.')];
   const color: Record<string, (s: string) => string> = {
     trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
-    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow,
+    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow, 'idle-alert': yellow,
     'auto-recall': cyan, graph: cyan, facts: cyan
   };
   return acts.map((a) => {

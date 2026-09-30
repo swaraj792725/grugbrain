@@ -13,7 +13,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { paths, userHome, writeJsonAtomic } from './config.js';
 import { estimateTokens } from './tokens.js';
-import { queryTerms, rank, Ranked } from './relevance.js';
+import { queryTerms, rankPrompt, Ranked } from './relevance.js';
 
 export function projectTranscriptDir(cwd: string): string {
   const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'projects');
@@ -218,8 +218,7 @@ export function historyHits(cwd: string, query: string, opts: HistoryOptions = {
     const ageDays = item.ts ? Math.max(0, now - item.ts) / 86400000 : 30;
     return w * (1 + 0.15 * Math.exp(-ageDays / 7));
   });
-  const phrase = query.toLowerCase().trim();
-  const hits = rank(docs, terms, weights, phrase).map((r) => ({ ...r, item: all[r.index].item, file: all[r.index].file }));
+  const hits = rankPrompt(docs, query, weights).map((r) => ({ ...r, item: all[r.index].item, file: all[r.index].file }));
   return { hits, terms, files: files.length, partial };
 }
 
