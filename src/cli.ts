@@ -58,6 +58,7 @@ const HELP = `
   grug brief [dir]                show what grug would tell Claude about a project
   grug recall <query> [--dir d]   search memory
   grug remember <text> [--dir d]  pin a note for a project
+  grug context [transcript]       what fills the context of the current session (by kind and biggest items)
   grug maintain                   ingest + consolidate memory now (normally automatic)
   grug warm [dir] [--graph]       refresh code-graph + history caches for a project (normally automatic)
 
@@ -137,6 +138,13 @@ async function main() {
         const on = (b: boolean) => (b ? '✅' : '➖');
         console.log(`${on(cfg.autoRecall.enabled)} auto-recall ${cfg.autoRecall.enabled ? `on (≤${cfg.autoRecall.maxTokens} tok): ${r.n} injection(s) in 7 days${r.n ? `, avg ${r.avg} tok` : ''}` : 'off (grug config set autoRecall.enabled true)'}`);
         console.log(`${on(cfg.graphContext.enabled)} graph context ${cfg.graphContext.enabled ? `on: ${g.n} code map(s)/hint(s) in 7 days${g.n ? `, avg ${g.avg} tok` : ''}` : 'off (grug config set graphContext.enabled true)'}`);
+        {
+          const { loadAdoption } = await import('./adoption.js');
+          const a = loadAdoption();
+          const total = a.grug + a.read + a.grep + a.glob;
+          if (total >= 5)
+            console.log(`ℹ️  navigation: grug tools ${a.grug}, Read ${a.read}, Grep ${a.grep}, Glob ${a.glob} (${Math.round((a.grug / total) * 100)}% grug); graph hints followed ${a.navShown ? Math.round((a.navFollowed / a.navShown) * 100) + '%' : 'n/a'} of ${a.navShown}`);
+        }
         {
           const { hasTool } = await import('./media.js');
           const m = cfg.mediaGuard;
@@ -223,6 +231,23 @@ async function main() {
       if (!r) console.log('memory busy (another maintenance is running)');
       else if (!process.env.GRUG_QUIET)
         console.log(`memory: +${r.ingested} sessions · folded ${r.folded} · merged ${r.merged} · pruned ${r.pruned} · ${r.nodes} nodes\ngraph: ${r.graph}\nvault: ${r.vaultDir}`);
+      break;
+    }
+
+    case 'context': {
+      // What is filling this session's context? (latest transcript of the current project, or a path)
+      const { analyzeTranscript, latestTranscript } = await import('./ctxbreak.js');
+      const target = pos[1] && fs.existsSync(pos[1]) ? pos[1] : latestTranscript(flags.has('--all') ? undefined : process.cwd()) || latestTranscript();
+      if (!target) throw new Error('no Claude Code transcript found (run inside a project, or pass a transcript path)');
+      const b = analyzeTranscript(target);
+      const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+      console.log(`🪨 context of ${path.basename(target)}: ~${k(b.total)} tokens in ${b.messages} messages (estimate)\n`);
+      for (const x of b.buckets.slice(0, 10)) console.log(`  ${String(Math.round((x.tokens / Math.max(1, b.total)) * 100)).padStart(3)}%  ${k(x.tokens).padStart(7)}  ${x.label} (${x.count})`);
+      if (b.biggest.length) {
+        console.log('\nbiggest single items:');
+        for (const x of b.biggest) console.log(`  ${k(x.tokens).padStart(7)}  ${x.label}`);
+      }
+      console.log('\nfix: /clear between tasks; grug trims big command output and skips repeat reads/screenshots.');
       break;
     }
 

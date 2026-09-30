@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { loadConfig, paths, VERSION } from '../config.js';
 import { health } from '../install.js';
 import { loadTune } from '../recalltune.js';
+import { loadAdoption } from '../adoption.js';
 import { loadMemory, projectName, score } from '../memory/store.js';
 import { proxyHealth } from '../proxy/server.js';
 import { readActivity, summarize, Summary, trafficCheck } from '../stats.js';
@@ -117,6 +118,12 @@ function overview(width: number): string[] {
     const rate = tu.codeShown >= 1 ? `${Math.round((tu.codeHit / tu.codeShown) * 100)}% of code hints then used` : 'no data yet';
     L.push(did('recall usefulness', 0, Math.round(tu.codeShown), `${rate}, strictness ×${tu.strictness.toFixed(2)} (self-tuning)`));
   }
+  {
+    const a = loadAdoption();
+    const total = a.grug + a.read + a.grep + a.glob;
+    L.push(did('graph-first hints', 0, k('nav'), a.navShown ? `${Math.round((a.navFollowed / a.navShown) * 100)}% followed by a ranged read; grug tools ${a.grug} vs Read/Grep/Glob ${total - a.grug}` : 'no data yet'));
+  }
+  L.push(did('new-task /clear suggestions', 0, k('task-shift'), 'big context + unrelated prompt'));
   L.push(did('durable facts captured', 0, k('facts'), 'decisions, root causes, preferences, commands'));
   L.push(did('notes remembered', 0, k('remember')));
   L.push(did('memory consolidations', 0, k('consolidate')));
@@ -161,7 +168,7 @@ function activity(height: number): string[] {
   if (!acts.length) return [dim('  Nothing yet. Grug waits for Claude to do something.')];
   const color: Record<string, (s: string) => string> = {
     trim: green, dedupe: green, cache: green, 'read-guard': green, outline: green, reread: green, testsum: green, 'cache-miss': yellow, bench: orange, update: yellow, brief: cyan, recall: cyan, remember: cyan,
-    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow, 'idle-alert': yellow, media: green,
+    consolidate: cyan, fallback: yellow, error: red, install: orange, handoff: green, 'context-alert': yellow, 'idle-alert': yellow, nav: cyan, 'task-shift': yellow, media: green,
     'auto-recall': cyan, graph: cyan, facts: cyan
   };
   return acts.map((a) => {

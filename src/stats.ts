@@ -40,6 +40,8 @@ export type ActivityKind =
   | 'context-alert'
   | 'idle-alert'
   | 'media'
+  | 'nav'
+  | 'task-shift'
   | 'history'
   | 'handoff'
   | 'brief'

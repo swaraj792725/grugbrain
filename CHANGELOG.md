@@ -2,6 +2,19 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.11.0
+
+Make Claude use what grug already knows before it burns context exploring, and show (and fix) what fills the context.
+
+- **Graph-first hints at tool time.** A `Grep` for a symbol the code graph knows now carries a note with where it is defined (`src/orders.ts L722-728`) so the next step is a ranged Read; it never blocks the search and appears once per symbol. A full `Read` of a mid-size code file (>= `graphContext.readHintBytes`, default 12 KB, where the outline is under 45% of the file) is asked once to Grep for the symbol / use the line ranges already in context and Read with `offset`/`limit` instead; repeating the Read goes through, and files Claude is editing are never asked. Toggle: `graphContext.hints`.
+- **Hints point at the built-in ranged Read, not at MCP tools.** A live A/B showed why: steering Claude to `read_symbol` cost two `ToolSearch` calls to load the deferred MCP tools plus a failed Edit (Edit needs the file Read first; a ranged Read counts). Every hint, the session code map and the recall block now say "Grep, then Read with offset/limit". Measured live on an edit task (haiku, 4 grug runs vs 3 without): context 32.7k vs 47.4k tokens (-31%), cost $0.0255 vs $0.0567 (-55%), edit correct every time. This is a favourable case (one function in a 40 KB file); expect less on exploratory work.
+- **Adoption is measured.** grug counts whether Claude used its tools or fell back to Read/Grep/Glob, and whether a hint was followed by a ranged read of that file (`~/.grug/adoption.json`, folded in at compaction/session end). Shown in `grug dash` ("graph-first hints") and `grug doctor`.
+- **Explicit memory-first instruction.** The session brief now says: check these notes and the code map before re-exploring the repo or asking again (still: verify against the code).
+- **New-task `/clear` suggestion.** When a prompt looks like a different job while the context is at least `taskBoundary.minTokens` (default 60k), grug tells you (user only) the size and cost per reply and suggests `/clear`; memory and the code map come back at session start and recall fetches what is relevant. Conservative on purpose: needs 4+ content words, no overlap with the session's recent prompts or files, no "also/now/and..." opening, 3+ earlier prompts, and not more than once per 8 prompts. On the labelled test set: 0 false alarms on 6 follow-ups, 4+ of 5 real switches caught. Toggle: `taskBoundary.enabled`.
+- **What fills the context.** New `grug context [transcript]` breaks the current session's context down by kind (your messages, Claude text/thinking, tool calls, results per tool, images) since the last compaction, with the biggest single items. The size alert now says the top consumers ("Mostly: Bash results 41%, Read results 22%").
+- Hook matchers now include `Grep` (pre) and `Glob` (post); run `grug update`.
+- New validated settings: `graphContext.hints`, `graphContext.readHintBytes` (0 or 4000-60000), `taskBoundary.enabled|minTokens`.
+
 ## 2.10.0
 
 Images, screenshots, PDFs and video. Measured in Claude Code 2.1: an image costs about 1 token per 880 pixels plus ~330 of overhead and is capped near 1.3 megapixels (~1.5k tokens). One image is cheap; the cost is that every image stays in the context and is re-read on each later reply (40 screenshots is ~60k tokens of context). So grug stops the repeats and offers cheaper ways in. Nothing here removes information: each rule skips a repeat of something already in context, or points at a cheaper route, and repeating the call always overrides it.

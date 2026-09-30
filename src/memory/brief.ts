@@ -42,7 +42,7 @@ export function buildBrief(db: MemoryDB, project: string, budgetTokens: number, 
   const ids: string[] = [];
   const b = new Budget(budgetTokens);
   const totalSessions = sessions.length + digests.reduce((s, d) => s + (d.data?.sessions || 0), 0);
-  b.add(`[grugbrain memory: ${projectName(project)}, ${totalSessions} past session(s). Auto-maintained; trust but verify against the code.]`);
+  b.add(`[grugbrain memory: ${projectName(project)}, ${totalSessions} past session(s). Auto-maintained. Check these notes (and the code map) before re-exploring the repo or asking the user again; verify against the code before relying.]`);
 
   const notes = nodes
     .filter((n) => n.type === 'note')

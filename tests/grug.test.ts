@@ -1091,7 +1091,7 @@ describe('graph-first code context', () => {
     const out: any = await runHook('session-start', { session_id: 'g1', cwd, source: 'startup' });
     const ctx: string = out.hookSpecificOutput.additionalContext;
     expect(ctx).toContain('[grugbrain code map');
-    expect(ctx).toContain('read_symbol');
+    expect(ctx).toMatch(/Grep for the symbol, then Read with offset\/limit/);
     expect(ctx).toContain('webhook.ts');
     expect(ctx).toContain('db.ts (');
     const { estimateTokens } = await import('../src/tokens.js');
@@ -1769,7 +1769,7 @@ describe('media wiring', () => {
   it('registers the hooks for MCP tools too, and shows media savings on the dashboard', async () => {
     installClaudeCode(false);
     const s = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
-    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|mcp__.*');
+    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|Grep|mcp__.*');
     expect(s.hooks.PostToolUse[0].matcher).toContain('mcp__.*');
     const { recordActivity } = await import('../src/stats.js');
     recordActivity({ kind: 'media', msg: 'Skipped a repeat screenshot', tokens: 1800 });
@@ -1780,5 +1780,188 @@ describe('media wiring', () => {
     const { setConfigValue } = await import('../src/config.js');
     expect(() => setConfigValue('mediaGuard.imageAlertTokens', '100')).toThrow(/0 \(off\) or between 5000 and 500000/);
     expect(() => setConfigValue('mediaGuard.pdfPages', '0')).toThrow(/between 1 and 100/);
+  });
+});
+
+// ---------------------------------------------------------------- v2.11 features: graph-first hints, adoption, /clear help
+import { grepSymbol } from '../src/navhint.js';
+import { looksLikeNewTask } from '../src/taskshift.js';
+import { analyzeTranscript, topConsumers } from '../src/ctxbreak.js';
+
+function bigCodeProject(name: string) {
+  const cwd = path.join(tmp, name);
+  fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(cwd, 'package.json'), '{}');
+  let body = '';
+  for (let i = 0; i < 150; i++) body += `export function orderHelper${i}(a: number, b: number) {\n  const total = a * ${i + 2} + b;\n  const discount = total > ${i * 10} ? total - ${i} : total + ${i};\n  const rounded = Math.round(discount * 100) / 100;\n  if (rounded < 0) throw new Error('negative total for helper ${i}');\n  const label = 'order-helper-${i}-' + String(rounded);\n  return { label, rounded, total, discount };\n}\n\n`;
+  body += `export function reconcileRefundLedger(entries: Array<{ id: string; cents: number }>) {\n  const byId = new Map<string, number>();\n  for (const e of entries) byId.set(e.id, (byId.get(e.id) || 0) + e.cents);\n  return [...byId.keys()];\n}\n`;
+  fs.writeFileSync(path.join(cwd, 'src', 'orders.ts'), body);
+  fs.writeFileSync(path.join(cwd, 'src', 'tiny.ts'), 'export const tiny = 1;\n');
+  return { cwd, big: path.join(cwd, 'src', 'orders.ts'), tiny: path.join(cwd, 'src', 'tiny.ts') };
+}
+
+describe('graph-first hints', () => {
+  const pre = (sid: string, cwd: string, tool: string, input: any) => runHook('pre-tool', { session_id: sid, cwd, tool_name: tool, tool_input: input }) as Promise<any>;
+
+  it('extracts the symbol a Grep is looking for', () => {
+    expect(grepSymbol('reconcileRefundLedger')).toBe('reconcileRefundLedger');
+    expect(grepSymbol('\\breconcileRefundLedger\\b')).toBe('reconcileRefundLedger');
+    expect(grepSymbol('function reconcileRefundLedger')).toBe('reconcileRefundLedger');
+    expect(grepSymbol('reconcileRefundLedger\\(')).toBe('reconcileRefundLedger');
+    expect(grepSymbol('TODO|FIXME')).toBeNull();
+    expect(grepSymbol('foo.*bar')).toBeNull();
+    expect(grepSymbol('ab')).toBeNull();
+  });
+
+  it('tells Claude where a searched symbol lives without blocking the search, once', async () => {
+    const { buildGraphIndex } = await import('../src/graph.js');
+    const { cwd } = bigCodeProject('nav1');
+    buildGraphIndex(cwd);
+    const out = await pre('n1', cwd, 'Grep', { pattern: 'reconcileRefundLedger' });
+    const h = out.hookSpecificOutput;
+    expect(h.permissionDecision).toBeUndefined(); // the search still runs
+    expect(h.additionalContext).toMatch(/`reconcileRefundLedger` is defined at src\/orders\.ts L\d+-\d+/);
+    expect(await pre('n1', cwd, 'Grep', { pattern: 'reconcileRefundLedger' })).toBeNull(); // once
+    expect(await pre('n1', cwd, 'Grep', { pattern: 'noSuchSymbolAnywhere' })).toBeNull();
+    expect(await pre('n1', cwd, 'Grep', { pattern: 'orders|cart' })).toBeNull();
+    const { setConfigValue } = await import('../src/config.js');
+    setConfigValue('graphContext.hints', 'false');
+    expect(await pre('n2', cwd, 'Grep', { pattern: 'orderHelper5' })).toBeNull();
+  });
+
+  it('suggests the outline once before a full read of a mid-size code file, never for small, ranged or worked-on files', async () => {
+    const { cwd, big, tiny } = bigCodeProject('nav2');
+    const d = await pre('n3', cwd, 'Read', { file_path: big });
+    expect(d.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(d.hookSpecificOutput.permissionDecisionReason).toMatch(/orders\.ts is ~\d+ tokens; its outline is only ~\d+.*offset\/limit.*(satisfies Edit).*repeat the same Read/);
+    expect(await pre('n3', cwd, 'Read', { file_path: big })).toBeNull(); // repeat allowed
+    expect(await pre('n4', cwd, 'Read', { file_path: big, offset: 10, limit: 40 })).toBeNull(); // ranged
+    expect(await pre('n4', cwd, 'Read', { file_path: tiny })).toBeNull(); // small
+    await runHook('post-tool', { session_id: 'n5', cwd, tool_name: 'Edit', tool_input: { file_path: big } });
+    expect(await pre('n5', cwd, 'Read', { file_path: big })).toBeNull(); // being edited: needs the real file
+    const { setConfigValue } = await import('../src/config.js');
+    expect(() => setConfigValue('graphContext.readHintBytes', '100')).toThrow(/0 \(off\) or between 4000 and 60000/);
+    setConfigValue('graphContext.readHintBytes', '0');
+    expect(await pre('n6', cwd, 'Read', { file_path: big })).toBeNull();
+  });
+
+  it('counts what Claude uses, and whether a hint was followed by a ranged read', async () => {
+    const { buildGraphIndex } = await import('../src/graph.js');
+    const { loadAdoption } = await import('../src/adoption.js');
+    const { cwd, big } = bigCodeProject('nav3');
+    buildGraphIndex(cwd);
+    await runHook('session-start', { session_id: 'a1', cwd, source: 'startup' });
+    const use = (tool: string, input: any) => runHook('post-tool', { session_id: 'a1', cwd, tool_name: tool, tool_input: input, tool_response: { content: [] } });
+    await pre('a1', cwd, 'Grep', { pattern: 'reconcileRefundLedger' }); // hint shown
+    await use('Grep', { pattern: 'reconcileRefundLedger' });
+    await use('Read', { file_path: big, offset: 1, limit: 20 }); // followed
+    await use('Glob', { pattern: '**/*.ts' });
+    await use('mcp__grugbrain__outline', { path: big });
+    await use('Read', { file_path: path.join(cwd, 'package.json') });
+    await runHook('pre-compact', { session_id: 'a1', cwd });
+    await runHook('session-end', { session_id: 'a1', cwd }); // second scoring adds nothing
+    expect(loadAdoption()).toMatchObject({ grug: 1, read: 2, grep: 1, glob: 1, navShown: 1, navFollowed: 1 });
+    const { renderOnce } = await import('../src/tui/dashboard.js');
+    expect(renderOnce({ tab: 0 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/graph-first hints.*100% followed by a ranged read; grug tools 1 vs Read\/Grep\/Glob 4/);
+  });
+});
+
+describe('what fills the context, and when to /clear', () => {
+  const asst = (content: any[], ts = new Date().toISOString()) => JSON.stringify({ type: 'assistant', timestamp: ts, message: { id: 'x' + Math.random(), model: 'claude-opus-5-5', content, usage: { input_tokens: 5, cache_read_input_tokens: 90000, output_tokens: 5 } } });
+  const user = (content: any) => JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content } });
+  const call = (id: string, name: string, input: any) => asst([{ type: 'tool_use', id, name, input }]);
+  const result = (id: string, text: string) => user([{ type: 'tool_result', tool_use_id: id, content: text }]);
+
+  it('breaks a transcript down by kind and names the biggest items', () => {
+    const t = path.join(tmp, 'brk.jsonl');
+    fs.writeFileSync(t, [
+      user('please look at the failing build'),
+      call('t1', 'Bash', { command: 'npm run build' }),
+      result('t1', 'error TS2322 '.repeat(2000)),
+      call('t2', 'Read', { file_path: 'a.ts' }),
+      result('t2', 'const a = 1;\n'.repeat(500)),
+      asst([{ type: 'text', text: 'The build fails because of a type error in a.ts.' }, { type: 'thinking', thinking: 'hmm '.repeat(50) }]),
+      JSON.stringify({ type: 'user', isCompactSummary: true, timestamp: new Date().toISOString(), message: { role: 'user', content: 'summary of everything before' } }),
+      call('t3', 'Bash', { command: 'ls' }),
+      result('t3', 'x'.repeat(30000))
+    ].join('\n') + '\n');
+    const b = analyzeTranscript(t);
+    expect(b.buckets[0].label).toBe('Bash results'); // only what is after the compaction summary
+    expect(b.buckets.some((x) => x.label === 'Read results')).toBe(false);
+    expect(b.buckets.find((x) => x.label === 'Bash results')!.tokens).toBeGreaterThan(6000);
+    expect(b.biggest[0].label).toMatch(/^Bash results/);
+    expect(topConsumers(b)).toMatch(/^Bash results \d+%/);
+    expect(analyzeTranscript(path.join(tmp, 'missing.jsonl')).total).toBe(0);
+    // the same transcript without a compaction summary shows the earlier Bash and Read output too
+    fs.writeFileSync(t, fs.readFileSync(t, 'utf8').split('\n').filter((l) => !l.includes('isCompactSummary')).join('\n'));
+    expect(analyzeTranscript(t).buckets.map((x) => x.label)).toEqual(expect.arrayContaining(['Bash results', 'Read results', 'Claude thinking', 'your messages']));
+  });
+
+  it('says what fills the context in the size alert', async () => {
+    const cwd = path.join(tmp, 'alertwhy');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'alertwhy.jsonl');
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(paths.config(), JSON.stringify({ autoCompact: { windowTokens: 0 } }));
+    fs.writeFileSync(t, [call('q1', 'Bash', { command: 'npm test' }), result('q1', 'FAIL '.repeat(20000)), asst([{ type: 'text', text: 'ok' }])].join('\n') + '\n');
+    await runHook('session-start', { session_id: 'w1', cwd, source: 'startup' });
+    fs.appendFileSync(t, asst([{ type: 'text', text: 'again' }]).replace('90000', '400000') + '\n');
+    const out: any = await runHook('user-prompt', { session_id: 'w1', cwd, transcript_path: t, prompt: 'add coupon support to checkout' });
+    expect(out.systemMessage).toMatch(/Mostly: Bash results \d+%/);
+  });
+
+  it('suggests /clear on a new task with a big context, but not on follow-ups or small contexts', async () => {
+    const cwd = path.join(tmp, 'shift');
+    fs.mkdirSync(cwd);
+    const t = path.join(tmp, 'shift.jsonl');
+    const at = (ctx: number) => fs.writeFileSync(t, asst([{ type: 'text', text: 'ok' }]).replace('90000', String(ctx)) + '\n');
+    at(120000);
+    await runHook('session-start', { session_id: 'x1', cwd, source: 'startup' });
+    const ask = (p: string) => runHook('user-prompt', { session_id: 'x1', cwd, transcript_path: t, prompt: p }) as Promise<any>;
+    for (const p of ['fix the stripe webhook retry handling in the payments worker', 'the webhook signature check still fails for retried events', 'add a test for the stripe webhook retry path']) expect((await ask(p))?.systemMessage).toBeUndefined();
+    // follow-ups of the same work
+    for (const p of ['also make the retry delay configurable in the payments worker', 'and update the readme section for the stripe webhook', 'now run the webhook tests again']) expect((await ask(p))?.systemMessage).toBeUndefined();
+    const shift = await ask('translate the onboarding email templates into spanish and german');
+    expect(shift.systemMessage).toMatch(/looks like a new task.*120k tokens.*\/clear.*Ignore this if it continues/);
+    expect(JSON.stringify(shift.hookSpecificOutput || {})).not.toMatch(/new task/); // never sent to Claude
+    expect((await ask('rewrite the pricing page copy for the annual plan discount'))?.systemMessage).toBeUndefined(); // not again right away
+    expect(readActivity().some((a: any) => a.kind === 'task-shift')).toBe(true);
+    at(30000);
+    expect((await runHook('user-prompt', { session_id: 'x2', cwd, transcript_path: t, prompt: 'design a database schema for the loyalty points ledger' }) as any)?.systemMessage).toBeUndefined();
+  });
+
+  it('classifies topic switches vs continuations on a labelled set', () => {
+    const base = ['refactor the checkout cart totals to use integer cents', 'the coupon discount is applied after tax, fix the order of operations', 'add unit tests for the cart totals module'].map((text, i) => ({ t: 'prompt' as const, ts: i, text }));
+    const files = [{ t: 'file' as const, ts: 9, path: '/x/src/cart.ts', op: 'edit' as const }];
+    const events = [...base, ...files];
+    const same = [
+      'also handle the rounding for the shipping cost in the cart',
+      'the totals still look wrong when a coupon is combined with tax',
+      'can you add a test for negative cart totals',
+      'update the checkout totals docs to mention integer cents',
+      'now run the cart tests',
+      'why does the coupon code get applied twice'
+    ];
+    const other = [
+      'write a bash script that backs up the postgres database every night',
+      'explain how kubernetes ingress controllers route traffic',
+      'draft a changelog entry announcing the new dark mode theme',
+      'set up eslint and prettier for the frontend monorepo',
+      'generate a python script that resizes all the marketing photos'
+    ];
+    const falseAlarms = same.filter((p) => looksLikeNewTask(p, events));
+    const hits = other.filter((p) => looksLikeNewTask(p, events));
+    expect(falseAlarms).toEqual([]);
+    expect(hits.length).toBeGreaterThanOrEqual(4);
+    expect(looksLikeNewTask('ok', events)).toBe(false);
+    expect(looksLikeNewTask('write a bash script that backs up the database', base.slice(0, 2))).toBe(false); // too little history
+  });
+
+  it('gives the session brief an explicit check-memory-first instruction', async () => {
+    const cwd = path.join(tmp, 'briefdir');
+    fs.mkdirSync(cwd);
+    seedNotes(cwd, ['Deploys go through fly.io, never from a laptop']);
+    const out: any = await runHook('session-start', { session_id: 'b9', cwd, source: 'startup' });
+    expect(out.hookSpecificOutput.additionalContext).toMatch(/Check these notes \(and the code map\) before re-exploring/);
   });
 });

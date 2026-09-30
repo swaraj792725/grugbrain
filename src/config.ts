@@ -122,6 +122,15 @@ export interface GrugConfig {
     enabled: boolean;
     /** Token budget for the repo map at session start. */
     mapTokens: number;
+    /** Graph-first hints at tool time: where a searched symbol lives (Grep), outline before a full Read of a mid-size code file. */
+    hints: boolean;
+    /** Code files at least this big (bytes) get the outline hint once before a full Read. 0 = off. */
+    readHintBytes: number;
+  };
+  /** Tell the user (not the model) when a prompt looks like a new task while the context is big: /clear is cheaper than dragging it along. */
+  taskBoundary: {
+    enabled: boolean;
+    minTokens: number;
   };
   memory: {
     enabled: boolean;
@@ -202,7 +211,13 @@ export function defaultConfig(): GrugConfig {
     },
     graphContext: {
       enabled: true,
-      mapTokens: 600
+      mapTokens: 600,
+      hints: true,
+      readHintBytes: 12000
+    },
+    taskBoundary: {
+      enabled: true,
+      minTokens: 60000
     },
     memory: {
       enabled: true,
@@ -232,6 +247,7 @@ const RANGES: Record<string, [number, number]> = {
   'autoRecall.maxTokens': [100, 4000],
   'autoRecall.sessionTokens': [200, 20000],
   'mediaGuard.pdfPages': [1, 100],
+  'taskBoundary.minTokens': [20000, 1000000],
   'graphContext.mapTokens': [100, 3000]
 };
 
@@ -270,6 +286,7 @@ export function setConfigValue(key: string, value: string): GrugConfig {
     v = Number(v);
     if (key === 'autoCompact.windowTokens' && v !== 0 && (v < 100000 || v > 1000000))
       throw new Error(`${key} must be 0 (Claude Code default) or between 100000 and 1000000`);
+    if (key === 'graphContext.readHintBytes' && v !== 0 && (v < 4000 || v > 60000)) throw new Error(`${key} must be 0 (off) or between 4000 and 60000`);
     if (key === 'mediaGuard.imageMaxEdge' && v !== 0 && (v < 512 || v > 4096)) throw new Error(`${key} must be 0 (never shrink) or between 512 and 4096`);
     if (key === 'mediaGuard.imageAlertTokens' && v !== 0 && (v < 5000 || v > 500000)) throw new Error(`${key} must be 0 (off) or between 5000 and 500000`);
     const range = RANGES[key];

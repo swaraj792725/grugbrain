@@ -264,6 +264,24 @@ grug config set mediaGuard.dedupeScreenshots false
 grug config set mediaGuard.pdfPages 8          # allow bigger PDF page reads before the text hint
 ```
 
+## grug make Claude use grug first (and clear when done)
+
+Grug push memory and map into context, but Claude decide what to do next. So grug also nudge at the moment Claude is about to search or read:
+
+- **Grep a symbol** grug know? Note rides along: "`foo` is at src/orders.ts L722-728". Next step is a small ranged Read, not whole file.
+- **Whole-file Read** of a mid-size code file? Grug ask once: Grep first, or Read with offset/limit (Edit is happy with that too). Repeat the Read and it goes through. Files you are editing: never asked.
+- Hints say **ranged Read**, not MCP tools: MCP tools load lazily and cost extra turns. Live test: edit task cost 55% less, context 31% less, edit still right.
+- **Brief tells Claude**: check these notes and the map before re-exploring.
+- **Adoption count** in `grug dash`: did Claude use grug tools, or just Read/Grep? Were hints followed?
+- **New task + big context?** Grug tell you (not Claude): `/clear` now. Same work? Ignore.
+- **`grug context`**: what fills this session: your messages, Claude text, tool results per tool, images, and the biggest items. The size alert names top consumers too.
+
+```bash
+grug context                                   # what is filling the current session
+grug config set graphContext.readHintBytes 20000   # ask about full reads only above 20 KB (0 = never)
+grug config set taskBoundary.enabled false     # no new-task /clear suggestions
+```
+
 ### config grug understand
 
 | key | default | what |
@@ -283,6 +301,8 @@ grug config set mediaGuard.pdfPages 8          # allow bigger PDF page reads bef
 | `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
 | `autoCompact.windowTokens` | `200000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
+| `graphContext.hints` / `readHintBytes` | `true` / `12000` | tool-time hints: symbol location on Grep, outline-first on mid-size full Reads |
+| `taskBoundary.enabled` / `minTokens` | `true` / `60000` | suggest `/clear` (to you) when a new task starts on a big context |
 | `mediaGuard.enabled` | `true` | screenshots / images / PDFs / video rules |
 | `mediaGuard.dedupeScreenshots` / `dedupeImageReads` / `guidance` | `true` | skip repeats, one-time hint |
 | `mediaGuard.imageMaxEdge` | `1200` | shrink image files longer than this (px); 0 = never |

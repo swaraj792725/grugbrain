@@ -2,7 +2,7 @@
  * Graph-first code context. Claude learns where things are from a small map and asks for the
  * exact symbol or line range, instead of reading whole files into a context it re-reads every reply.
  *
- *  - sessionCodeMap(): compact repo map + "use outline/read_symbol/..." at session start.
+ *  - sessionCodeMap(): compact repo map + "Grep, then ranged Read" guidance at session start.
  *  - relevantCode(): the few files/symbols matching a prompt (names, paths, line ranges; no bodies).
  *
  * The scan is cached per project under ~/.grug/cache/graph and refreshed in the background
@@ -132,8 +132,8 @@ export function overlayFresh(index: GraphIndex, fresh: string[], max = 12): Grap
 }
 
 export const GRAPH_FIRST =
-  'Graph-first: before a full-file Read, locate code with the grugbrain MCP tools (search or repo_map to find it, outline for a file\'s shape), ' +
-  'then read_symbol or read_lines (or Read with offset/limit) for just the part you need.';
+  'Before reading a whole file, use the code map and line ranges here: Grep for the symbol, then Read with offset/limit for just that part ' +
+  '(a ranged Read also satisfies Edit). The grugbrain outline tool shows a big unfamiliar file\'s shape cheaply.';
 
 /** Session-start block: instruction + compact repo map (hot files from memory rank higher). */
 export function sessionCodeMap(cwd: string, budgetTokens: number, hotFiles: string[] = []): { text: string; tokens: number; files: number; stale: boolean } | null {
