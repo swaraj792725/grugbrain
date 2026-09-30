@@ -2,6 +2,13 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.17.2
+
+Small savings no longer read as 0.
+
+- The big percentage shows 3 decimals under 1% (for example 0.002%) and the last-24-hours figure does too; the live ticker triggers on sub-cent gains.
+- A note explains why the measured number is small (most cost is Claude re-reading a long chat).
+
 ## 2.17.1
 
 App summary now always shows.
