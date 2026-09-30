@@ -2,6 +2,13 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.17.1
+
+App summary now always shows.
+
+- The grug line shows on the first prompt of every session as well as at session start and every Nth prompt, so you see it even if the app skips the session-start message.
+- It no longer stays silent when nothing is measured yet: it says grug is on and watching.
+
 ## 2.17.0
 
 Headline count only what grug measured.
