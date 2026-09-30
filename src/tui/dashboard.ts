@@ -124,12 +124,17 @@ function sideBySide(left: string[], right: string[], gap: number): string[] {
 const money = (n: number) => fmtUsd(n);
 
 /** Hero: the headline percentage (counts up), the donut of where it comes from, and a live sync strip. */
+/** Percent with enough digits that a small but real saving does not read as 0. */
+function pctText(v: number): string {
+  return v >= 9.95 ? `${Math.round(v)}%` : v >= 0.995 ? `${v.toFixed(2)}%` : v >= 0.0005 ? `${v.toFixed(3)}%` : v > 0 ? '<0.001%' : '0%';
+}
+
 function hero(st: State, width: number): string[] {
   const d = dataOf(st);
   const sv = d.savings;
   const target = sv.pct * 100;
   const shown = st.shown === undefined ? target : st.shown;
-  const digits = shown >= 9.95 ? String(Math.round(shown)) : shown.toFixed(2);
+  const digits = shown >= 9.95 ? String(Math.round(shown)) : shown >= 0.995 ? shown.toFixed(2) : shown >= 0.0005 ? shown.toFixed(3) : shown > 0 ? '0.000' : '0';
   const big = bigText(digits + '%').map((l) => boldFg(sv.pct > 0 ? 120 : 245)(l));
   const sinceOpen = st.baseNet === undefined ? 0 : sv.netUsd - st.baseNet;
   const day24 = computeSavings(Date.now() - DAY, d.day);
@@ -140,8 +145,9 @@ function hero(st: State, width: number): string[] {
     '',
     `${bold(money(sv.netUsd))} ${dim('kept in your pocket, out of')} ${money(sv.spendUsd + sv.netUsd)} ${dim('you would have paid')}`,
     `${colorBar(sv.pct, 28, 120)} ${dim('share of your bill')}`,
-    `${dim('Last 24 hours:')} ${bold(money(day24.netUsd))} ${dim(`(${(day24.pct * 100).toFixed(1)}%)`)}   ${sinceOpen >= 0.005 ? boldFg(120)(`▲ +${money(sinceOpen)} while you watched`) : dim('live: nothing new since you opened this')}`,
-    dim('Only counts text grug really cut out of your chats, priced at your model.')
+    `${dim('Last 24 hours:')} ${bold(money(day24.netUsd))} ${dim(`(${pctText(day24.pct * 100)})`)}   ${sinceOpen >= 0.0001 ? boldFg(120)(`▲ +${money(sinceOpen)} while you watched`) : dim('live: nothing new since you opened this')}`,
+    dim('Only counts text grug really cut out of your chats, priced at your model.'),
+    ...(sv.pct > 0 && sv.pct < 0.01 ? [dim('Small on purpose: most of your bill is Claude re-reading a long chat. /clear between tasks is the big lever.')] : [])
   ];
   if (sv.costUsd > 0) left.push(dim(`Already subtracted: ${money(sv.costUsd)} that grug's own notes cost.`));
   if (sv.estimatedUsd > 0.005) left.push(dim(`Not counted (estimates): about ${money(sv.estimatedUsd)} more from handoffs and cache.`));

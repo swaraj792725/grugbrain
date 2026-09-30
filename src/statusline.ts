@@ -233,7 +233,7 @@ export function composeAppLine(o: {
   const parts = ['🪨 grug'];
   if (o.savedPct !== undefined) {
     const pct = Math.round(o.savedPct * 100);
-    parts.push(`saved ${plainBar(o.savedPct, 10)} ~${pct}% (7d est.${o.netUsd && o.netUsd >= 0.01 ? `, ${usd(o.netUsd)}` : ''})`);
+    parts.push(`saved ${plainBar(o.savedPct, 10)} ~${pct}% (7d measured${o.netUsd && o.netUsd >= 0.01 ? `, ${usd(o.netUsd)}` : ''})`);
   }
   if (o.tokens > 0 && o.limit > 0) {
     const fr = o.tokens / o.limit;
@@ -252,7 +252,7 @@ export function appSummaryLine(transcriptPath: string | undefined, now = Date.no
     const cs = contextSize(transcriptPath);
     const limit = cfg.autoCompact.windowTokens > 0 ? cfg.autoCompact.windowTokens * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
     const recent = lastAction(now)?.msg;
-    if (!(saved && saved.pct > 0) && !cs.tokens) return undefined; // nothing measured yet: stay quiet
+    if (!(saved && saved.pct > 0) && !cs.tokens) return '🪨 grug │ on and watching │ nothing saved yet this week, it fills in as you work';
     return composeAppLine({ savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, recent });
   } catch {
     return undefined;

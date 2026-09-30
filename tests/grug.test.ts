@@ -691,6 +691,7 @@ describe('update notice', () => {
   });
 
   it('no notice when up to date', async () => {
+    await quietSummary();
     fs.mkdirSync(paths.home(), { recursive: true });
     fs.writeFileSync(path.join(paths.home(), 'update.json'), JSON.stringify({ current: '0.0.0-dev', latest: '0.0.0', newer: false, checkedAt: Date.now() }));
     const out: any = await runHook('session-start', { session_id: 'u2', cwd: tmp });
@@ -1411,6 +1412,7 @@ describe('cache-expiry notice', () => {
   });
 
   it('stays quiet while the cache is warm, when the session is small, or when it is switched off', async () => {
+    await quietSummary();
     const cwd = path.join(tmp, 'idle2');
     fs.mkdirSync(cwd);
     const t = path.join(tmp, 'idle2.jsonl');
@@ -1692,6 +1694,7 @@ describe('screenshot guard', () => {
   });
 
   it('tells the user (only) when images pile up in the context, once per level', async () => {
+    await quietSummary();
     const c = cwd();
     const t = path.join(tmp, 'imgs.jsonl');
     fs.writeFileSync(t, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'z', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 5, cache_read_input_tokens: 60000, output_tokens: 5 } } }) + '\n');
@@ -2277,7 +2280,8 @@ describe('app summary line', () => {
       const out: any = await runHook('user-prompt', { session_id: 'sum1', cwd, transcript_path: t, prompt: `please explain the billing module part ${i}` });
       msgs.push(out?.systemMessage);
     }
-    expect(msgs[0] || '').not.toContain('🪨 grug');
+    expect(msgs[0] || '').toContain('🪨 grug'); // the first prompt always shows it
+    expect(msgs[1] || '').not.toContain('🪨 grug');
     expect(msgs[2] || '').toContain('🪨 grug');
     cfg.appSummary.enabled = false;
     saveConfig(cfg);
@@ -2313,3 +2317,10 @@ describe('headline counts only measured savings', () => {
     expect(sv.pct).toBe(0);
   });
 });
+
+async function quietSummary(): Promise<void> {
+  const { loadConfig, saveConfig } = await import('../src/config.js');
+  const c = loadConfig();
+  c.appSummary.enabled = false; // the test below is about another notice only
+  saveConfig(c);
+}

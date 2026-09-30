@@ -154,7 +154,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           .join('\n') || undefined;
       const prompts = readBuffer(sid).filter((e) => e.t === 'prompt').length; // includes this one
       const every = Math.max(1, cfg.appSummary.everyPrompts);
-      const summary = cfg.appSummary.enabled && prompts % every === 0 ? appSummaryLine(input.transcript_path, now) : undefined;
+      const summary = cfg.appSummary.enabled && (prompts === 1 || prompts % every === 0) ? appSummaryLine(input.transcript_path, now) : undefined;
       alert = [alert, summary].filter(Boolean).join('\n') || undefined;
       const done = (extra?: HookOutput): HookOutput => (alert || extra ? { ...(alert ? { systemMessage: alert } : {}), ...(extra || {}) } : null);
       const project = projectKey(cwd);

@@ -2,6 +2,20 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.17.2
+
+Small savings no longer read as 0.
+
+- The big percentage shows 3 decimals under 1% (for example 0.002%) and the last-24-hours figure does too; the live ticker triggers on sub-cent gains.
+- A note explains why the measured number is small (most cost is Claude re-reading a long chat).
+
+## 2.17.1
+
+App summary now always shows.
+
+- The grug line shows on the first prompt of every session as well as at session start and every Nth prompt, so you see it even if the app skips the session-start message.
+- It no longer stays silent when nothing is measured yet: it says grug is on and watching.
+
 ## 2.17.0
 
 Headline count only what grug measured.
