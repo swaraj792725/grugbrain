@@ -69,3 +69,8 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 
 ## Subagents (v2.21)
 - Hooks fire inside subagents with `agent_id`/`agent_type` (PreToolUse, PostToolUse verified live); SessionStart/UserPromptSubmit do not, so `subagent-start` injects terse style + read rule. Subagent transcripts are separate files at `<session>/subagents/agent-*.jsonl` (isSidechain true); meterTranscript reads them too, with per-file offsets. v2.22: pre-tool on `Agent|Task` appends autoRecall (isolated: true, cap autoRecall.subagentTokens) to the task prompt via updatedInput; verified live. Full session code map not sent to subagents (cost).
+
+## Quality gates (v2.23)
+- verify.ts (Stop hook returns `{decision:'block', reason}`; change-gated by a file signature, `verifyMaxRounds`, timeout/unknown -> silent, skipped for subagents), editguard.ts (PostToolUse `additionalContext`, syntax only), conventions.ts (PreToolUse `additionalContext` on Edit/Write, notes naming the file, once per session via `injected` events), graph.ts `projectImports` ("-> uses" in code hints; graph cache now keeps up to 8 relative imports per file). Config group `quality.*`. Stop hook timeout is 120 s.
+- Tests that run the stop hook sandbox PATH to /usr/bin:/bin (no npm), so set `quality.verifyCommand` via saveConfig.
+- NOT measured: quality A/B (bench task `edge-case-trap` exists; needs live claude). Do not claim a "smarter" multiplier; claim only checked work and fewer repeated attempts once measured.

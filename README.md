@@ -313,6 +313,11 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `autoCompact.windowTokens` | `150000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
 | `autoRecall.subagents` | `true` | add recall + code hints for the task to each subagent prompt (cap `autoRecall.subagentTokens`, 500) |
+| `quality.verify` | `true` | at Stop, when code files changed this turn, run the project's own check (typecheck + tests) once and send Claude back with only the failing lines; silent when it passes |
+| `quality.verifyCommand` | `''` | the check to run instead of the auto-detected one |
+| `quality.verifyTimeoutSec` / `quality.verifyMaxRounds` | `90` / `2` | hard timeout (a timeout never blocks) and the most send-backs per prompt |
+| `quality.editGuard` | `true` | after Edit/Write, check the file's syntax (JSON, JS, TS, Python, shell) and tell Claude at once if the edit broke it |
+| `quality.conventions` | `true` | before editing a file, show the stored decisions/rules that name it (2 at most, once per session) |
 | `graphContext.hints` / `readHintBytes` | `true` / `12000` | tool-time hints: symbol location on Grep, outline-first on mid-size full Reads |
 | `taskBoundary.enabled` / `minTokens` | `true` / `60000` | suggest `/clear` (to you) when a new task starts on a big context |
 | `mediaGuard.enabled` | `true` | screenshots / images / PDFs / video rules |

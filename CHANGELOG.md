@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.23.0
+- **Quality gates: fewer wrong answers, paid for only when something is wrong.** Grug cannot make the model smarter; these change what it sees and whether its work is checked.
+  - **Verify before done.** At Stop, if code files changed this turn, grug runs the project's own check (`tsc --noEmit`/`typecheck` plus `npm test`, `cargo check`, `go vet`, `pytest -x`, or `quality.verifyCommand`). If it fails, Claude is sent back with only the failing lines (about 300 tokens, not the full log). Runs once per distinct set of edits, at most `quality.verifyMaxRounds` (2) send-backs per prompt, hard timeout 90 s; a timeout, a pass, docs-only edits or no check found all stay silent. Not applied inside subagents.
+  - **Edit guard.** After Edit/Write/MultiEdit, the file's syntax is checked locally (JSON, JS, Python, shell, and TypeScript through the project's own `typescript`). Silent when fine; a few lines when an edit broke the file.
+  - **Conventions at edit time.** Before editing a file, stored decisions/causes/preferences/pinned rules that name that file or folder are shown (2 at most, once per session, cleared on compaction).
+  - **Dependency chain in code hints.** Recall code hints now add `→ uses a.ts, b.ts` (up to 3 in-project imports), so Claude finds collaborators without a search. This is the dependency part of Aider's repo map, not a full PageRank.
+  - The bench gained `edge-case-trap` (a task whose test catches an edge case the prompt does not list). The A/B of quality on vs off is not run yet: expect the honest gain to be fewer failed-then-shipped tasks, with extra latency of the check time on edits that touch code. Run `grug update` (Stop hook timeout and PreToolUse matcher change). Turn everything off with `grug config set quality.verify false` (and `quality.editGuard`, `quality.conventions`).
+
 ## 2.22.0
 - **Subagents get recall and code hints.** When Claude launches a subagent (Agent/Task tool), grug appends the recall block for that task (memory notes, code locations with line ranges, earlier-session excerpts) to the subagent's prompt, through the PreToolUse `updatedInput`. Each subagent is a fresh context, so nothing is deduped against the main session, and the block is capped by `autoRecall.subagentTokens` (default 500). Turn off with `grug config set autoRecall.subagents false`. Checked live: the subagent's transcript starts with the task plus the hints. The full per-session code map is not sent to subagents (600 tokens would often cost more than a short subagent saves). Run `grug update` to register the Agent matcher.
 

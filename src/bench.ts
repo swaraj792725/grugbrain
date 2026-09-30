@@ -43,7 +43,36 @@ process.exit(failed ? 1 : 0);
 `;
 }
 
+function durationTests(): string {
+  return `import { parseDuration as p } from './src/duration.js';
+const cases = [['90s', 90], ['2h', 7200], ['1h30m', 5400], ['45m', 2700], ['1h 30m', 5400], ['0s', 0], ['', null], ['abc', null], ['1d', null]];
+let bad = 0;
+for (const [i, want] of cases) {
+  let got;
+  try { got = p(i); } catch { got = null; }
+  if (got !== want) { console.error('FAIL parseDuration(' + JSON.stringify(i) + ') expected ' + want + ' got ' + got); bad++; }
+}
+process.exit(bad ? 1 : 0);
+`;
+}
+
 export const TASKS: BenchTask[] = [
+  {
+    id: 'edge-case-trap',
+    exercises: 'verify-before-done (quality gate: the project test catches an edge case the prompt does not list)',
+    prompt: 'Implement parseDuration(str) in src/duration.js: it turns strings like "90s", "2h" or "1h30m" into a number of seconds. Export it as a named export. The project has tests (`npm test`).',
+    files: () => ({
+      'package.json': JSON.stringify({ name: 'bench-duration', type: 'module', private: true, scripts: { test: 'node test.js' } }, null, 2),
+      'test.js': durationTests(),
+      'src/duration.js': `// TODO: implement parseDuration\nexport {};\n`
+    }),
+    check: (dir) => {
+      const untouched = sha(fs.readFileSync(path.join(dir, 'test.js'), 'utf8')) === sha(durationTests());
+      if (!untouched) return { pass: false, why: 'edited the test file' };
+      const r = spawnSync(process.execPath, ['test.js'], { cwd: dir, encoding: 'utf8', timeout: 20000 });
+      return r.status === 0 ? { pass: true, why: 'all edge cases pass' } : { pass: false, why: 'an edge case still fails' };
+    }
+  },
   {
     id: 'fix-failing-test',
     exercises: 'test-output summarizer, trimming',
@@ -132,9 +161,9 @@ function hookSettings(): any {
   return {
     SessionStart: [{ hooks: [cmd('session-start')] }],
     UserPromptSubmit: [{ hooks: [cmd('user-prompt')] }],
-    PreToolUse: [{ matcher: 'Read', hooks: [cmd('pre-tool')] }],
+    PreToolUse: [{ matcher: 'Read|Grep|Edit|Write|MultiEdit', hooks: [cmd('pre-tool')] }],
     PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep', hooks: [cmd('post-tool')] }],
-    Stop: [{ hooks: [cmd('stop')] }]
+    Stop: [{ hooks: [{ ...cmd('stop'), timeout: 120 }] }]
   };
 }
 

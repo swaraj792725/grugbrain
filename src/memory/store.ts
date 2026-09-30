@@ -61,6 +61,7 @@ export type BufferEvent =
   | { t: 'guided'; ts: number }
   | { t: 'use'; ts: number; k: 'grug' | 'read' | 'grep' | 'glob' }
   | { t: 'nav'; ts: number; key: string; files: string[] }
+  | { t: 'verify'; ts: number; sig: string; ok: boolean | null; ms: number }
   | { t: 'adopted'; ts: number }
   | { t: 'boundary'; ts: number; prompts: number }
   | { t: 'shrunk'; ts: number; key: string }

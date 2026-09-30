@@ -11,7 +11,7 @@ import { cavemanCompress, terseStyle } from '../src/compress/caveman.js';
 import { repoMap } from '../src/compress/repomap.js';
 import { transformRequest } from '../src/proxy/transform.js';
 import { startProxy } from '../src/proxy/server.js';
-import { defaultConfig, paths, userHome } from '../src/config.js';
+import { defaultConfig, saveConfig, paths, userHome } from '../src/config.js';
 import {
   addNote, appendBuffer, consolidate, ingestSession, loadMemory, MemoryDB, projectKey, readBuffer
 } from '../src/memory/store.js';
@@ -1859,7 +1859,7 @@ describe('media wiring', () => {
   it('registers the hooks for MCP tools too, and shows media savings on the dashboard', async () => {
     installClaudeCode(false);
     const s = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
-    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|Grep|Agent|Task|mcp__.*');
+    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|Grep|Edit|Write|MultiEdit|Agent|Task|mcp__.*');
     expect(s.hooks.PostToolUse[0].matcher).toContain('mcp__.*');
     const { recordActivity } = await import('../src/stats.js');
     recordActivity({ kind: 'media', msg: 'Skipped a repeat screenshot', tokens: 1800 });
@@ -2897,3 +2897,136 @@ async function quietSummary(): Promise<void> {
   c.autoCompact.windowTokens = 200000; // keep the context alert quiet at the 200k sizes these tests use
   saveConfig(c);
 }
+
+describe('quality gates (v2.23)', () => {
+  const edited = (sid: string, cwd: string, rel: string) => {
+    appendBuffer(sid, { t: 'prompt', ts: Date.now() - 5000, text: 'fix it' });
+    appendBuffer(sid, { t: 'file', ts: Date.now() - 4000, path: path.join(cwd, rel), op: 'edit' });
+  };
+  const proj = (files: Record<string, string>) => {
+    const cwd = fs.mkdtempSync(path.join(tmp, 'q-'));
+    for (const [f, c] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(cwd, f)), { recursive: true });
+      fs.writeFileSync(path.join(cwd, f), c);
+    }
+    return cwd;
+  };
+
+  it('detectCheck picks the project check and honours the override', async () => {
+    const { detectCheck } = await import('../src/verify.js');
+    expect(detectCheck(proj({ 'package.json': '{"scripts":{"test":"vitest run"}}' }))).toBe('npm test --silent');
+    expect(detectCheck(proj({ 'package.json': '{"scripts":{"typecheck":"tsc","test":"vitest"}}' }))).toBe('npm run -s typecheck && npm test --silent');
+    expect(detectCheck(proj({ 'package.json': '{"scripts":{"test":"echo \\"Error: no test specified\\" && exit 1"}}' }))).toBeNull();
+    expect(detectCheck(proj({ 'Cargo.toml': '' }))).toBe('cargo check -q');
+    expect(detectCheck(proj({ 'README.md': 'x' }))).toBeNull();
+    expect(detectCheck(proj({}), ' make check ')).toBe('make check');
+  });
+
+  it('verify: silent with no edits, blocks once on failure with only the failing lines, then stops after max rounds', async () => {
+    const { verifyAtStop, failureExcerpt } = await import('../src/verify.js');
+    const cfg = defaultConfig();
+    const cwd = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x' });
+    let ran = 0;
+    const fail = () => (ran++, { status: 1, timedOut: false, output: 'ok 1\nok 2\n' + 'noise\n'.repeat(200) + 'FAIL a.test.js\nAssertionError: expected 3 to be 4\n    at a.test.js:9:1\n' });
+    // no edits this turn -> nothing runs
+    appendBuffer('v1', { t: 'prompt', ts: Date.now() - 9000, text: 'hi' });
+    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
+    expect(ran).toBe(0);
+    edited('v1', cwd, 'a.js');
+    const r1 = verifyAtStop(cfg, 'v1', cwd, Date.now(), fail);
+    expect(r1.block).toBe(true);
+    expect(r1.reason).toContain('AssertionError: expected 3 to be 4');
+    expect(r1.reason).not.toContain('noise');
+    expect(r1.reason!.length).toBeLessThan(1000);
+    // the same edits are never re-checked
+    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
+    expect(ran).toBe(1);
+    // a new edit -> checked again (round 2), then the cap holds
+    fs.writeFileSync(path.join(cwd, 'a.js'), 'xy');
+    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(true);
+    fs.writeFileSync(path.join(cwd, 'a.js'), 'xyz');
+    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
+    expect(ran).toBe(2);
+    expect(failureExcerpt('a\nb\nc')).toBe('a\nb\nc');
+  });
+
+  it('verify: pass, timeout, docs-only edits and the off switch never block', async () => {
+    const { verifyAtStop } = await import('../src/verify.js');
+    const cfg = defaultConfig();
+    const cwd = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x', 'README.md': 'x' });
+    let ran = 0;
+    const pass = () => (ran++, { status: 0, timedOut: false, output: '' });
+    const slow = () => (ran++, { status: null, timedOut: true, output: '' });
+    edited('p1', cwd, 'a.js');
+    expect(verifyAtStop(cfg, 'p1', cwd, Date.now(), pass).block).toBe(false);
+    edited('p2', cwd, 'a.js');
+    expect(verifyAtStop(cfg, 'p2', cwd, Date.now(), slow).block).toBe(false);
+    edited('p3', cwd, 'README.md');
+    expect(verifyAtStop(cfg, 'p3', cwd, Date.now(), pass).block).toBe(false);
+    expect(ran).toBe(2);
+    cfg.quality.verify = false;
+    edited('p4', cwd, 'a.js');
+    expect(verifyAtStop(cfg, 'p4', cwd, Date.now(), () => ({ status: 1, timedOut: false, output: 'boom' })).block).toBe(false);
+  });
+
+  it('verify: the real stop hook runs the check and returns decision:block (and not for subagents)', async () => {
+    const cwd = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x' });
+    const cfg = defaultConfig();
+    cfg.quality.verifyCommand = 'echo AssertionError: nope 1>&2; exit 3';
+    saveConfig(cfg);
+    edited('h1', cwd, 'a.js');
+    const out: any = await runHook('stop', { session_id: 'h1', cwd });
+    expect(out.decision).toBe('block');
+    expect(out.reason).toContain('AssertionError: nope');
+    edited('h2', cwd, 'a.js');
+    expect(await runHook('stop', { session_id: 'h2', cwd, agent_id: 'agent-1' })).toBeNull();
+  });
+
+  it('edit guard: reports a broken file, stays silent on a healthy one', async () => {
+    const { syntaxError, editGuardMessage } = await import('../src/editguard.js');
+    const cwd = proj({ 'ok.json': '{"a":1}', 'bad.json': '{"a":', 'ok.js': 'export const a = 1;\n', 'bad.js': 'function (', 'bad.py': 'def f(:\n  pass\n', 'notes.txt': '((' });
+    expect(syntaxError(path.join(cwd, 'ok.json'), cwd)).toBeNull();
+    expect(syntaxError(path.join(cwd, 'bad.json'), cwd)).toMatch(/invalid JSON/);
+    expect(syntaxError(path.join(cwd, 'ok.js'), cwd)).toBeNull();
+    expect(syntaxError(path.join(cwd, 'bad.js'), cwd)).toBeTruthy();
+    expect(syntaxError(path.join(cwd, 'notes.txt'), cwd)).toBeNull();
+    const msg = editGuardMessage([path.join(cwd, 'ok.js'), path.join(cwd, 'bad.js'), '/etc/hosts'], cwd);
+    expect(msg).toContain('bad.js');
+    expect(msg).not.toContain('ok.js');
+    expect(editGuardMessage([path.join(cwd, 'ok.js')], cwd)).toBeNull();
+  });
+
+  it('edit guard: the post-tool hook attaches the error to an Edit; a healthy edit adds nothing', async () => {
+    const cwd = proj({ 'bad.json': '{"a":', 'ok.json': '{"a":1}' });
+    const bad: any = await runHook('post-tool', { session_id: 'g1', cwd, tool_name: 'Edit', tool_input: { file_path: path.join(cwd, 'bad.json') }, tool_response: { filePath: 'x' } });
+    expect(bad.hookSpecificOutput.additionalContext).toMatch(/syntax error/);
+    expect(await runHook('post-tool', { session_id: 'g2', cwd, tool_name: 'Edit', tool_input: { file_path: path.join(cwd, 'ok.json') }, tool_response: { filePath: 'x' } })).toBeNull();
+  });
+
+  it('conventions: notes naming the file surface once before an edit, nothing for unrelated files', async () => {
+    const cwd = proj({ 'src/billing/invoice.ts': 'x', 'src/other.ts': 'y' });
+    const db = loadMemory();
+    addNote(db, projectKey(cwd), 'invoice.ts must round cents with Math.round, never floor: finance audit rule', Date.now(), { kind: 'decision' });
+    addNote(db, projectKey(cwd), 'Command that works here: npm test -- invoice.ts', Date.now(), { kind: 'command' });
+    fs.mkdirSync(paths.home(), { recursive: true });
+    fs.writeFileSync(paths.memory(), JSON.stringify(db));
+    const call = (f: string) => runHook('pre-tool', { session_id: 'c1', cwd, tool_name: 'Edit', tool_input: { file_path: path.join(cwd, f) } }) as Promise<any>;
+    const a = await call('src/billing/invoice.ts');
+    expect(a.hookSpecificOutput.additionalContext).toContain('Math.round, never floor');
+    expect(a.hookSpecificOutput.additionalContext).not.toContain('Command that works');
+    expect(await call('src/billing/invoice.ts')).toBeNull(); // once per session
+    expect(await call('src/other.ts')).toBeNull();
+  });
+
+  it('code hints show what the file uses', async () => {
+    const { buildGraphIndex, relevantCode } = await import('../src/graph.js');
+    const cwd = proj({
+      'package.json': '{}',
+      'src/ledger.ts': 'export function postEntry() { return 1; }\n',
+      'src/refunds.ts': "import { postEntry } from './ledger.js';\nexport function issueRefund() { return postEntry(); }\n"
+    });
+    buildGraphIndex(cwd);
+    const hints = relevantCode(cwd, ['issue', 'refund'], 'issue refund issuerefund');
+    expect(hints.map((h) => h.line).join('\n')).toMatch(/refunds\.ts.*→ uses ledger\.ts/);
+  });
+});

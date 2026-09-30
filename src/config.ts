@@ -162,6 +162,21 @@ export interface GrugConfig {
     /** Code files at least this big (bytes) get the outline hint once before a full Read. 0 = off. */
     readHintBytes: number;
   };
+  /** Quality gates: check the work before Claude says done, and catch broken edits at once. Cost tokens only when something is wrong. */
+  quality: {
+    /** Stop hook: run the project's check once when files changed this turn and send Claude back if it fails. */
+    verify: boolean;
+    /** Check command ('' = detect: typecheck script, tsc, test script, pytest, cargo check, go vet). */
+    verifyCommand: string;
+    /** Give up (and stay silent) after this many seconds. */
+    verifyTimeoutSec: number;
+    /** Most times one turn can be sent back for the same problem. */
+    verifyMaxRounds: number;
+    /** After Edit/Write: a syntax check of that file; only a real error is reported. */
+    editGuard: boolean;
+    /** Before an edit: the stored project rules that concern the file (once per session each). */
+    conventions: boolean;
+  };
   /** Tell the user (not the model) when a prompt looks like a new task while the context is big: /clear is cheaper than dragging it along. */
   taskBoundary: {
     enabled: boolean;
@@ -268,6 +283,14 @@ export function defaultConfig(): GrugConfig {
       hints: true,
       readHintBytes: 12000
     },
+    quality: {
+      verify: true,
+      verifyCommand: '',
+      verifyTimeoutSec: 90,
+      verifyMaxRounds: 2,
+      editGuard: true,
+      conventions: true
+    },
     taskBoundary: {
       enabled: true,
       minTokens: 60000
@@ -304,7 +327,9 @@ const RANGES: Record<string, [number, number]> = {
   'autoRecall.subagentTokens': [100, 2000],
   'mediaGuard.pdfPages': [1, 100],
   'taskBoundary.minTokens': [20000, 1000000],
-  'graphContext.mapTokens': [100, 3000]
+  'graphContext.mapTokens': [100, 3000],
+  'quality.verifyTimeoutSec': [5, 600],
+  'quality.verifyMaxRounds': [1, 5]
 };
 
 export function loadConfig(): GrugConfig {
