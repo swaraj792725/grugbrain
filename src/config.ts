@@ -92,6 +92,8 @@ export interface GrugConfig {
     /** Re-run the status line every N seconds so the animation and timers move (Claude Code refreshInterval, min 1). */
     refreshSeconds: number;
   };
+  /** One-line grug summary (savings bar, context bar) as a user-only message, for the desktop app where no status line is drawn. */
+  appSummary: { enabled: boolean; everyPrompts: number };
   /** Tell the user (not the model) when a session's context gets expensive; levels double from firstTokens. */
   contextAlert: {
     enabled: boolean;
@@ -212,6 +214,7 @@ export function defaultConfig(): GrugConfig {
     },
     updateCheck: true,
     statusLine: { enabled: true, wrap: '', tips: true, panel: true, refreshSeconds: 2 },
+    appSummary: { enabled: true, everyPrompts: 8 },
     contextAlert: {
       enabled: true,
       firstTokens: 150000

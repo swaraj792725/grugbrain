@@ -1931,6 +1931,10 @@ describe('what fills the context, and when to /clear', () => {
   it('suggests /clear on a new task with a big context, but not on follow-ups or small contexts', async () => {
     const cwd = path.join(tmp, 'shift');
     fs.mkdirSync(cwd);
+    const { loadConfig, saveConfig } = await import('../src/config.js');
+    const c0 = loadConfig();
+    c0.appSummary.enabled = false; // this test is about the task-shift notice only
+    saveConfig(c0);
     const t = path.join(tmp, 'shift.jsonl');
     const at = (ctx: number) => fs.writeFileSync(t, asst([{ type: 'text', text: 'ok' }]).replace('90000', String(ctx)) + '\n');
     at(120000);
@@ -2242,5 +2246,44 @@ describe('auto-pinned rules', () => {
     const autos = Object.values(db.nodes).filter((n) => n.data?.pinned && n.data?.auto);
     expect(autos.length).toBe(MAX_AUTO_PINS);
     expect(db.nodes[manual.id].data?.pinned).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------- v2.16 app summary line
+describe('app summary line', () => {
+  it('composes a plain one-line summary with savings and context bars', async () => {
+    const { composeAppLine } = await import('../src/statusline.js');
+    const l = composeAppLine({ savedPct: 0.42, netUsd: 120, tokens: 90000, limit: 120000, recent: 'Trimmed npm output' });
+    expect(l).toContain('🪨 grug');
+    expect(l).toMatch(/saved [█▏▎▍▌▋▊▉░]{10} ~42%/);
+    expect(l).toContain('75% of /clear limit (90k)');
+    expect(l).toContain('last: Trimmed npm output');
+    expect(l).not.toContain('\x1b');
+    expect(l).not.toContain('\n');
+    expect(composeAppLine({ savedPct: 0.1, tokens: 130000, limit: 120000 })).toContain('/clear soon');
+  });
+
+  it('is sent to the user on every Nth prompt, not on the others, and is off when disabled', async () => {
+    const { saveConfig, loadConfig } = await import('../src/config.js');
+    const cwd = path.join(tmp, 'sumproj');
+    fs.mkdirSync(cwd, { recursive: true });
+    const cfg = loadConfig();
+    cfg.appSummary = { enabled: true, everyPrompts: 3 };
+    saveConfig(cfg);
+    const t = path.join(tmp, 'sum.jsonl');
+    fs.writeFileSync(t, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'a1', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 5, cache_read_input_tokens: 90000, output_tokens: 5 } } }) + '\n');
+    const msgs: Array<string | undefined> = [];
+    for (let i = 0; i < 3; i++) {
+      const out: any = await runHook('user-prompt', { session_id: 'sum1', cwd, transcript_path: t, prompt: `please explain the billing module part ${i}` });
+      msgs.push(out?.systemMessage);
+    }
+    expect(msgs[0] || '').not.toContain('🪨 grug');
+    expect(msgs[2] || '').toContain('🪨 grug');
+    cfg.appSummary.enabled = false;
+    saveConfig(cfg);
+    for (let i = 0; i < 3; i++) {
+      const out: any = await runHook('user-prompt', { session_id: 'sum2', cwd, prompt: `please explain the billing module part ${i}` });
+      expect(out?.systemMessage || '').not.toContain('🪨 grug');
+    }
   });
 });

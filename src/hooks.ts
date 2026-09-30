@@ -17,6 +17,7 @@ import { buildBrief, recall } from './memory/brief.js';
 import { withMemoryLock } from './memory/maintain.js';
 import { addNote, appendBuffer, BufferEvent, loadMemory, projectKey, readBuffer, saveMemory } from './memory/store.js';
 import { recordActivity } from './stats.js';
+import { appSummaryLine } from './statusline.js';
 import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
@@ -131,7 +132,9 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (warm) spawnDetached(['warm', cwd]);
       // Shown to the user only (not sent to Claude, costs no tokens).
       const upd = cachedUpdate();
-      const systemMessage = upd?.newer ? `🪨 grugbrain ${upd.latest} is available (you have ${upd.current}). Run in a terminal: grug update` : undefined;
+      const updMsg = upd?.newer ? `🪨 grugbrain ${upd.latest} is available (you have ${upd.current}). Run in a terminal: grug update` : undefined;
+      const sum = cfg.appSummary.enabled && input.source !== 'compact' ? appSummaryLine(input.transcript_path) : undefined;
+      const systemMessage = [sum, updMsg].filter(Boolean).join('\n') || undefined;
       if (!parts.length) return systemMessage ? { systemMessage } : null;
       return { ...(systemMessage ? { systemMessage } : {}), hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: parts.join('\n\n') } };
     }
@@ -140,7 +143,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const prompt = input.prompt || '';
       const priorEvents = cfg.taskBoundary.enabled ? readBuffer(sid) : [];
       appendBuffer(sid, { t: 'prompt', ts: now, text: prompt.slice(0, 2000) });
-      const alert =
+      let alert =
         [
           contextAlert(cfg, sid, cwd, input.transcript_path, now),
           idleAlert(cfg, sid, cwd, input.transcript_path, now),
@@ -149,6 +152,10 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         ]
           .filter(Boolean)
           .join('\n') || undefined;
+      const prompts = readBuffer(sid).filter((e) => e.t === 'prompt').length; // includes this one
+      const every = Math.max(1, cfg.appSummary.everyPrompts);
+      const summary = cfg.appSummary.enabled && prompts % every === 0 ? appSummaryLine(input.transcript_path, now) : undefined;
+      alert = [alert, summary].filter(Boolean).join('\n') || undefined;
       const done = (extra?: HookOutput): HookOutput => (alert || extra ? { ...(alert ? { systemMessage: alert } : {}), ...(extra || {}) } : null);
       const project = projectKey(cwd);
       if (cfg.memory.enabled) {

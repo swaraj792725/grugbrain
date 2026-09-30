@@ -327,6 +327,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `memory.enabled` | `true` | memory capture + brief + recall |
 | `memory.briefTokens` / `recallTokens` | `700` / `250` | hard budgets |
 | `memory.halfLifeDays` / `foldAfterDays` / `maxNodesPerProject` | `14` / `21` / `400` | how grug forget |
+| `appSummary.enabled` / `everyPrompts` | `true` / `8` | one-line savings + context summary as a user-only message (for the desktop app, which draws no status line) |
 | `memory.archive` / `archiveMaxMb` | `true` / `60` | keep text-only copy of conversations for deep `history` search (never loaded into context) |
 | `memory.vaultDir` | `~/.grug/vault` | Obsidian output |
 

@@ -41,6 +41,8 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - handoff.ts fills priority blocks within the same 1200-token cap; archive.ts keeps a text-only conversation copy (memory.archive, archiveMaxMb) read only by deep `history`; standing rules auto-pin (MAX_AUTO_PINS=6).
 - A random-indexing semantic layer was measured on the real corpus and was no better than BM25 + synonyms (7/10 vs 5/10 vs fused 6/10), so it was not shipped. Revisit only with a real embedding model, opt-in.
 
+- The desktop Code tab draws NO status line (confirmed by the user; terminal `claude` does). For the app, hooks.ts sends `appSummaryLine` (statusline.ts) as a user-only systemMessage at session start and every `appSummary.everyPrompts` prompts (v2.16).
+
 ## Open items
 - Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.
