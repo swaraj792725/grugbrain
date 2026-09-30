@@ -54,8 +54,8 @@ export function buildGraphIndex(cwd: string, deadline = 0): GraphIndex | null {
   const root = path.resolve(cwd);
   const files = scanRepo(root, 5000, deadline);
   if (!files.complete && deadline) return null;
-  // Imports are only needed to count importedBy; drop them to keep the cache small.
-  const g: GraphIndex = { v: 1, root, built: Date.now(), files: files.map((f) => ({ ...f, imports: [] })) };
+  // Keep only a few relative imports per file (the dependency chain in code hints); drop the rest to keep the cache small.
+  const g: GraphIndex = { v: 1, root, built: Date.now(), files: files.map((f) => ({ ...f, imports: f.imports.filter((i) => i.startsWith('.')).slice(0, 8) })) };
   try {
     writeJsonAtomic(indexPath(cwd), g);
   } catch {
@@ -124,7 +124,7 @@ export function overlayFresh(index: GraphIndex, fresh: string[], max = 12): Grap
         continue;
       }
     }
-    const entry: RepoFile = { rel, bytes: st.size, mtime: st.mtimeMs, symbols, symLines, imports: [], importedBy: old?.importedBy || 0 };
+    const entry: RepoFile = { rel, bytes: st.size, mtime: st.mtimeMs, symbols, symLines, imports: old?.imports || [], importedBy: old?.importedBy || 0 };
     if (old) files[files.indexOf(old)] = entry;
     else files.push(entry);
   }
@@ -164,6 +164,25 @@ export interface CodeHint {
   /** Dedupe keys: the file and each symbol shown. */
   keys: string[];
   line: string;
+}
+
+/** In-project files this file imports (relative imports only), in source order, at most `max`. */
+export function projectImports(index: GraphIndex, f: RepoFile, max = 3): string[] {
+  const byStem = new Map<string, RepoFile>();
+  for (const x of index.files) {
+    byStem.set(x.rel, x);
+    byStem.set(x.rel.replace(/\.[^./]+$/, ''), x);
+    byStem.set(x.rel.replace(/\/index\.[^./]+$/, ''), x);
+  }
+  const out: string[] = [];
+  for (const imp of f.imports || []) {
+    if (!imp.startsWith('.')) continue;
+    const target = path.posix.normalize(path.posix.join(path.posix.dirname(f.rel), imp)).replace(/\.(js|mjs|cjs)$/, '');
+    const hit = byStem.get(target);
+    if (hit && hit !== f && !out.includes(hit.rel)) out.push(hit.rel);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 /**
@@ -236,10 +255,12 @@ export function relevantCode(
     }
     if (g.syms.length && !parts.length) continue;
     const size = g.file.bytes ? ` (${Math.round(g.file.bytes / 1024) || 1}k)` : '';
+    // The dependency chain (Aider's repo-map insight): where this code's collaborators live, a few tokens per file.
+    const deps = projectImports(index, g.file, 3).map((d) => path.posix.basename(d));
     out.push({
       file: g.file.rel,
       keys: [`g:${g.file.rel}`, ...g.syms.map((s) => `g:${g.file.rel}#${s.sym}`)],
-      line: `- ${g.file.rel}${size}${parts.length ? ': ' + parts.join(', ') : ''}`
+      line: `- ${g.file.rel}${size}${parts.length ? ': ' + parts.join(', ') : ''}${deps.length ? ` → uses ${deps.join(', ')}` : ''}`
     });
   }
   return out;

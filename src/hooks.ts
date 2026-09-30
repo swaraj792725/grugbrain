@@ -32,6 +32,9 @@ import { scoreAdoption } from './adoption.js';
 import { analyzeTranscript, topConsumers } from './ctxbreak.js';
 import { looksLikeNewTask } from './taskshift.js';
 import { scoreRecalls } from './recalltune.js';
+import { verifyAtStop } from './verify.js';
+import { editGuardMessage } from './editguard.js';
+import { conventionHint } from './conventions.js';
 
 export interface HookInput {
   session_id?: string;
@@ -208,6 +211,16 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         recordActivity({ kind: 'subagent', msg: `Subagent task got ${r.counts.memory} memory, ${r.counts.code} code, ${r.counts.history} earlier-session hint(s) (${r.tokens} tok)`, tokens: -r.tokens, project: path.basename(cwd) });
         return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...ti, prompt: `${task}\n\n${r.text}` } } };
       }
+      // Before an edit: stored notes that name this file (once per session each).
+      if (/^(Edit|Write|MultiEdit)$/.test(input.tool_name || '')) {
+        try {
+          const hint = conventionHint(cfg, sid, cwd, String(input.tool_input?.file_path || ''), now);
+          if (hint) return { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: hint } };
+        } catch {
+          /* best-effort */
+        }
+        return null;
+      }
       // Screenshots, images, PDFs, video: skip repeats, shrink, or point at the cheaper way in.
       const media = mediaPreTool(cfg, input, sid, cwd, now, readKey);
       if (media) return media;
@@ -317,6 +330,17 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       } else if (tool === 'Bash' && ti.command) {
         appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
       }
+      if (cfg.quality.editGuard && ti.file_path && /^(Edit|Write|MultiEdit)$/.test(tool)) {
+        try {
+          const msg = editGuardMessage([String(ti.file_path)], cwd);
+          if (msg) {
+            recordActivity({ kind: 'guard', msg: `Caught a syntax error right after editing ${path.basename(String(ti.file_path))}`, tokens: -estimateTokens(msg), project: path.basename(cwd) });
+            return { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: msg } };
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
       if (tool !== 'Bash' && tool !== 'Grep' && !(cfg.commandRules.mcp && tool.startsWith('mcp__'))) return mediaOut;
       const original = toolOutputText(input);
       if (original === null) return mediaOut;
@@ -415,6 +439,15 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
       // Pick durable facts as the session goes (only new bytes), so a long session loses none to the tail window.
       if (cfg.memory.enabled) captureFacts(sid, input.transcript_path, cwd, now, false);
+      // Check the edits before Claude calls it done; only a real failure sends it back.
+      if (cfg.quality.verify && !input.agent_id) {
+        try {
+          const v = verifyAtStop(cfg, sid, cwd, now);
+          if (v.block) return { decision: 'block', reason: v.reason };
+        } catch {
+          /* best-effort */
+        }
+      }
       return null;
     }
 
