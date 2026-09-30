@@ -13,7 +13,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { backupFile, userHome, ensureDir, loadConfig, paths, readJson, saveConfig, writeFileAtomic, writeJsonAtomic } from './config.js';
+import { backupFile, userHome, grugHome, ensureDir, loadConfig, paths, readJson, saveConfig, writeFileAtomic, writeJsonAtomic } from './config.js';
 import { recordActivity } from './stats.js';
 
 export const MARK = '--from=grugbrain';
@@ -89,7 +89,21 @@ export function copyApp(): Step {
     }
   }
   fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({ name: 'grugbrain-app', private: true, type: 'commonjs' }) + '\n');
+  copyPlugin(src);
   return { target: 'app', ok: true, message: `Copied runtime to ${dest}` };
+}
+
+export const pluginDir = (): string => path.join(grugHome(), 'plugins', 'grug-live');
+
+/** Copy the grug-live app plugin (band above the prompt) next to the runtime and point it at the installed CLI. */
+export function copyPlugin(builtDir: string): boolean {
+  const from = [path.join(builtDir, '..', 'plugin', 'grug-live'), path.join(builtDir, 'plugin', 'grug-live')].find((d) => fs.existsSync(path.join(d, 'hooks', 'register.tsx')));
+  if (!from) return false;
+  const to = pluginDir();
+  fs.rmSync(to, { recursive: true, force: true });
+  fs.cpSync(from, to, { recursive: true });
+  fs.writeFileSync(path.join(to, 'grug.json'), JSON.stringify({ argv: [process.execPath, installedCli(), 'app-status'] }) + '\n');
+  return true;
 }
 
 /** Read a JSON config for modification. Returns null (and a failed Step) if corrupt. */
@@ -678,7 +692,8 @@ const envKey = (k: string): Setter => ({
 const TUNING: Record<string, Setter> = {
   autoCompactWindow: { get: (s) => s.autoCompactWindow, set: (s, v) => (s.autoCompactWindow = v), del: (s) => delete s.autoCompactWindow },
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: envKey('CLAUDE_CODE_AUTO_COMPACT_WINDOW'),
-  CLAUDE_CODE_SUBAGENT_MODEL: envKey('CLAUDE_CODE_SUBAGENT_MODEL')
+  CLAUDE_CODE_SUBAGENT_MODEL: envKey('CLAUDE_CODE_SUBAGENT_MODEL'),
+  CLAUDE_CODE_PLUGIN_DIRS: envKey('CLAUDE_CODE_PLUGIN_DIRS')
 };
 
 function wanted(cfg: ReturnType<typeof loadConfig>): Record<string, any> {
@@ -686,7 +701,8 @@ function wanted(cfg: ReturnType<typeof loadConfig>): Record<string, any> {
   return {
     autoCompactWindow: w > 0 ? w : undefined,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: w > 0 ? String(w) : undefined,
-    CLAUDE_CODE_SUBAGENT_MODEL: cfg.routing.subagentModel || undefined
+    CLAUDE_CODE_SUBAGENT_MODEL: cfg.routing.subagentModel || undefined,
+    CLAUDE_CODE_PLUGIN_DIRS: cfg.appPlugin.enabled && fs.existsSync(pluginDir()) ? pluginDir() : undefined
   };
 }
 
@@ -698,7 +714,10 @@ export function applyTuning(settings: any, cfg: ReturnType<typeof loadConfig>, s
     const rec = state.tuning[key];
     if (value !== undefined) {
       if (!rec?.managed) state.tuning[key] = { managed: true, prev: t.get(settings) ?? null };
-      t.set(settings, value);
+      if (key === 'CLAUDE_CODE_PLUGIN_DIRS') {
+        const own = String(rec?.managed ? rec.prev ?? '' : t.get(settings) ?? '').split(path.delimiter).filter((d) => d && d !== value);
+        t.set(settings, [...own, value].join(path.delimiter));
+      } else t.set(settings, value);
     } else if (rec?.managed) {
       if (rec.prev === null || rec.prev === undefined) t.del(settings);
       else t.set(settings, rec.prev);

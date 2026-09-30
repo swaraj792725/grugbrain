@@ -81,6 +81,7 @@ export interface GrugConfig {
   /** Check GitHub releases for a newer grugbrain (once a day, notify only). */
   updateCheck: boolean;
   /** Status line under Claude Code's input box: context size, cost per reply, when to /clear, cache timer, tips. */
+  appPlugin: { enabled: boolean };
   statusLine: {
     enabled: boolean;
     /** The user's own status line command, run first; grug appends its notice. Set by install when one existed. */
@@ -217,6 +218,7 @@ export function defaultConfig(): GrugConfig {
       mcp: true
     },
     updateCheck: true,
+    appPlugin: { enabled: true },
     statusLine: { enabled: true, wrap: '', tips: true, panel: true, refreshSeconds: 2 },
     appSummary: { enabled: true, everyPrompts: 8 },
     savings: { baselineContextTokens: 500000 },
