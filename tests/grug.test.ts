@@ -3,6 +3,7 @@ import * as fs from 'node:fs';
 import * as http from 'node:http';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { skeletonize } from '../src/compress/skeleton.js';
 import { trimToolOutput, looksLikeFileRead } from '../src/compress/trim.js';
@@ -2190,6 +2191,491 @@ describe('handoff v2', () => {
     const tiny = buildHandoff(sid, t, cwd, 150)!;
     expect(tiny.text).toContain('Goal:');
     expect(estimateTokens(tiny.text)).toBeLessThanOrEqual(260);
+  });
+});
+
+// ---------------------------------------------------------------- v2.19 handoff restore quality
+describe('handoff restore quality (v2.19)', () => {
+  const tool = (id: string, command: string, ts?: string) => line('assistant', [{ type: 'tool_use', id, name: 'Bash', input: { command } }], ts);
+  const result = (id: string, text: string, ts?: string) => line('user', [{ type: 'tool_result', tool_use_id: id, content: text }], ts);
+  const parse = (...ls: string[]) => ls.map((l) => JSON.parse(l));
+  const iso = (ms: number) => new Date(ms).toISOString();
+
+  const git = (cwd: string, ...a: string[]) => {
+    const r = spawnSync('git', ['-c', 'user.email=t@t.t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8' });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+    return r.stdout;
+  };
+  /** A commit dated `whenMs` (git's --since looks at the committer date). */
+  const gitAt = (cwd: string, whenMs: number, ...a: string[]) => {
+    const d = new Date(whenMs).toISOString();
+    const r = spawnSync('git', ['-c', 'user.email=t@t.t', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...a], { cwd, encoding: 'utf8', env: { ...process.env, GIT_COMMITTER_DATE: d, GIT_AUTHOR_DATE: d } });
+    if (r.status !== 0) throw new Error(`git ${a.join(' ')}: ${r.stderr}`);
+  };
+  function gitRepo(name: string): string {
+    const cwd = path.join(tmp, name);
+    fs.mkdirSync(cwd, { recursive: true });
+    git(cwd, 'init', '-q', '-b', 'main');
+    return cwd;
+  }
+
+  describe('squeeze', () => {
+    it('keeps short prose whole and strips markdown', async () => {
+      const { squeeze } = await import('../src/handoff.js');
+      expect(squeeze('## Result\n\n**Done.** All green.', 200)).toBe('Result Done. All green.');
+      expect(squeeze('Look:\n```ts\nconst a = 1;\n```\nThat is it.', 200)).toContain('[code]');
+      expect(squeeze('- one\n- two', 200)).toBe('· one · two');
+    });
+
+    it('keeps the start and the ending of a long reply, cut at sentence boundaries', async () => {
+      const { squeeze } = await import('../src/handoff.js');
+      const body = Array.from({ length: 30 }, (_, i) => `Step ${i} of the long investigation found nothing odd.`).join(' ');
+      const text = `Start: the parser is the problem. ${body} End: raise the buffer to 64k and ship it.`;
+      const out = squeeze(text, 300);
+      expect(out.length).toBeLessThanOrEqual(310);
+      expect(out).toContain('Start: the parser is the problem.');
+      expect(out).toContain('End: raise the buffer to 64k and ship it.');
+      expect(out).toContain('[…]');
+      expect(out).not.toMatch(/\w…$/); // no mid-word cut at the end
+    });
+
+    it('still keeps the end when one sentence is longer than the whole budget', async () => {
+      const { squeeze } = await import('../src/handoff.js');
+      const out = squeeze('word '.repeat(200) + 'final answer is 42', 120);
+      expect(out.length).toBeLessThanOrEqual(130);
+      expect(out).toContain('final answer is 42');
+    });
+  });
+
+  describe('pendingQuestion', () => {
+    it('returns the question the last reply ended on', async () => {
+      const { pendingQuestion } = await import('../src/handoff.js');
+      const es = parse(
+        line('user', 'add the export feature'),
+        line('assistant', [{ type: 'text', text: 'I can do this two ways. Which one do you want: CSV or JSON? Tell me and I start.' }])
+      );
+      expect(pendingQuestion(es)).toContain('CSV or JSON?');
+    });
+
+    it('is null when the last reply asked nothing', async () => {
+      const { pendingQuestion } = await import('../src/handoff.js');
+      const es = parse(line('user', 'add it'), line('assistant', [{ type: 'text', text: 'Done. All tests pass.' }]));
+      expect(pendingQuestion(es)).toBeNull();
+    });
+
+    it('is null once the user answered, or once the assistant kept working', async () => {
+      const { pendingQuestion } = await import('../src/handoff.js');
+      const asked = line('assistant', [{ type: 'text', text: 'Shall I go ahead and delete the old table?' }]);
+      expect(pendingQuestion(parse(asked, line('user', 'yes go ahead')))).toBeNull();
+      expect(pendingQuestion(parse(asked, line('assistant', [{ type: 'tool_use', id: 'x', name: 'Bash', input: { command: 'ls' } }])))).toBeNull();
+      expect(pendingQuestion(parse(asked, line('user', [{ type: 'tool_result', tool_use_id: 'x', content: 'ok' }])))).toBeNull();
+    });
+
+    it('ignores injected hook text and meta entries when deciding whether the user answered', async () => {
+      const { pendingQuestion } = await import('../src/handoff.js');
+      const asked = line('assistant', [{ type: 'text', text: 'Want me to open the pull request?' }]);
+      const injected = line('user', '<system-reminder>something injected</system-reminder>');
+      expect(pendingQuestion(parse(asked, injected))).toContain('pull request?');
+    });
+  });
+
+  describe('checkSegment', () => {
+    it('finds the check inside compound commands and strips the noise around it', async () => {
+      const { checkSegment } = await import('../src/handoff.js');
+      expect(checkSegment('cd /repo && npm test 2>&1 | tail -20')).toBe('npm test');
+      expect(checkSegment('git add -A && CI=1 npx vitest run tests/a.test.ts')).toBe('npx vitest run tests/a.test.ts');
+      expect(checkSegment('npm run build; ls dist')).toBe('npm run build');
+    });
+
+    it('does not treat a message that merely mentions a check as a check', async () => {
+      const { checkSegment } = await import('../src/handoff.js');
+      expect(checkSegment('git commit -m "make npm test pass"')).toBeNull();
+      expect(checkSegment('echo npm test')).toBeNull();
+      expect(checkSegment('grep -rn "pytest" src')).toBeNull();
+    });
+
+    it('skips heredocs, multi-line and very long commands', async () => {
+      const { checkSegment } = await import('../src/handoff.js');
+      expect(checkSegment('python3 - <<EOF\nnpm test\nEOF')).toBeNull();
+      expect(checkSegment('npm test ' + 'x'.repeat(300))).toBeNull();
+    });
+  });
+
+  describe('lastCheck', () => {
+    it('says "no failure output" instead of "passed" when nothing proves a pass', async () => {
+      const { lastCheck } = await import('../src/handoff.js');
+      const es = parse(tool('a', 'npm run build 2>&1 | tail -3'), result('a', '> tsup\nBuild done'));
+      const out = lastCheck(es)!;
+      expect(out).toContain('`npm run build`');
+      expect(out).toContain('no failure output');
+      expect(out).not.toContain('passed');
+    });
+
+    it('quotes the pass evidence when there is one', async () => {
+      const { lastCheck } = await import('../src/handoff.js');
+      const out = lastCheck(parse(tool('a', 'npm test'), result('a', 'Test Files  2 passed (2)\n      Tests  126 passed (126)')))!;
+      expect(out).toMatch(/→ passed \(.*126 passed/);
+    });
+
+    it('names the failing test and the count', async () => {
+      const { lastCheck } = await import('../src/handoff.js');
+      const out = lastCheck(parse(tool('a', 'npm test'), result('a', ' FAIL  tests/csv.test.ts > escapes quotes\nAssertionError: expected 1 to be 2\n Tests  3 failed | 40 passed (43)')))!;
+      expect(out).toContain('FAILED');
+      expect(out).toContain('escapes quotes');
+      expect(out).toContain('3 failed');
+    });
+
+    it('does not call "0 failed" a failure', async () => {
+      const { lastCheck } = await import('../src/handoff.js');
+      const out = lastCheck(parse(tool('a', 'npm test'), result('a', 'Tests  0 failed | 12 passed (12)')))!;
+      expect(out).toContain('passed');
+      expect(out).not.toContain('FAILED');
+    });
+
+    it('notes edits made after the check (from edit events, and from uncommitted files newer than it)', async () => {
+      const { lastCheck } = await import('../src/handoff.js');
+      const t0 = Date.now() - 600000;
+      const es = parse(tool('a', 'npm test', iso(t0)), result('a', 'Tests 5 passed', iso(t0 + 1000)));
+      expect(lastCheck(es, [t0 + 5000, t0 + 9000])).toContain('; 2 file edits since');
+      expect(lastCheck(es, [t0 - 5000])).not.toContain('since');
+      expect(lastCheck(es, [], [t0 + 60000])).toContain('; files changed since');
+      expect(lastCheck(es, [], [t0 - 60000])).not.toContain('since');
+    });
+
+    it('uses the last check, even when it came after a failing one', async () => {
+      const { lastCheck } = await import('../src/handoff.js');
+      const es = parse(tool('a', 'npm test'), result('a', 'Tests 2 failed | 3 passed'), tool('b', 'npm test'), result('b', 'Tests 5 passed (5)'));
+      expect(lastCheck(es)).toContain('passed');
+      expect(lastCheck(es)).not.toContain('FAILED');
+    });
+  });
+
+  describe('meaningfulCommands', () => {
+    it('drops heredocs, file-reading and other looking around', async () => {
+      const { meaningfulCommands } = await import('../src/handoff.js');
+      const out = meaningfulCommands([
+        "python3 - <<'PY'\nprint(1)\nPY",
+        'cat src/a.ts',
+        'git status',
+        'grep -rn foo src',
+        'sed -n 1,20p src/a.ts',
+        'npm test'
+      ]);
+      expect(out).toEqual(['npm test']);
+    });
+
+    it('keeps the doing part of compound commands and removes pipes and redirects', async () => {
+      const { meaningfulCommands } = await import('../src/handoff.js');
+      const out = meaningfulCommands(['cd /repo && git add -A && git commit -m "x" 2>&1 | tail -3', 'ls && npm run build 2>&1 | tail -5']);
+      expect(out).toEqual(['git add -A && git commit -m "x"', 'npm run build']);
+    });
+
+    it('dedupes (newest position wins) and caps the list', async () => {
+      const { meaningfulCommands } = await import('../src/handoff.js');
+      expect(meaningfulCommands(['npm test', 'npm run build', 'npm test'])).toEqual(['npm run build', 'npm test']);
+      const many = Array.from({ length: 12 }, (_, i) => `npm run job${i}`);
+      const out = meaningfulCommands(many, 5);
+      expect(out.length).toBe(5);
+      expect(out[4]).toBe('npm run job11');
+    });
+  });
+
+  describe('git state', () => {
+    it('reads branch, uncommitted files made by the shell, and the last commit', async () => {
+      const { gitState, gitLine } = await import('../src/handoff.js');
+      const cwd = gitRepo('gitA');
+      fs.writeFileSync(path.join(cwd, 'a.ts'), 'export const a = 1;\n');
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-q', '-m', 'first commit');
+      fs.writeFileSync(path.join(cwd, 'a.ts'), 'export const a = 2;\n'); // edited "by sed", not by a file tool
+      fs.writeFileSync(path.join(cwd, 'new file.ts'), 'x\n');
+      const g = gitState(cwd)!;
+      expect(g.branch).toBe('main');
+      expect(g.dirty).toEqual(expect.arrayContaining(['a.ts', 'new file.ts']));
+      expect(g.ahead).toBe(-1); // no upstream
+      const l = gitLine(g);
+      expect(l).toContain('branch `main`');
+      expect(l).toContain('no upstream (not pushed)');
+      expect(l).toContain('2 uncommitted: ');
+      expect(l).toMatch(/last commit [0-9a-f]{7,} "first commit"/);
+    });
+
+    it('says the tree is clean, and reports unpushed commits and commits since the session began', async () => {
+      const { gitState, gitLine, commitsLine } = await import('../src/handoff.js');
+      const remote = path.join(tmp, 'gitB-remote.git');
+      fs.mkdirSync(remote);
+      git(remote, 'init', '-q', '--bare', '-b', 'main');
+      const cwd = gitRepo('gitB');
+      fs.writeFileSync(path.join(cwd, 'a.ts'), '1\n');
+      git(cwd, 'add', '-A');
+      gitAt(cwd, Date.now() - 3600000, 'commit', '-q', '-m', 'before the session');
+      git(cwd, 'remote', 'add', 'origin', remote);
+      git(cwd, 'push', '-q', '-u', 'origin', 'main');
+      const began = Date.now() - 5000;
+      fs.writeFileSync(path.join(cwd, 'b.ts'), '2\n');
+      fs.writeFileSync(path.join(cwd, 'c.ts'), '3\n');
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-q', '-m', 'add b and c');
+      const g = gitState(cwd, began)!;
+      expect(g.ahead).toBe(1);
+      expect(g.dirty).toEqual([]);
+      expect(gitLine(g)).toContain('1 commit not pushed');
+      expect(gitLine(g)).toContain('working tree clean');
+      const c = commitsLine(g);
+      expect(c).toContain('Committed this session:');
+      expect(c).toContain('"add b and c"');
+      expect(c).toContain('b.ts');
+      expect(c).toContain('c.ts');
+      expect(c).not.toContain('a.ts');
+    });
+
+    it('is null outside a git repository and never throws', async () => {
+      const { gitState } = await import('../src/handoff.js');
+      const cwd = path.join(tmp, 'not-a-repo');
+      fs.mkdirSync(cwd, { recursive: true });
+      expect(gitState(cwd)).toBeNull();
+      expect(gitState(path.join(tmp, 'does-not-exist'))).toBeNull();
+    });
+
+    it('gives up within its time budget when git is slow, instead of eating the hook timeout', async () => {
+      const { gitState } = await import('../src/handoff.js');
+      const cwd = gitRepo('gitSlow');
+      const bin = path.join(tmp, 'slowbin');
+      fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\nexec sleep 10\n', { mode: 0o755 });
+      const was = process.env.PATH;
+      process.env.PATH = `${bin}:${was}`;
+      try {
+        const t0 = Date.now();
+        expect(gitState(cwd, Date.now() - 1000, 400)).toBeNull();
+        expect(Date.now() - t0).toBeLessThan(2000);
+      } finally {
+        process.env.PATH = was;
+      }
+    });
+
+    it('leaves the repository untouched (no lock, no index refresh)', async () => {
+      const { gitState } = await import('../src/handoff.js');
+      const cwd = gitRepo('gitC');
+      fs.writeFileSync(path.join(cwd, 'a.ts'), '1\n');
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-q', '-m', 'c');
+      const idx = path.join(cwd, '.git', 'index');
+      const before = fs.statSync(idx).mtimeMs;
+      fs.utimesSync(path.join(cwd, 'a.ts'), new Date(), new Date(Date.now() + 1000)); // stat-dirty, same content
+      gitState(cwd);
+      expect(fs.statSync(idx).mtimeMs).toBe(before);
+      expect(fs.existsSync(path.join(cwd, '.git', 'index.lock'))).toBe(false);
+    });
+  });
+
+  describe('quoted mentions are not facts', () => {
+    it('quotedOnly: true when every trigger sits inside double quotes', async () => {
+      const { quotedOnly } = await import('../src/handoff.js');
+      const cause = /\b(root cause|caused by|the fix)\b/i;
+      expect(quotedOnly('Claude\'s "root cause" lines are noisy.', cause)).toBe(true);
+      expect(quotedOnly('Decisions come from "decided / root cause" lines.', cause)).toBe(true);
+      expect(quotedOnly('The root cause was a missing await.', cause)).toBe(false);
+      expect(quotedOnly('The "root cause" label was wrong, the root cause was a race.', cause)).toBe(false);
+      expect(quotedOnly('No trigger word here at all.', cause)).toBe(false);
+      expect(quotedOnly('Root cause: the "fix" phrase is quoted.', /\b(the fix|fix)\b/i)).toBe(true);
+    });
+
+    it('the fact scan skips a sentence that only mentions the words', async () => {
+      const { extractFacts } = await import('../src/facts.js');
+      const cwd = path.join(tmp, 'factq');
+      const t = writeTranscript(cwd, 'fq.jsonl', [
+        line('user', 'how will the memory pick decisions up?'),
+        line('assistant', [{ type: 'text', text: 'Decisions would come from your "no / don\'t / instead" messages and Claude\'s "decided / root cause" lines.' }]),
+        line('assistant', [{ type: 'text', text: 'The root cause was that the webhook handler skipped the signature check.' }])
+      ]);
+      const texts = extractFacts(t).map((f) => f.text).join('\n');
+      expect(texts).not.toContain('decided / root cause');
+      expect(texts).toContain('webhook handler skipped the signature check');
+    });
+  });
+
+  describe('buildHandoff', () => {
+    const sid = (n: string) => `hq-${n}`;
+
+    function session(name: string, withRepo = true) {
+      const cwd = withRepo ? gitRepo(name) : path.join(tmp, name);
+      fs.mkdirSync(cwd, { recursive: true });
+      const t0 = Date.now() - 3600000;
+      return { cwd, t0 };
+    }
+
+    it('restores the latest short message with what it answered, the open question, git, the failing check and the rules', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { estimateTokens } = await import('../src/tokens.js');
+      const { cwd, t0 } = session('rq1');
+      fs.writeFileSync(path.join(cwd, 'export.ts'), 'export const x = 1;\n');
+      git(cwd, 'add', '-A');
+      git(cwd, 'commit', '-q', '-m', 'base');
+      const s = sid('1');
+      const goal = 'make the csv export escape quotes and commas correctly in the admin page';
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 1000, text: 'always open a pull request, never push to main' });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 2000, text: goal });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 600000, text: 'yes go with option B' });
+      const t = writeTranscript(cwd, 'rq1.jsonl', [
+        line('user', goal, iso(t0 + 2000)),
+        line('assistant', [{ type: 'text', text: 'There are two options. Option A rewrites the serializer. Option B patches only the quoting step. I suggest option B because it is smaller. Should I go with option B?' }], iso(t0 + 60000)),
+        line('user', 'yes go with option B', iso(t0 + 600000)),
+        line('assistant', [{ type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'cd ' + cwd + ' && npm test 2>&1 | tail -20' } }], iso(t0 + 610000)),
+        line('user', [{ type: 'tool_result', tool_use_id: 'c1', content: ' FAIL  tests/csv.test.ts > escapes commas\n Tests  1 failed | 9 passed (10)' }], iso(t0 + 620000)),
+        line('assistant', [{ type: 'text', text: 'The comma case still fails because the quote state resets per field. I am fixing that next. Does the header row also need quoting?' }], iso(t0 + 630000))
+      ]);
+      fs.writeFileSync(path.join(cwd, 'export.ts'), 'export const x = 2;\n'); // a shell edit after the check
+      fs.utimesSync(path.join(cwd, 'export.ts'), new Date(t0 + 700000), new Date(t0 + 700000));
+      const h = buildHandoff(s, t, cwd, 1200)!;
+      expect(h.text).toContain('Goal: make the csv export escape quotes');
+      expect(h.text).toContain('Latest message: "yes go with option B"');
+      expect(h.text).toContain('replying to:');
+      expect(h.text).toContain('Should I go with option B?'); // what "yes" answered is the end of that reply
+      expect(h.text).toContain('Waiting on the user, the last reply asked: ');
+      expect(h.text).toContain('Does the header row also need quoting?');
+      expect(h.text).toContain('always open a pull request');
+      expect(h.text).toMatch(/Git: branch `main`.*1 uncommitted: export\.ts/);
+      expect(h.text).toMatch(/Last check: `npm test` → FAILED.*escapes commas.*1 failed/);
+      expect(h.text).toContain('files changed since');
+      expect(estimateTokens(h.text)).toBeLessThanOrEqual(1200);
+    });
+
+    it('no latest-message line when the last message is the goal itself, or a slash command', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { cwd, t0 } = session('rq2');
+      const s = sid('2');
+      const goal = 'refactor the billing module to use the new tax rates table';
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 1000, text: goal });
+      const t = writeTranscript(cwd, 'rq2.jsonl', [line('user', goal, iso(t0 + 1000)), line('assistant', [{ type: 'text', text: 'Reading the module now, then I will change it. '.repeat(6) }], iso(t0 + 2000))]);
+      expect(buildHandoff(s, t, cwd)!.text).not.toContain('Latest message');
+      appendBuffer(s, { t: 'prompt', ts: t0 + 5000, text: '/clear' });
+      expect(buildHandoff(s, t, cwd)!.text).not.toContain('Latest message');
+    });
+
+    it('takes the replies from after the goal, not from an earlier task', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { cwd, t0 } = session('rq3');
+      const s = sid('3');
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 1000, text: 'fix the login redirect loop on the settings page' });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 500000, text: 'now add dark mode to the dashboard header component' });
+      const t = writeTranscript(cwd, 'rq3.jsonl', [
+        line('user', 'fix the login redirect loop on the settings page', iso(t0 + 1000)),
+        line('assistant', [{ type: 'text', text: 'The redirect loop came from the session cookie being set twice. I removed the duplicate middleware. '.repeat(3) }], iso(t0 + 2000)),
+        line('user', 'now add dark mode to the dashboard header component', iso(t0 + 500000)),
+        line('assistant', [{ type: 'text', text: 'Dark mode: I added a theme token file and switched the header to read it. The toggle is next. '.repeat(3) }], iso(t0 + 510000))
+      ]);
+      const text = buildHandoff(s, t, cwd)!.text;
+      expect(text).toContain('Where it got to');
+      expect(text).toContain('Dark mode: I added a theme token file');
+      expect(text).not.toContain('session cookie being set twice');
+    });
+
+    it('labels replies from before the goal when nothing came after it', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { cwd, t0 } = session('rq4');
+      const s = sid('4');
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 1000, text: 'fix the login redirect loop on the settings page' });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 500000, text: 'now add dark mode to the dashboard header component' });
+      const t = writeTranscript(cwd, 'rq4.jsonl', [
+        line('user', 'fix the login redirect loop on the settings page', iso(t0 + 1000)),
+        line('assistant', [{ type: 'text', text: 'The redirect loop came from the session cookie being set twice. I removed the duplicate middleware. '.repeat(3) }], iso(t0 + 2000)),
+        line('user', 'now add dark mode to the dashboard header component', iso(t0 + 500000))
+      ]);
+      const text = buildHandoff(s, t, cwd)!.text;
+      expect(text).toContain('Last replies (before the goal above, about the previous task):');
+      expect(text).not.toContain('Where it got to');
+    });
+
+    it('keeps the ending of a long last reply', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { cwd, t0 } = session('rq5');
+      const s = sid('5');
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 1000, text: 'investigate why the nightly import job is slow' });
+      const long = 'I profiled the import job and looked at each stage in turn. '.repeat(30) + 'Conclusion: the N+1 query in loadCustomers is the cause, batch it with one IN query.';
+      const t = writeTranscript(cwd, 'rq5.jsonl', [line('user', 'investigate why the nightly import job is slow', iso(t0 + 1000)), line('assistant', [{ type: 'text', text: long }], iso(t0 + 2000))]);
+      const text = buildHandoff(s, t, cwd)!.text;
+      expect(text).toContain('the N+1 query in loadCustomers is the cause, batch it with one IN query.');
+    });
+
+    it('withGit=false leaves git out and falls back to the files the edit events saw', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { cwd, t0 } = session('rq6');
+      fs.writeFileSync(path.join(cwd, 'dirty.ts'), 'x\n');
+      const s = sid('6');
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 1000, text: 'write the retry wrapper for the payment client' });
+      appendBuffer(s, { t: 'file', ts: t0 + 2000, path: path.join(cwd, 'src/retry.ts'), op: 'edit' });
+      const t = writeTranscript(cwd, 'rq6.jsonl', [line('user', 'write the retry wrapper for the payment client', iso(t0 + 1000)), line('assistant', [{ type: 'text', text: 'Started the wrapper in src/retry.ts. '.repeat(8) }], iso(t0 + 2000))]);
+      const off = buildHandoff(s, t, cwd, 1200, false)!.text;
+      expect(off).not.toContain('Git:');
+      expect(off).not.toContain('dirty.ts');
+      expect(off).toContain('Files changed: src/retry.ts');
+      const on = buildHandoff(s, t, cwd, 1200, true)!.text;
+      expect(on).toContain('Git: branch `main`');
+      expect(on).toContain('dirty.ts');
+    });
+
+    it('works outside a git repository', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { cwd, t0 } = session('rq7', false);
+      const s = sid('7');
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 1000, text: 'write the retry wrapper for the payment client' });
+      const t = writeTranscript(cwd, 'rq7.jsonl', [line('user', 'write the retry wrapper for the payment client', iso(t0 + 1000)), line('assistant', [{ type: 'text', text: 'Started the wrapper. '.repeat(10) }], iso(t0 + 2000))]);
+      const text = buildHandoff(s, t, cwd)!.text;
+      expect(text).toContain('Goal:');
+      expect(text).not.toContain('Git:');
+    });
+
+    it('stays inside every cap, and the goal survives the tightest one', async () => {
+      const { buildHandoff } = await import('../src/handoff.js');
+      const { estimateTokens } = await import('../src/tokens.js');
+      const { cwd, t0 } = session('rq8');
+      const s = sid('8');
+      appendBuffer(s, { t: 'start', ts: t0, cwd });
+      for (let i = 0; i < 6; i++) appendBuffer(s, { t: 'prompt', ts: t0 + 1000 * (i + 1), text: `request number ${i}: please change the module ${'alpha '.repeat(30)}` });
+      appendBuffer(s, { t: 'prompt', ts: t0 + 50000, text: 'yes do that' });
+      for (let i = 0; i < 20; i++) appendBuffer(s, { t: 'cmd', ts: t0 + 1000 * i, cmd: `npm run job${i} --flag ${'z'.repeat(60)}` });
+      for (let i = 0; i < 30; i++) appendBuffer(s, { t: 'file', ts: t0 + 1000 * i, path: path.join(cwd, `src/f${i}.ts`), op: i % 2 ? 'edit' : 'read' });
+      const t = writeTranscript(cwd, 'rq8.jsonl', [
+        line('user', 'request number 5: please change the module', iso(t0 + 6000)),
+        line('assistant', [{ type: 'text', text: 'I changed the module. '.repeat(80) + 'Should I also update the docs?' }], iso(t0 + 7000)),
+        line('user', 'yes do that', iso(t0 + 50000))
+      ]);
+      for (const cap of [150, 300, 600, 1200]) {
+        const h = buildHandoff(s, t, cwd, cap)!;
+        expect(h.text).toContain('Goal:');
+        expect(estimateTokens(h.text)).toBeLessThanOrEqual(cap === 150 ? 260 : cap);
+      }
+    });
+  });
+
+  describe('handoffText', () => {
+    it('is unchanged for a fresh handoff and notes the age of an old one', async () => {
+      const { handoffText } = await import('../src/handoff.js');
+      const base = { sessionId: 's', project: 'p', contextTokens: 1000, text: '[grugbrain handoff: continuing work.]\nGoal: x\nfooter' };
+      const now = Date.now();
+      expect(handoffText({ ...base, ts: now - 2 * 60000 }, now)).toBe(base.text);
+      const hour = handoffText({ ...base, ts: now - 3 * 3600000 }, now);
+      expect(hour.split('\n')[0]).toBe('[grugbrain handoff: continuing work. Saved 3 h ago: git and check status below may have changed since.]');
+      expect(hour.split('\n').slice(1).join('\n')).toBe('Goal: x\nfooter');
+      expect(handoffText({ ...base, ts: now - 30 * 60000 }, now)).toContain('Saved 30 min ago');
+      expect(handoffText({ ...base, ts: now - 40 * 3600000 }, now)).toContain('Saved 40 h ago');
+    });
+  });
+
+  describe('config', () => {
+    it('reads git state by default and the cap is unchanged', () => {
+      const c = defaultConfig();
+      expect(c.handoff.git).toBe(true);
+      expect(c.handoff.maxTokens).toBe(1200);
+    });
   });
 });
 

@@ -2,6 +2,18 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.19.0
+
+Better restore after /clear, compact and new sessions. Same 1200-token cap, no AI call.
+
+- The handoff now reads the real git state (read-only, never takes a lock): branch, commits not pushed, uncommitted files, last commit, and the commits made during the session with the files they touched. Edits made by shell commands (`sed -i`, python scripts) were invisible before, so "files changed" was stale or wrong. All git calls share a 2.5 s budget so a slow repository can never make the hook miss its timeout. Turn off with `grug config set handoff.git false`.
+- A short follow-up such as "yes" or "merge it" is kept with what it answered ("Latest message: ... (replying to: ...)"), and when the last reply ended on a question the user never answered, the handoff says so ("Waiting on the user").
+- Replies are cut by whole sentences and keep their ending (the result, the open question, the next step) instead of losing it. Only replies from after the current request count as "where it got to"; replies from an earlier task are labelled as such.
+- The last check is judged from its output: `passed` (with the line that proves it), `no failure output`, or `FAILED` with the failing test and the failed count. Compound commands (`cd x && npm test 2>&1 | tail`) are recognised, a commit message that only mentions a test command is not, and "N file edits since" also counts uncommitted files newer than the check.
+- Recent commands drop heredoc scripts and read-only looking around (`cat`, `grep`, `git status`).
+- Decisions and causes no longer pick up sentences that only talk about the words ("a 'root cause' line"), in new scans and in what is already stored.
+- A handoff older than 10 minutes says how old it is, because its git and check lines describe the moment it was saved.
+
 ## 2.18.0
 
 One overall savings percentage, and a smaller chat.
