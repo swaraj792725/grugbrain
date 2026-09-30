@@ -232,7 +232,8 @@ export interface ArmResult {
 }
 
 function hookSettings(): any {
-  const cli = fs.existsSync(installedCli()) ? installedCli() : process.argv[1];
+  // Test the build that is running this bench, not an older installed copy (that would measure the wrong code).
+  const cli = process.argv[1] && /cli\.js$/.test(process.argv[1]) && fs.existsSync(process.argv[1]) ? process.argv[1] : fs.existsSync(installedCli()) ? installedCli() : process.argv[1];
   const cmd = (e: string) => ({ type: 'command', command: `"${process.execPath}" "${cli}" hook ${e} ${MARK}`, timeout: 10 });
   return {
     SessionStart: [{ hooks: [cmd('session-start')] }],
