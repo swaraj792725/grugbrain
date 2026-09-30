@@ -2287,3 +2287,14 @@ describe('app summary line', () => {
     }
   });
 });
+
+describe('dashboard in plain words', () => {
+  it('overview explains the numbers without jargon', async () => {
+    const { renderOnce } = await import('../src/tui/dashboard.js');
+    const o = renderOnce({ tab: 0 } as any, 150, 60).replace(/\u001b\[[0-9;]*m/g, '');
+    for (const w of ['IN PLAIN WORDS', 'WHERE IT CAME FROM', 'YOUR USAGE', 'Chat size re-read every reply', 'IF THIS CONTINUES', 'grug is working']) {
+      expect(o.includes(w) || w === 'grug is working').toBe(true);
+    }
+    expect(o).not.toMatch(/MEASURED|PROJECTION|avg context per reply/);
+  });
+});

@@ -7,6 +7,7 @@ Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes th
 A grug summary for the Claude desktop app, which draws no status line.
 
 - **One-line summary in the chat.** A user-only message (costs no tokens, never sent to Claude): `🪨 grug │ saved ██▌░░░░░░░ ~25% (7d est., $120) │ context ███████░ 75% of /clear limit (90k) │ last: Trimmed npm output`. Shown at session start and every 8th prompt (`appSummary.everyPrompts`); turn off with `appSummary.enabled false`. It stays quiet until grug has measured something.
+- **Plain-language dashboard.** Overview now reads like a sentence: "$X kept in your pocket, out of $Y you would have paid", an *In plain words* box (what drives your bill, whether the cache works, whether to `/clear`, grug's biggest help), friendlier row names ("Chat size re-read every reply", "Cache working?"), savings sources in everyday words, one health line in the header (`✓ grug is working` or what needs attention), and a clearer `%` glyph.
 - Honest limits: the app shows it as a plain message, so there is no animation and no live bar; the bars are text and only refresh when the message is sent. The terminal `claude` still gets the animated status line, and `grug dash` the full live view.
 
 ## 2.15.0
