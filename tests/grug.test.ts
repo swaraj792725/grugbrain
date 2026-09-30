@@ -74,6 +74,14 @@ describe('skeletonizer', () => {
   });
 });
 
+describe('wantsContent', () => {
+  it('separates content commands from noisy runs', async () => {
+    const { wantsContent } = await import('../src/hooks.js');
+    for (const c of ['sed -n 1,200p src/a.ts', 'cat src/x.ts && ls', 'git show abc --stat', 'grep -rn foo src | head', 'cd x && git diff']) expect(wantsContent(c)).toBe(true);
+    for (const c of ['npm test', 'npm ci && npm run build', 'pip install -r requirements.txt', 'docker build .']) expect(wantsContent(c)).toBe(false);
+  });
+});
+
 describe('trimmer', () => {
   const noisy = '\u001b[31mred\u001b[0m\n' + 'dup\n'.repeat(20) + Array.from({ length: 400 }, (_, i) => `line ${i}`).join('\n');
 

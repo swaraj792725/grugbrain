@@ -310,7 +310,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       }
       if (cfg.proxy.trimToolResults) {
         const r = trimToolOutput(text, {
-          thresholdChars: cfg.proxy.trimThresholdChars,
+          // Content Claude asked to see (cat, sed -n, grep, git diff...) keeps the generous limit; only noisy runs are cut early.
+          thresholdChars: wantsContent(String(ti.command || '')) ? Math.max(cfg.proxy.trimThresholdChars, cfg.proxy.trimContentChars) : cfg.proxy.trimThresholdChars,
           keepHeadChars: cfg.proxy.trimKeepHeadChars,
           keepTailChars: cfg.proxy.trimKeepTailChars,
           saveFull: (full) => saveFullOutput(full, input.scratchpad_dir)
@@ -547,6 +548,12 @@ function readKey(file: string, ti: any, agent?: string): string {
 }
 
 /** Plain-text tool output from a PostToolUse payload (string, or Bash's {stdout, stderr}). */
+/** True when the command's output is the point (file text, diffs, search hits, data), not build noise. */
+export function wantsContent(cmd: string): boolean {
+  const parts = cmd.split(/&&|\|\||;|\n/).map((x) => x.trim().replace(/^(cd\s+\S+\s*)/, ''));
+  return parts.some((c) => /^(sudo\s+)?(cat|sed|awk|head|tail|grep|rg|ag|find|ls|tree|jq|git\s+(diff|show|log|blame|grep|status)|diff|nl|less|bat|curl|wc|sort|uniq|cut|xxd|od|strings)\b/.test(c));
+}
+
 /** The untouched output of a trimmed command: in the session scratchpad (no permission prompt), else grug's cache. */
 function saveFullOutput(full: string, scratchpad?: string): string | null {
   const dir = scratchpad && fs.existsSync(scratchpad) ? scratchpad : path.join(paths.cache(), 'outputs');
