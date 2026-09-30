@@ -87,7 +87,7 @@ export interface SavedNow {
   last?: { ts: number; msg: string };
 }
 
-function cachedSaved(now: number): SavedNow | undefined {
+export function cachedSaved(now: number): SavedNow | undefined {
   const file = path.join(paths.cache(), 'statusline.json');
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -107,7 +107,7 @@ function cachedSaved(now: number): SavedNow | undefined {
 }
 
 /** Latest grug action in the last 45 s (cheap: tail of the activity log). */
-function lastAction(now: number): { ts: number; msg: string } | undefined {
+export function lastAction(now: number): { ts: number; msg: string } | undefined {
   try {
     const a = readActivity(20).filter((x) => now - x.ts < 45000).pop();
     return a ? { ts: a.ts, msg: a.msg || a.kind } : undefined;
@@ -213,4 +213,48 @@ export function renderStatusLine(raw: string, now = Date.now()): string {
     line = '';
   }
   return [[own, line].filter(Boolean).join('  '), panel].filter(Boolean).join('\n');
+}
+
+/** Plain-text bar (no colour codes: hook messages are not ANSI-rendered). */
+function plainBar(frac: number, width: number): string {
+  const cells = barCells(frac, width);
+  const filled = cells.replace(/ +$/, '');
+  return filled + '░'.repeat(cells.length - filled.length);
+}
+
+/** Pure: the one-line grug summary shown to the user in apps that draw no status line. */
+export function composeAppLine(o: {
+  savedPct?: number;
+  netUsd?: number;
+  tokens: number;
+  limit: number;
+  recent?: string;
+}): string {
+  const parts = ['🪨 grug'];
+  if (o.savedPct !== undefined) {
+    const pct = Math.round(o.savedPct * 100);
+    parts.push(`saved ${plainBar(o.savedPct, 10)} ~${pct}% (7d est.${o.netUsd && o.netUsd >= 0.01 ? `, ${usd(o.netUsd)}` : ''})`);
+  }
+  if (o.tokens > 0 && o.limit > 0) {
+    const fr = o.tokens / o.limit;
+    const pct = Math.round(fr * 100);
+    parts.push(`context ${plainBar(Math.min(1, fr), 8)} ${pct}% of /clear limit (${k(o.tokens)})${fr >= 1 ? ' ⚠ /clear soon' : ''}`);
+  }
+  if (o.recent) parts.push(`last: ${o.recent.slice(0, 50)}`);
+  return parts.join(' │ ');
+}
+
+/** The app summary for now, or undefined when there is nothing worth showing. */
+export function appSummaryLine(transcriptPath: string | undefined, now = Date.now()): string | undefined {
+  try {
+    const cfg = loadConfig();
+    const saved = cachedSaved(now);
+    const cs = contextSize(transcriptPath);
+    const limit = cfg.autoCompact.windowTokens > 0 ? cfg.autoCompact.windowTokens * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
+    const recent = lastAction(now)?.msg;
+    if (!(saved && saved.pct > 0) && !cs.tokens) return undefined; // nothing measured yet: stay quiet
+    return composeAppLine({ savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, recent });
+  } catch {
+    return undefined;
+  }
 }

@@ -96,7 +96,16 @@ function header(st: State, width: number): string[] {
   const upd = cachedUpdate();
   const live = st.frame === undefined ? dim('·') : green(SPINNER[st.frame % SPINNER.length]);
   const synced = st.data ? dim(`synced ${Math.max(0, Math.round((Date.now() - st.data.loadedAt) / 1000))}s ago`) : '';
-  const line1 = `${orange(bold(' 🪨 grugbrain'))} ${dim('v' + VERSION)} ${live} ${synced}${upd?.newer ? ' ' + yellow(`⬆ ${upd.latest}`) : ''}   proxy ${proxy}  hooks ${ok(h.hooks)}  mcp ${ok(h.codeMcp)}  statusline ${ok(h.statusLine)}  terse ${cyan(cfg.terse)}`;
+  const problems = [
+    st.proxyUp === false ? 'proxy' : '',
+    h.hooks ? '' : 'hooks',
+    h.codeMcp ? '' : 'tools',
+    h.statusLine ? '' : 'status line'
+  ].filter(Boolean);
+  const status = problems.length ? red(`✗ needs attention: ${problems.join(', ')} (run: grug doctor --fix)`) : green('✓ grug is working');
+  void proxy;
+  void ok;
+  const line1 = `${orange(bold(' 🪨 grugbrain'))} ${dim('v' + VERSION)} ${live} ${synced}${upd?.newer ? ' ' + yellow(`⬆ ${upd.latest} available (grug update)`) : ''}   ${status}   ${dim('short answers:')} ${cyan(cfg.terse)}`;
   const tabs = TABS.map((t, i) => (i === st.tab ? inverse(` ${i + 1} ${t} `) : dim(` ${i + 1} ${t} `))).join('');
   const clock = dim(new Date().toLocaleTimeString());
   return [line1, pad(tabs, width - visible(clock).length - 1) + clock, dim('─'.repeat(width))];
@@ -120,8 +129,16 @@ function hero(st: State, width: number): string[] {
   const shown = st.shown === undefined ? target : st.shown;
   const digits = shown >= 9.95 ? String(Math.round(shown)) : shown.toFixed(1);
   const big = bigText(digits + '%').map((l) => boldFg(sv.pct > 0 ? 120 : 245)(l));
-  const left: string[] = [bold('GRUG SAVED'), '', ...big, '', `${bold(money(sv.netUsd))} ${dim('saved on')} ${money(sv.spendUsd + sv.netUsd)} ${dim('(last 7 days, estimate)')}`, `${colorBar(sv.pct, 28, 120)} ${dim('of your bill')}`];
-  if (sv.costUsd > 0) left.push(dim(`after ${money(sv.costUsd)} that grug's own notes and hints cost`));
+  const left: string[] = [
+    bold('GRUG SAVED') + dim('  (last 7 days)'),
+    '',
+    ...big,
+    '',
+    `${bold(money(sv.netUsd))} ${dim('kept in your pocket, out of')} ${money(sv.spendUsd + sv.netUsd)} ${dim('you would have paid')}`,
+    `${colorBar(sv.pct, 28, 120)} ${dim('share of your bill')}`,
+    dim('An estimate: text grug kept out of your chats, priced at your model.')
+  ];
+  if (sv.costUsd > 0) left.push(dim(`Already subtracted: ${money(sv.costUsd)} that grug's own notes cost.`));
   const parts = [...sv.parts].sort((a, b) => b.usd - a.usd);
   const sweep = st.frame === undefined ? -1 : (st.frame % 48) / 48;
   const slices = parts.map((p, i) => ({ value: p.usd, color: PALETTE[i % PALETTE.length] }));
@@ -129,7 +146,7 @@ function hero(st: State, width: number): string[] {
   const totalUsd = parts.reduce((n, p) => n + p.usd, 0) || 1;
   const legend = parts.slice(0, 8).map((p, i) => `${fg(PALETTE[i % PALETTE.length])('●')} ${pad(p.label, 28)}${pad(Math.round((p.usd / totalUsd) * 100) + '%', 5, true)} ${dim(pad(money(p.usd), 8, true))}`);
   if (!parts.length) legend.push(dim('nothing saved yet: use Claude Code and this fills in'));
-  const right = sideBySide(ring, legend, 2);
+  const right = sideBySide(ring, [bold('WHERE IT CAME FROM'), '', ...legend], 2);
   return width >= 112 ? sideBySide(left, right, 4) : [...left, '', ...right];
 }
 
@@ -151,22 +168,42 @@ function liveStrip(st: State, width: number): string[] {
   return L;
 }
 
+/** Three plain-language lines: what drives the bill, whether the cache works, and the single best thing to do. */
+function plainWords(d: Data): string[] {
+  const { week, savings } = d;
+  const L = [bold('IN PLAIN WORDS')];
+  if (!week.requests) return [...L, dim('  Not enough use yet. Work with Claude for a while and this explains your bill.')];
+  const ctx = (week.inputTokens + week.cacheReadTokens + week.cacheWriteTokens) / week.requests;
+  L.push(`  ${dim('•')} Claude re-reads the whole chat on every reply. Yours averaged ${bold(fmtTokens(ctx))} of text, about ${bold(fmtUsd(week.costUsd / week.requests))} a reply.`);
+  L.push(ctx > 200000
+    ? `  ${yellow('•')} ${yellow('That is big.')} The best saving is yours: type ${bold('/clear')} when you switch to a new task.`
+    : `  ${green('•')} Chat sizes look healthy. Keep using ${bold('/clear')} between unrelated tasks.`);
+  L.push(week.cacheHitRate >= 0.9
+    ? `  ${green('•')} Claude's cache is working: ${Math.round(week.cacheHitRate * 100)}% of the re-reading is billed at a big discount.`
+    : `  ${yellow('•')} The cache is only ${Math.round(week.cacheHitRate * 100)}% effective, so re-reading costs more. See the Advice tab.`);
+  const top = [...savings.parts].sort((a, b) => b.usd - a.usd)[0];
+  if (top && top.usd > 0) L.push(`  ${green('•')} Grug's biggest help this week: ${bold(top.label.toLowerCase())}.`);
+  return L;
+}
+
 function overview(st: State, width: number): string[] {
   const d = dataOf(st);
   const now = Date.now();
   const { all, week, day } = d;
   const col = (s: string) => pad(s, 15, true);
-  const row = (label: string, f: (s: Summary) => string) => `  ${pad(label, 30)}${col(f(day))}${col(f(week))}${col(f(all))}`;
+  const row = (label: string, f: (s: Summary) => string) => `  ${pad(label, 38)}${col(f(day))}${col(f(week))}${col(f(all))}`;
   const L: string[] = [...hero(st, width), '', ...liveStrip(st, width), ''];
-  L.push(bold('MEASURED') + dim('  real token usage (proxy + session transcripts)'));
-  L.push(dim(`  ${pad('', 30)}${col('24h')}${col('7 days')}${col('all time')}`));
-  L.push(row('requests', (s) => s.requests.toLocaleString()));
-  L.push(row('spend', (s) => fmtUsd(s.costUsd)));
-  L.push(row('input / output tokens', (s) => `${fmtTokens(s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens)}/${fmtTokens(s.outputTokens)}`));
-  L.push(row('cost per reply', (s) => (s.requests ? fmtUsd(s.costUsd / s.requests) : '—')));
-  L.push(row('avg context per reply', (s) => (s.requests ? fmtTokens((s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens) / s.requests) : '—')));
-  L.push(row('saved by prompt cache (all)', (s) => green(fmtUsd(s.cacheSavedUsd))));
-  L.push(`  ${pad('cache hit rate (7d)', 30)}${bar(week.cacheHitRate, 24)} ${Math.round(week.cacheHitRate * 100)}%`);
+  L.push(...plainWords(d));
+  L.push('');
+  L.push(bold('YOUR USAGE') + dim('  measured from your real Claude sessions'));
+  L.push(dim(`  ${pad('', 38)}${col('last 24 hours')}${col('last 7 days')}${col('all time')}`));
+  L.push(row('Replies Claude wrote', (s) => s.requests.toLocaleString()));
+  L.push(row('What you paid (at API prices)', (s) => fmtUsd(s.costUsd)));
+  L.push(row('Text Claude read / wrote (tokens)', (s) => `${fmtTokens(s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens)}/${fmtTokens(s.outputTokens)}`));
+  L.push(row('Cost of one reply', (s) => (s.requests ? fmtUsd(s.costUsd / s.requests) : '—')));
+  L.push(row('Chat size re-read every reply', (s) => (s.requests ? fmtTokens((s.inputTokens + s.cacheReadTokens + s.cacheWriteTokens) / s.requests) : '—')));
+  L.push(row('Saved by Claude\'s built-in cache', (s) => green(fmtUsd(s.cacheSavedUsd))));
+  L.push(`  ${pad('Cache working? (7 days)', 38)}${bar(week.cacheHitRate, 24)} ${Math.round(week.cacheHitRate * 100)}%${dim('  higher is better')}`);
   L.push('');
   const days: number[] = [];
   const saved: number[] = [];
@@ -176,10 +213,10 @@ function overview(st: State, width: number): string[] {
     days.push(hit?.costUsd || 0);
     saved.push(hit?.savedUsd || 0);
   }
-  L.push(`${bold('14-DAY')}  spend ${cyan(spark(days))}   cache-saved ${green(spark(saved))}`);
+  L.push(`${bold('LAST 14 DAYS')}  what you paid ${cyan(spark(days))}   saved by cache ${green(spark(saved))}`);
   const monthly = (week.costUsd / 7) * 30;
   const without = ((week.costUsd + d.savings.netUsd) / 7) * 30;
-  L.push(`${bold('PROJECTION')}  at 7-day pace: ${bold(fmtUsd(monthly))}/mo` + (d.savings.netUsd > 0 ? `, without grug ≈ ${fmtUsd(without)}/mo (${green('-' + fmtUsd(without - monthly))})` : ''));
+  L.push(`${bold('IF THIS CONTINUES')}  about ${bold(fmtUsd(monthly))} a month` + (d.savings.netUsd > 0 ? `, instead of about ${fmtUsd(without)} without grug (${green('saves ' + fmtUsd(without - monthly))})` : ''));
   const bench = latestBench();
   if (bench) {
     const on = bench.results.filter((r: any) => r.arm === 'on');

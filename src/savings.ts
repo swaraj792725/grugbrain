@@ -30,13 +30,13 @@ export interface Savings {
 }
 
 const GROUPS: Array<{ key: string; label: string; kinds: string[] }> = [
-  { key: 'trim', label: 'Trimmed tool output', kinds: ['trim', 'dedupe'] },
-  { key: 'cmdrules', label: 'Install/build noise', kinds: ['cmdrules'] },
-  { key: 'testsum', label: 'Test summaries', kinds: ['testsum'] },
-  { key: 'json', label: 'Compact JSON', kinds: ['json'] },
-  { key: 'reads', label: 'Read guards', kinds: ['read-guard', 'reread', 'outline'] },
-  { key: 'media', label: 'Images/PDF/video', kinds: ['media'] },
-  { key: 'handoff', label: 'Handoff after /clear', kinds: ['handoff'] }
+  { key: 'trim', label: 'Shortened long tool output', kinds: ['trim', 'dedupe'] },
+  { key: 'cmdrules', label: 'Cut install/build clutter', kinds: ['cmdrules'] },
+  { key: 'testsum', label: 'Summarised test results', kinds: ['testsum'] },
+  { key: 'json', label: 'Shrunk big JSON data', kinds: ['json'] },
+  { key: 'reads', label: 'Avoided re-reading files', kinds: ['read-guard', 'reread', 'outline'] },
+  { key: 'media', label: 'Smaller images, PDFs, video', kinds: ['media'] },
+  { key: 'handoff', label: 'Kept the work after /clear or compact', kinds: ['handoff'] }
 ];
 
 function topModel(s: Summary): string {
@@ -53,7 +53,7 @@ export function computeSavings(sinceMs = 0, s: Summary = summarize(sinceMs)): Sa
     const count = g.kinds.reduce((n, k) => n + (s.countByKind[k] || 0), 0);
     parts.push({ key: g.key, label: g.label, tokens, usd: tokens * price, count });
   }
-  parts.push({ key: 'cache', label: 'Prompt cache (added by grug)', tokens: 0, usd: s.grugCacheSavedUsd, count: 0 });
+  parts.push({ key: 'cache', label: 'Better prompt caching', tokens: 0, usd: s.grugCacheSavedUsd, count: 0 });
   const spentTokens = Object.values(s.savedByKind).reduce((n, v) => n + (v < 0 ? -v : 0), 0);
   const costUsd = spentTokens * price;
   const savedUsd = parts.reduce((n, p) => n + p.usd, 0);
