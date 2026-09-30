@@ -73,6 +73,8 @@ interface State {
   data?: Data;
   /** Headline percentage as currently shown (counts up to the real value). */
   shown?: number;
+  /** Measured net savings when the dashboard opened, to show what grug saved while you watch. */
+  baseNet?: number;
   /** Newest activity seen at the last reload, for the "just now" flash. */
   flash?: { text: string; until: number };
   seenTs?: number;
@@ -127,25 +129,35 @@ function hero(st: State, width: number): string[] {
   const sv = d.savings;
   const target = sv.pct * 100;
   const shown = st.shown === undefined ? target : st.shown;
-  const digits = shown >= 9.95 ? String(Math.round(shown)) : shown.toFixed(1);
+  const digits = shown >= 9.95 ? String(Math.round(shown)) : shown.toFixed(2);
   const big = bigText(digits + '%').map((l) => boldFg(sv.pct > 0 ? 120 : 245)(l));
+  const sinceOpen = st.baseNet === undefined ? 0 : sv.netUsd - st.baseNet;
+  const day24 = computeSavings(Date.now() - DAY, d.day);
   const left: string[] = [
-    bold('GRUG SAVED') + dim('  (last 7 days)'),
+    bold('GRUG SAVED') + dim('  (measured, last 7 days)'),
     '',
     ...big,
     '',
     `${bold(money(sv.netUsd))} ${dim('kept in your pocket, out of')} ${money(sv.spendUsd + sv.netUsd)} ${dim('you would have paid')}`,
     `${colorBar(sv.pct, 28, 120)} ${dim('share of your bill')}`,
-    dim('An estimate: text grug kept out of your chats, priced at your model.')
+    `${dim('Last 24 hours:')} ${bold(money(day24.netUsd))} ${dim(`(${(day24.pct * 100).toFixed(1)}%)`)}   ${sinceOpen >= 0.005 ? boldFg(120)(`▲ +${money(sinceOpen)} while you watched`) : dim('live: nothing new since you opened this')}`,
+    dim('Only counts text grug really cut out of your chats, priced at your model.')
   ];
   if (sv.costUsd > 0) left.push(dim(`Already subtracted: ${money(sv.costUsd)} that grug's own notes cost.`));
-  const parts = [...sv.parts].sort((a, b) => b.usd - a.usd);
+  if (sv.estimatedUsd > 0.005) left.push(dim(`Not counted (estimates): about ${money(sv.estimatedUsd)} more from handoffs and cache.`));
+  const sorted = [...sv.parts].sort((a, b) => b.usd - a.usd);
+  const parts = sorted.filter((p) => p.measured);
+  const modeled = sorted.filter((p) => !p.measured && p.usd > 0.005);
   const sweep = st.frame === undefined ? -1 : (st.frame % 48) / 48;
   const slices = parts.map((p, i) => ({ value: p.usd, color: PALETTE[i % PALETTE.length] }));
   const ring = donut(slices, 22, 11, sweep);
   const totalUsd = parts.reduce((n, p) => n + p.usd, 0) || 1;
   const legend = parts.slice(0, 8).map((p, i) => `${fg(PALETTE[i % PALETTE.length])('●')} ${pad(p.label, 28)}${pad(Math.round((p.usd / totalUsd) * 100) + '%', 5, true)} ${dim(pad(money(p.usd), 8, true))}`);
-  if (!parts.length) legend.push(dim('nothing saved yet: use Claude Code and this fills in'));
+  if (!parts.length) legend.push(dim('nothing measured yet: use Claude Code and this fills in'));
+  if (modeled.length) {
+    legend.push('', dim('Estimates, not in the number:'));
+    for (const p of modeled) legend.push(dim(`○ ${pad(p.label, 28)}${pad('≈', 5, true)} ${pad(money(p.usd), 8, true)}`));
+  }
   const right = sideBySide(ring, [bold('WHERE IT CAME FROM'), '', ...legend], 2);
   return width >= 112 ? sideBySide(left, right, 4) : [...left, '', ...right];
 }
@@ -487,6 +499,7 @@ export async function runDashboard(opts: { once?: boolean } = {}): Promise<void>
     else if (st.seenTs === undefined) st.seenTs = 0;
   };
   reload();
+  st.baseNet = st.data?.savings.netUsd;
   st.shown = 0; // the headline counts up from 0 on open
   // One write per frame, line by line with erase-to-end, so nothing flickers.
   const draw = () => {

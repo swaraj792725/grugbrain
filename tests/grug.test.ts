@@ -2298,3 +2298,18 @@ describe('dashboard in plain words', () => {
     expect(o).not.toMatch(/MEASURED|PROJECTION|avg context per reply/);
   });
 });
+
+describe('headline counts only measured savings', () => {
+  it('handoff estimates stay out of savedUsd and netUsd', async () => {
+    const { recordActivity } = await import('../src/stats.js');
+    const { computeSavings } = await import('../src/savings.js');
+    recordActivity({ kind: 'handoff', msg: 'restored', tokens: 50000 });
+    const sv = computeSavings(0);
+    const h = sv.parts.find((p) => p.key === 'handoff')!;
+    expect(h.measured).toBe(false);
+    expect(h.usd).toBeGreaterThan(0);
+    expect(sv.savedUsd).toBe(0);
+    expect(sv.estimatedUsd).toBeGreaterThanOrEqual(h.usd);
+    expect(sv.pct).toBe(0);
+  });
+});

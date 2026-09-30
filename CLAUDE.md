@@ -52,3 +52,6 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - savings.ts computes the headline: net = kept tokens at main-model input price + grug cache savings - grug costs (negative-token entries); pct = net / (spend + net). It is an estimate, always label it so.
 - statusline.ts + `grug statusline` (install.ts applyStatusLine wraps the user's own command, `prevStatusLine` restores it). Claude Code shows the status line BELOW the input box; do not claim it is above.
 - Dashboard: src/tui/visual.ts (donut, bigText, pulse), dashboard.ts (5 tabs, 120 ms frames, 2 s reload).
+
+## Headline honesty (v2.17)
+- savings.ts: headline (netUsd, pct) = measured parts only minus grug costs. `handoff` and `cache` are modeled, flagged `measured:false`, reported as `estimatedUsd`, never in the headline. Dashboard shows 24h figure and a since-opened ticker.

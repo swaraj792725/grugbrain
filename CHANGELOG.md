@@ -2,6 +2,14 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.17.0
+
+Headline count only what grug measured.
+
+- The "GRUG SAVED" number and percentage now include only measured savings (text grug really cut out, minus grug's own costs). The handoff-after-/clear and prompt-cache figures are modeled estimates, so they are shown separately and never added in. Expect the percentage to drop.
+- Dashboard shows a last-24-hours figure, a live "+$X while you watched" ticker, and two decimals under 10% so you can see it move.
+- Status line and app summary use the same measured-only number.
+
 ## 2.16.0
 
 A grug summary for the Claude desktop app, which draws no status line.

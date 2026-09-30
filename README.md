@@ -128,7 +128,7 @@ Live, animated TUI (redraws every 120 ms, reloads data every 2 s; the header sho
 - **4 Memory**: projects, sessions, digests, notes, hot files, graph + vault paths (`g` opens graph).
 - **5 Advice**: what grug *would* do but cannot do alone: low cache hit rate, too much top-tier model spend, terse mode, broken install.
 
-**How the headline % is worked out (an estimate, labelled as one):** net = tokens kept out of context (priced once at your main model's input rate) + prompt-cache savings grug added, minus grug's own costs (briefs, recalls, hints, cache misses). Percent = net / (spend + net). Token counts are estimates; spend is measured from real usage.
+**How the headline % is worked out (an estimate, labelled as one):** net = tokens grug measurably kept out of context (priced once at your main model's input rate), minus grug's own costs (briefs, recalls, hints, cache misses). Modeled figures (handoff after /clear, prompt-cache attribution) are shown separately as estimates and are never added to the headline. Percent = net / (spend + net). Token counts are estimates; spend is measured from real usage.
 
 `grug dash --once` prints it all without the TUI (for scripts / CI).
 
