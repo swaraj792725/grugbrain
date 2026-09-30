@@ -48,6 +48,7 @@ export type ActivityKind =
   | 'task-shift'
   | 'history'
   | 'handoff'
+  | 'subagent'
   | 'brief'
   | 'recall'
   | 'auto-recall'

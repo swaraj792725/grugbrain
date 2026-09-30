@@ -66,3 +66,6 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 ## App visibility (v2.20)
 - The desktop Code tab draws no status line and hides hook systemMessages for the user, so grug ships `plugin/grug-live` (Claude Code plugin-authoring API: `ui.render` AbovePrompt band, `$.ui.status`, `$.ui.toast`). install.ts `copyPlugin` copies it to ~/.grug/plugins/grug-live, writes grug.json (node + cli + `app-status`), `applyTuning` adds the dir to env CLAUDE_CODE_PLUGIN_DIRS (user's own dirs kept). Validator rule: `$` may only be used as `$.noun.method(...)` or passed to a top-level function declaration.
 - Verified: `claude plugin validate`, loads in `claude -p --plugin-dir`, tests. NOT verified: actual drawing in the user's desktop Code tab. Ask the user.
+
+## Subagents (v2.21)
+- Hooks fire inside subagents with `agent_id`/`agent_type` (PreToolUse, PostToolUse verified live); SessionStart/UserPromptSubmit do not, so `subagent-start` injects terse style + read rule. Subagent transcripts are separate files at `<session>/subagents/agent-*.jsonl` (isSidechain true); meterTranscript reads them too, with per-file offsets. Not covered: recall/code map for subagents.

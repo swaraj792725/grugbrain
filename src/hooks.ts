@@ -46,6 +46,7 @@ export interface HookInput {
   tool_output?: any;
   reason?: string;
   agent_id?: string;
+  agent_type?: string;
   scratchpad_dir?: string;
 }
 
@@ -381,6 +382,17 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
             ? { ...r, stdout: text, stderr: '' }
             : text;
       return { hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: updated } };
+    }
+
+    case 'subagent-start': {
+      // Subagents get no SessionStart/UserPromptSubmit hooks, so carry the two cheap rules over.
+      const parts: string[] = [];
+      const style = terseStyle(cfg.terse);
+      if (style) parts.push(style);
+      parts.push('Large files: Grep for the symbol, then Read with offset/limit instead of reading the whole file.');
+      const text = parts.join('\n');
+      recordActivity({ kind: 'subagent', msg: `Subagent ${input.agent_type || ''} started with terse style + read rule`.replace('  ', ' '), tokens: -estimateTokens(text), project: path.basename(cwd) });
+      return { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: text } };
     }
 
     case 'stop': {

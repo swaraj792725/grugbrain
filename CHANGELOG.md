@@ -2,6 +2,9 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.21.0
+- **Subagents save tokens too.** Checked live: the read guard and Bash output trim already run inside subagents (hooks receive `agent_id`). Two gaps closed: a new `SubagentStart` hook gives every subagent the terse style and the "Grep, then Read with offset/limit" rule (they get no SessionStart/prompt hooks), and metering now includes the separate `subagents/agent-*.jsonl` transcripts, so subagent spend shows in cost and savings. Run `grug update` to register the hook. Subagent model routing stays `grug config set routing.subagentModel sonnet`.
+
 ## 2.20.0
 - **grug-live: grug is visible in the app.** A small Claude Code plugin (`plugin/grug-live`, installed to `~/.grug/plugins/grug-live` and registered through `CLAUDE_CODE_PLUGIN_DIRS`, keeping your own entries) draws a band above the prompt in new and ongoing sessions: a working animation while a reply runs, the savings bar, a context bar, and context / cold-cache notices (also as a toast and a status entry). It reads `grug app-status` (same numbers as the status line). Turn off with `grug config set appPlugin.enabled false`. Needs Claude Code with the plugin UI API (2.1.286+); a session started before the update needs a restart. `grug doctor` reports it.
 - Not yet confirmed: how the desktop Code tab on your machine draws it. The plugin validates and loads in a real `claude -p`; the drawing itself was not seen.
