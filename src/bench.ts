@@ -250,6 +250,7 @@ function hookSettings(): any {
   };
 }
 
+let ownBuildRun = false;
 function runClaude(dir: string, prompt: string, model: string, settings: any, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<any> {
   return new Promise((resolve) => {
     // Pre-approve the tools the tasks need (works for root too, unlike --dangerously-skip-permissions).
@@ -258,7 +259,7 @@ function runClaude(dir: string, prompt: string, model: string, settings: any, en
       '--allowedTools', 'Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'LS',
       '--settings', JSON.stringify(settings)
     ];
-    if (settings.hooks) args.push('--setting-sources', 'project,local'); // only our hooks, not the installed ones
+    if (ownBuildRun) args.push('--setting-sources', 'project,local'); // both arms: only our hooks, not the installed ones, and the same context
     const child = spawn('claude', args, { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
@@ -297,6 +298,7 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
   if (!up) throw new Error(`grug proxy is not running on :${cfg.port} (start it: grug daemon &)`);
   const hooksInstalled = health().hooks;
   const ownBuild = hooksInstalled && path.resolve(benchCli()) !== path.resolve(installedCli());
+  ownBuildRun = ownBuild;
   const tasks = TASKS.filter((t) => !opts.taskIds?.length || opts.taskIds.includes(t.id));
   const results: ArmResult[] = [];
   const baseEnv: NodeJS.ProcessEnv = { ...process.env };
