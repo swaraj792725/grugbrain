@@ -231,9 +231,15 @@ export interface ArmResult {
   error?: string;
 }
 
+/** The CLI the hooks should call: the build running this bench, else the installed copy. */
+function benchCli(): string {
+  const me = process.argv[1];
+  if (me && /cli\.js$/.test(me) && fs.existsSync(me)) return me;
+  return fs.existsSync(installedCli()) ? installedCli() : me;
+}
+
 function hookSettings(): any {
-  // Test the build that is running this bench, not an older installed copy (that would measure the wrong code).
-  const cli = process.argv[1] && /cli\.js$/.test(process.argv[1]) && fs.existsSync(process.argv[1]) ? process.argv[1] : fs.existsSync(installedCli()) ? installedCli() : process.argv[1];
+  const cli = benchCli();
   const cmd = (e: string) => ({ type: 'command', command: `"${process.execPath}" "${cli}" hook ${e} ${MARK}`, timeout: 10 });
   return {
     SessionStart: [{ hooks: [cmd('session-start')] }],
@@ -252,6 +258,7 @@ function runClaude(dir: string, prompt: string, model: string, settings: any, en
       '--allowedTools', 'Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'LS',
       '--settings', JSON.stringify(settings)
     ];
+    if (settings.hooks) args.push('--setting-sources', 'project,local'); // only our hooks, not the installed ones
     const child = spawn('claude', args, { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
@@ -289,6 +296,7 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
   const up = await proxyHealth(cfg.port);
   if (!up) throw new Error(`grug proxy is not running on :${cfg.port} (start it: grug daemon &)`);
   const hooksInstalled = health().hooks;
+  const ownBuild = hooksInstalled && path.resolve(benchCli()) !== path.resolve(installedCli());
   const tasks = TASKS.filter((t) => !opts.taskIds?.length || opts.taskIds.includes(t.id));
   const results: ArmResult[] = [];
   const baseEnv: NodeJS.ProcessEnv = { ...process.env };
@@ -306,7 +314,8 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
       env.GRUG_TAG = 'bench';
       settings.env.GRUG_TAG = 'bench';
       settings.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${cfg.port}/__grug/tag/bench`;
-      if (!hooksInstalled) settings.hooks = hookSettings();
+      // Installed hooks may be an older build than the one under test: then inject ours and hide the user-level ones.
+      if (!hooksInstalled || ownBuild) settings.hooks = hookSettings();
     }
     env.ANTHROPIC_BASE_URL = settings.env.ANTHROPIC_BASE_URL;
     return { env, settings };
