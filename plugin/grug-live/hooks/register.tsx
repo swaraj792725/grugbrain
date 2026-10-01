@@ -21,6 +21,20 @@ let status: Status = {}
 let busy = false
 let frame = 0
 let notified = ''
+let lastPing = 0
+
+/** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Throttled; failures ignored. */
+async function ping($: any, kind: string) {
+  const now = Date.now()
+  if (kind === 'render' && now - lastPing < 60000) return
+  lastPing = now
+  try {
+    if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
+    await $.process.run([...argv!.slice(0, -1), 'live-ping', kind], { timeoutMs: 4000 })
+  } catch {
+    /* grug missing: nothing to report */
+  }
+}
 
 async function refresh($: any) {
   try {
@@ -39,6 +53,7 @@ async function refresh($: any) {
 export const register: Register = on => {
 
   on('session.start', async ($, e, next) => {
+    void ping($, 'session')
     await refresh($)
     $.clock.every(1000, () => {
       frame += 1
@@ -69,6 +84,7 @@ export const register: Register = on => {
   }
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
+    void ping($, 'render')
     if (e.props.hasSurvey) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     return (

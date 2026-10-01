@@ -1,6 +1,6 @@
 {
   "name": "grugbrain",
-  "version": "2.23.1",
+  "version": "2.24.0",
   "description": "Grug make Claude use few token. Zero-touch token saver + self-maintaining memory graph for Claude Code & Claude Desktop: API proxy with prompt-cache autopilot, tool-output trimming, read guard, repo maps, code outlines, Obsidian vault, TUI dashboard.",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

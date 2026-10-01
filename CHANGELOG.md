@@ -2,6 +2,11 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.24.0
+- **Startup overhead is measured and reported.** `grug dash` now shows how many tokens every session starts with before you type (median of recent sessions, from real transcripts) and what that costs per week. Grug cannot shrink it; the fix is turning off connectors and plugins you do not use (Claude app: Settings > Connectors / Plugins; terminal: `claude plugin list`, `claude mcp list`).
+- **Advice fix.** The dashboard no longer suggests an auto-compact window below 200k; smaller windows can refill within a few turns and compact in a loop.
+- **grug-live heartbeat.** The plugin now records when Claude Code loads it and when it draws the band. `grug doctor` prints "loaded: N min ago, drawn: never" so a missing band in the desktop Code tab is diagnosed instead of guessed. Removed the unverified "needs Claude Code 2.1.286+" claim: the desktop app's bundled Claude Code (2.1.284) has the plugin API and validates the plugin. Whether the Code tab draws the band is still unconfirmed; the heartbeat will tell.
+
 ## 2.23.1
 - **Quality gates measured, honestly.** Live A/B on Sonnet (`grug bench`, csv-trap + signature-ripple, 5 runs per arm, same settings in both arms, gates confirmed running): 10/10 vs 10/10 passed, cost +1% (within noise), turns 71 vs 62. On small tasks Sonnet is right without the gates, so they showed no quality gain and no cost saving; they add a little work (the check and a few turns). Grug's savings come from long sessions (auto-compaction, output trimming, handoffs), which a 5-10 turn bench cannot show. Do not read a "smarter" or "% cheaper" claim from this.
 - **Repeat-failure guard (part of the verify gate).** A failure already shown this session (same excerpt with durations and digits normalised) never sends Claude back again, so a check that was already failing before the edit costs nothing extra.

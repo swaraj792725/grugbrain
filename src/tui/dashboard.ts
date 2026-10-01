@@ -16,6 +16,7 @@ import { computeSavings, SavingPart, Savings } from '../savings.js';
 import { bigText, boldFg, colorBar, donut, ease, fg, PALETTE, pulse, SPINNER } from './visual.js';
 import { fmtTokens, fmtUsd, priceFor } from '../tokens.js';
 import { cachedUpdate } from '../update.js';
+import { measureBaseline } from '../baseline.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -410,7 +411,16 @@ export function advice(proxyUp: boolean | null): Advice[] {
     out.push({
       level: 'save',
       text: `Average context is ${fmtTokens(avgCtx)} tokens per reply (${fmtUsd(perReply)}/reply). Every reply re-reads it. Cost scales with context: halving it roughly halves the bill (≈ ${fmtUsd(week.costUsd / 2)}/week here).`,
-      cmd: 'grug auto-compacts at the autoCompact window and restores a handoff; cut deeper: grug config set autoCompact.windowTokens 120000'
+      cmd: 'grug auto-compacts at the autoCompact window and restores a handoff. Do not go below 200k: smaller windows can refill within a few turns and compact in a loop.'
+    });
+  }
+  const base = week.requests >= 20 ? measureBaseline() : null;
+  if (base && base.medianTokens > 30000) {
+    const share = avgCtx > 0 ? Math.min(1, base.medianTokens / avgCtx) : 0;
+    out.push({
+      level: 'save',
+      text: `Every session starts at ${fmtTokens(base.medianTokens)} tokens before you type (median of ${base.sessions} sessions): system prompt plus plugin, connector and skill listings. That is ~${Math.round(share * 100)}% of the average context (≈ ${fmtUsd(week.costUsd * share)}/week here), re-read on every reply. Grug cannot remove it; disabling unused plugins, connectors and skills can.`,
+      cmd: 'Claude app: Settings > Connectors / Plugins, turn off what you do not use. Terminal: claude plugin list, claude mcp list'
     });
   }
   const outShare = week.outputTokens / Math.max(1, week.inputTokens + week.outputTokens);
