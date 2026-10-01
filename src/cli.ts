@@ -117,7 +117,17 @@ async function main() {
         } catch {
           /* no settings */
         }
-        console.log(`${ok(dirs.includes('grug-live') && fs.existsSync(pluginDir()))} grug-live band above the prompt (app plugin; needs a new session, drawn by Claude Code 2.1.286+)`);
+        console.log(`${ok(dirs.includes('grug-live') && fs.existsSync(pluginDir()))} grug-live band above the prompt (app plugin; needs a new session)`);
+        let hb: any = {};
+        try {
+          hb = JSON.parse(fs.readFileSync(path.join(paths.home(), 'live-heartbeat.json'), 'utf8'));
+        } catch {
+          /* never loaded */
+        }
+        const ago = (t?: number) => (t ? `${Math.max(1, Math.round((Date.now() - t) / 60000))} min ago` : 'never');
+        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; band drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}`);
+        if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
+        else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not render the band; use `grug dash` or the terminal `claude` to see it');
       }
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
@@ -242,6 +252,25 @@ async function main() {
         process.stdout.write(renderStatusLine(await readStdinText()));
       } catch {
         /* never break the status line */
+      }
+      process.exit(0);
+    }
+
+    case 'live-ping': {
+      try {
+        const kind = process.argv[3] === 'render' ? 'render' : 'session';
+        const f = path.join(paths.home(), 'live-heartbeat.json');
+        let j: any = {};
+        try {
+          j = JSON.parse(fs.readFileSync(f, 'utf8'));
+        } catch {
+          /* first ping */
+        }
+        j[kind === 'render' ? 'renderAt' : 'sessionAt'] = Date.now();
+        if (kind === 'render') j.renders = (j.renders || 0) + 1;
+        fs.writeFileSync(f, JSON.stringify(j));
+      } catch {
+        /* best effort */
       }
       process.exit(0);
     }

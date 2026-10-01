@@ -3047,3 +3047,19 @@ describe('quality gates (v2.23)', () => {
     expect(hints.map((h) => h.line).join('\n')).toMatch(/refunds\.ts.*→ uses ledger\.ts/);
   });
 });
+
+describe('baseline overhead', () => {
+  it('takes the median first-reply context across recent main transcripts', async () => {
+    const { measureBaseline } = await import('../src/baseline.js');
+    const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'projects', '-tmp-baseline');
+    fs.mkdirSync(root, { recursive: true });
+    const sizes = [40000, 50000, 60000, 70000, 80000];
+    sizes.forEach((n, i) => {
+      const side = JSON.stringify({ type: 'assistant', isSidechain: true, message: { usage: { input_tokens: 1, cache_read_input_tokens: 1 } } });
+      const main = JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 10, cache_read_input_tokens: n - 10 - 5, cache_creation_input_tokens: 5 } } });
+      fs.writeFileSync(path.join(root, `s${i}.jsonl`), `${side}\n${main}\n`);
+    });
+    const b = measureBaseline(7, 5);
+    expect(b).toEqual({ sessions: 5, medianTokens: 60000 });
+  });
+});
