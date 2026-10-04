@@ -309,6 +309,8 @@ export interface BenchOptions {
   runs: number;
   taskIds?: string[];
   timeoutMs?: number;
+  /** Ablation: the baseline arm runs grug too, with these overrides (GRUG_SET syntax, e.g. graphContext.enabled=false). */
+  compare?: string;
   log?: (s: string) => void;
 }
 
@@ -328,12 +330,20 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
   const armSetup = (arm: 'off' | 'on') => {
     const env = { ...baseEnv };
     const settings: any = { env: {} };
-    if (arm === 'off') {
+    if (arm === 'off' && opts.compare) {
+      // Ablation: grug on in both arms, the baseline with some features overridden.
+      delete env.GRUG_DISABLE;
+      env.GRUG_TAG = settings.env.GRUG_TAG = 'bench';
+      env.GRUG_SET = settings.env.GRUG_SET = opts.compare;
+      settings.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${cfg.port}/__grug/tag/bench`;
+      if (!hooksInstalled || ownBuild) settings.hooks = hookSettings();
+    } else if (arm === 'off') {
       env.GRUG_DISABLE = '1';
       settings.env.GRUG_DISABLE = '1';
       settings.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${cfg.port}/__grug/raw`;
     } else {
       delete env.GRUG_DISABLE;
+      delete env.GRUG_SET;
       env.GRUG_TAG = 'bench';
       settings.env.GRUG_TAG = 'bench';
       settings.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${cfg.port}/__grug/tag/bench`;
@@ -347,6 +357,8 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
   // Warm the shared prompt cache for both arms first, so neither arm gets a head start.
   for (const arm of ['off', 'on'] as const) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grug-bench-warm-'));
+    // A git repo like the task dirs: Claude Code's system prompt differs with and without git, and only an equal one shares the cache.
+    spawnSync('git', ['init', '-q'], { cwd: dir });
     const { env, settings } = armSetup(arm);
     log(`  warm-up [${arm}] …`);
     const w = await runClaude(dir, 'Reply with exactly: OK', opts.model, settings, env, 120000);
@@ -400,18 +412,19 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
   }
   ensureDir(path.join(paths.home(), 'bench'));
   const file = path.join(paths.home(), 'bench', `${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
-  writeJsonAtomic(file, { model: opts.model, runs: opts.runs, results });
+  writeJsonAtomic(file, { model: opts.model, runs: opts.runs, compare: opts.compare, results });
   const off = results.filter((r) => r.arm === 'off');
   const on = results.filter((r) => r.arm === 'on');
   const sum = (xs: ArmResult[], f: (r: ArmResult) => number) => xs.reduce((s, r) => s + f(r), 0);
   recordActivity({
     kind: 'bench',
-    msg: `Bench (${opts.model}): quality ${sum(on, (r) => +r.pass)}/${on.length} vs ${sum(off, (r) => +r.pass)}/${off.length} baseline, cost ${fmtUsd(sum(on, (r) => r.costUsd))} vs ${fmtUsd(sum(off, (r) => r.costUsd))}`
+    msg: `Bench (${opts.model}${opts.compare ? `, vs grug with ${opts.compare}` : ''}): quality ${sum(on, (r) => +r.pass)}/${on.length} vs ${sum(off, (r) => +r.pass)}/${off.length} baseline, cost ${fmtUsd(sum(on, (r) => r.costUsd))} vs ${fmtUsd(sum(off, (r) => r.costUsd))}`
   });
   return { results, file };
 }
 
-export function formatBench(results: ArmResult[]): string {
+export function formatBench(results: ArmResult[], compare?: string): string {
+  const base = compare ? `grug with ${compare}` : 'baseline';
   const rows: string[] = [];
   const pad = (s: string, n: number) => (s.length >= n ? s.slice(0, n) : s + ' '.repeat(n - s.length));
   rows.push(`${pad('task', 18)} ${pad('arm', 4)} ${pad('result', 6)} ${pad('cost', 9)} ${pad('fresh in', 9)} ${pad('cache rd', 9)} ${pad('output', 7)} turns`);
@@ -433,8 +446,8 @@ export function formatBench(results: ArmResult[]): string {
   const on = agg('on');
   const pct = (a: number, b: number) => (b > 0 ? `${Math.round((1 - a / b) * 100)}%` : 'n/a');
   rows.push('');
-  rows.push(`quality : grug ${on.pass}/${on.n} vs baseline ${off.pass}/${off.n}`);
-  rows.push(`cost    : grug ${fmtUsd(on.cost)} vs baseline ${fmtUsd(off.cost)}  (${pct(on.cost, off.cost)} saved)`);
+  rows.push(`quality : grug ${on.pass}/${on.n} vs ${base} ${off.pass}/${off.n}`);
+  rows.push(`cost    : grug ${fmtUsd(on.cost)} vs ${base} ${fmtUsd(off.cost)}  (${pct(on.cost, off.cost)} saved)`);
   rows.push(`tokens  : total input ${pct(on.inTok, off.inTok)} fewer, uncached input ${pct(on.fresh, off.fresh)} fewer, output ${pct(on.outTok, off.outTok)} fewer, turns ${on.turns} vs ${off.turns}`);
   rows.push('(single runs are noisy: use --runs 3+ before trusting small differences)');
   const regress = results.filter((r) => r.arm === 'on' && !r.pass && results.some((o) => o.arm === 'off' && o.task === r.task && o.pass));

@@ -177,6 +177,8 @@ export interface GrugConfig {
     verifyMaxRounds: number;
     /** After Edit/Write: a syntax check of that file; only a real error is reported. */
     editGuard: boolean;
+    /** TypeScript edits: report type errors the edit introduced in the file or its importers (old errors are ignored). */
+    typeCheck: boolean;
     /** Before an edit: the stored project rules that concern the file (once per session each). */
     conventions: boolean;
   };
@@ -301,6 +303,7 @@ export function defaultConfig(): GrugConfig {
       verifyTimeoutSec: 90,
       verifyMaxRounds: 2,
       editGuard: true,
+      typeCheck: true,
       conventions: true
     },
     taskBoundary: {
@@ -354,6 +357,16 @@ export function loadConfig(): GrugConfig {
   // Repair values saved by older versions without validation (e.g. "full # comment" typed in zsh).
   const t = String(cfg.terse).trim().split(/\s+/)[0];
   cfg.terse = (ENUMS.terse.includes(t) ? t : 'lite') as GrugConfig['terse'];
+  // GRUG_SET="a.b=v,c=w": per-process overrides that are never saved (bench ablations, one-off runs).
+  for (const pair of String(process.env.GRUG_SET || '').split(',')) {
+    const i = pair.indexOf('=');
+    if (i <= 0) continue;
+    try {
+      assignConfigValue(cfg, pair.slice(0, i).trim(), pair.slice(i + 1));
+    } catch {
+      /* a bad override is ignored, like a bad saved value */
+    }
+  }
   return cfg;
 }
 
@@ -363,7 +376,15 @@ export function saveConfig(cfg: GrugConfig): void {
 
 /** Set a dotted key, coercing "true"/"false"/numbers. */
 export function setConfigValue(key: string, value: string): GrugConfig {
-  const cfg: any = loadConfig();
+  const cfg = loadConfig();
+  assignConfigValue(cfg, key, value);
+  saveConfig(cfg);
+  return cfg;
+}
+
+/** Validate and set one dotted key on a config object (no save). */
+export function assignConfigValue(target: GrugConfig, key: string, value: string): void {
+  const cfg: any = target;
   const parts = key.split('.');
   let cur = cfg;
   for (const p of parts.slice(0, -1)) {
@@ -392,8 +413,6 @@ export function setConfigValue(key: string, value: string): GrugConfig {
     throw new Error(`${key} must be one of: ${ENUMS[key].join(', ')}; got "${value}"${hint}`);
   } else if (kind === 'object') throw new Error(`${key} is a group; set one of its keys (see: grug config)`);
   cur[last] = v;
-  saveConfig(cfg);
-  return cfg;
 }
 
 export function ensureDir(dir: string): void {

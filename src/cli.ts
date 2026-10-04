@@ -69,7 +69,7 @@ const HELP = `
   grug outline <file>             skeleton of a source file
   grug compress <text | ->        strip filler from text (stdin with -)
 
-  grug bench [--model sonnet] [--runs 1] [--tasks a,b] --yes
+  grug bench [--model sonnet] [--runs 1] [--tasks a,b] [--compare key=value,...] --yes
                                   A/B real Claude Code runs: grug off vs on, graded (spends usage)
   grug update [--check]           install the newest GitHub release (--check: only look)
 
@@ -472,6 +472,17 @@ async function main() {
       const model = flagValue('model') || 'sonnet';
       const runs = Number(flagValue('runs') || 1);
       const ids = (flagValue('tasks') || '').split(',').filter(Boolean);
+      const compare = flagValue('compare') || undefined;
+      if (compare) {
+        // Check the overrides before spending usage: GRUG_SET ignores bad ones silently.
+        const { assignConfigValue } = await import('./config.js');
+        const probe = loadConfig();
+        for (const pair of compare.split(',')) {
+          const i = pair.indexOf('=');
+          if (i <= 0) throw new Error(`--compare wants key=value pairs, got "${pair}"`);
+          assignConfigValue(probe, pair.slice(0, i).trim(), pair.slice(i + 1));
+        }
+      }
       const n = (ids.length || TASKS.length) * runs * 2;
       if (!flags.has('--yes')) {
         console.log(`grug bench runs ${n} real Claude Code sessions (model: ${model}). That spends real usage (roughly $0.05–0.40 per session).`);
@@ -479,9 +490,9 @@ async function main() {
         console.log('Re-run with --yes to start.');
         break;
       }
-      console.log(`🪨 grug bench: ${n} sessions, model ${model}\n`);
-      const { results, file } = await runBench({ model, runs, taskIds: ids, log: (l) => console.log(l) });
-      console.log('\n' + formatBench(results));
+      console.log(`🪨 grug bench: ${n} sessions, model ${model}${compare ? `, grug vs grug with ${compare}` : ''}\n`);
+      const { results, file } = await runBench({ model, runs, taskIds: ids, compare, log: (l) => console.log(l) });
+      console.log('\n' + formatBench(results, compare));
       console.log(`\nreport: ${file}`);
       break;
     }

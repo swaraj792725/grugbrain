@@ -194,6 +194,8 @@ Real run (Claude Code 2.1.284, Haiku 4.5, 4 tasks × 2 runs × 2 arms, warm cach
 | reread-config | re-read | 2/2 → 2/2 | $0.102 → $0.103 (same) | 37.0k → 37.3k |
 | **total** | | **8/8 → 8/8** | **$0.318 → $0.282 (−11%)** | **−20%** |
 
+Test one grug feature instead of all of grug: `--compare key=value,...` runs grug in both arms, the baseline with those config overrides (for example `grug bench --compare graphContext.enabled=false --tasks find-threshold --runs 3 --yes` asks whether the code map pays for itself). The overrides apply only to the bench sessions (env `GRUG_SET`), never to your saved config.
+
 Grug read it straight: big win where output is noisy (tests, builds, logs), no loss anywhere, no magic where Claude Code already efficient. Most of each small task's cost is Claude Code's own ~35k-token system prompt, already cached. Bench spends real usage, so it asks for `--yes`; use `--runs 3+` for your own numbers.
 
 ## where grug work
@@ -337,6 +339,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `quality.verifyCommand` | `''` | the check to run instead of the auto-detected one |
 | `quality.verifyTimeoutSec` / `quality.verifyMaxRounds` | `90` / `2` | hard timeout (a timeout never blocks) and the most send-backs per prompt |
 | `quality.editGuard` | `true` | after Edit/Write, check the file's syntax (JSON, JS, TS, Python, shell) and tell Claude at once if the edit broke it |
+| `quality.typeCheck` | `true` | TypeScript edits: type-check the file and the files that import it with the project's own TypeScript; tell Claude only about errors the edit introduced (old errors are ignored) |
 | `quality.conventions` | `true` | before editing a file, show the stored decisions/rules that name it (2 at most, once per session) |
 | `graphContext.hints` / `readHintBytes` | `true` / `12000` | tool-time hints: symbol location on Grep, outline-first on mid-size full Reads |
 | `taskBoundary.enabled` / `minTokens` | `true` / `60000` | suggest `/clear` (to you) when a new task starts on a big context |

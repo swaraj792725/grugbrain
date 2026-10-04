@@ -35,6 +35,7 @@ import { scoreRecalls } from './recalltune.js';
 import { verifyAtStop } from './verify.js';
 import { editGuardMessage } from './editguard.js';
 import { conventionHint } from './conventions.js';
+import { typeBaseline, typeCheckMessage } from './typecheck.js';
 import { bashFileOps } from './bashops.js';
 import { BATCH_RULE, batchNudge } from './batching.js';
 import { lightAgentModel } from './routing.js';
@@ -233,6 +234,13 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       }
       // Before an edit: stored notes that name this file (once per session each).
       if (/^(Edit|Write|MultiEdit)$/.test(input.tool_name || '')) {
+        if (cfg.quality.typeCheck) {
+          try {
+            typeBaseline(sid, cwd, String(input.tool_input?.file_path || ''));
+          } catch {
+            /* best-effort */
+          }
+        }
         try {
           const hint = conventionHint(cfg, sid, cwd, String(input.tool_input?.file_path || ''), now);
           if (hint) return { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: hint } };
@@ -375,6 +383,17 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           if (msg) {
             recordActivity({ kind: 'guard', msg: `Caught a syntax error right after editing ${path.basename(String(ti.file_path))}`, tokens: -estimateTokens(msg), project: path.basename(cwd) });
             return { hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: msg } };
+          }
+        } catch {
+          /* best-effort */
+        }
+      }
+      if (cfg.quality.typeCheck && ti.file_path && /^(Edit|Write|MultiEdit)$/.test(tool)) {
+        try {
+          const msg = typeCheckMessage(sid, cwd, String(ti.file_path));
+          if (msg) {
+            recordActivity({ kind: 'guard', msg: `Caught a new type error right after editing ${path.basename(String(ti.file_path))}`, tokens: -estimateTokens(msg), project: path.basename(cwd) });
+            return withNote({ hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: msg } });
           }
         } catch {
           /* best-effort */

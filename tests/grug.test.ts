@@ -35,6 +35,7 @@ beforeEach(() => {
   process.env.PATH = '/usr/bin:/bin'; // keep the real `claude` CLI out of reach
   delete process.env.ANTHROPIC_BASE_URL;
   delete process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.GRUG_SET;
   delete process.env.GRUG_DISABLE; // set by grug's own verify gate when it runs this suite; tests exercise the hooks
   delete process.env.CLAUDE_CODE_SUBAGENT_MODEL; // the developer's own routing must not leak into routing tests
   // Hard stop if isolation ever breaks: never touch a real home directory.
@@ -3045,6 +3046,32 @@ describe('quality gates (v2.23)', () => {
     expect(await runHook('post-tool', { session_id: 'g2', cwd, tool_name: 'Edit', tool_input: { file_path: path.join(cwd, 'ok.json') }, tool_response: { filePath: 'x' } })).toBeNull();
   });
 
+  it('type check: reports only errors an edit introduced, at the callers too, once', async () => {
+    const cwd = proj({
+      'tsconfig.json': '{"compilerOptions":{"strict":true,"module":"esnext","moduleResolution":"bundler","target":"es2022"},"include":["src"]}',
+      'src/a.ts': 'export function price(x: number): number {\n  return x * 2;\n}\n',
+      'src/b.ts': "import { price } from './a.js';\nexport const total = price(3);\nconst old: string = 1;\n"
+    });
+    fs.symlinkSync(path.resolve('node_modules'), path.join(cwd, 'node_modules'));
+    const { buildGraphIndex } = await import('../src/graph.js');
+    buildGraphIndex(cwd);
+    const a = path.join(cwd, 'src/a.ts');
+    const ev = { session_id: 't1', cwd, tool_name: 'Edit', tool_input: { file_path: a }, tool_response: { filePath: a } };
+    await runHook('pre-tool', ev);
+    fs.writeFileSync(a, 'export function price(x: string): number {\n  return x.length;\n}\n');
+    const out: any = await runHook('post-tool', ev);
+    const msg = out.hookSpecificOutput.additionalContext;
+    expect(msg).toContain('1 new type error');
+    expect(msg).toMatch(/src\/b\.ts:2 .*number.*string/);
+    expect(msg).not.toContain('b.ts:3'); // the error that was already there
+    expect(await runHook('post-tool', ev)).toBeNull(); // already reported
+    // A clean edit says nothing; no baseline (no pre-tool) says nothing.
+    await runHook('pre-tool', ev);
+    fs.writeFileSync(a, 'export function price(x: string): number {\n  return x.length + 1;\n}\n');
+    expect(await runHook('post-tool', ev)).toBeNull();
+    expect(await runHook('post-tool', { ...ev, session_id: 't2' })).toBeNull();
+  }, 20000);
+
   it('conventions: notes naming the file surface once before an edit, nothing for unrelated files', async () => {
     const cwd = proj({ 'src/billing/invoice.ts': 'x', 'src/other.ts': 'y' });
     const db = loadMemory();
@@ -3237,6 +3264,23 @@ describe('batching', () => {
     saveConfig(cfg);
     const s2: any = await runHook('session-start', { session_id: 'br2', cwd, source: 'startup' });
     expect(s2?.hookSpecificOutput?.additionalContext || '').not.toContain('Batch lookups');
+  });
+});
+
+describe('GRUG_SET overrides', () => {
+  it('apply per process, are never saved, and skip bad pairs', async () => {
+    const { loadConfig } = await import('../src/config.js');
+    const { formatBench } = await import('../src/bench.js');
+    saveConfig(defaultConfig());
+    process.env.GRUG_SET = 'graphContext.enabled=false,terse=off,nope.key=1,memory.briefTokens=abc';
+    const cfg = loadConfig();
+    expect(cfg.graphContext.enabled).toBe(false);
+    expect(cfg.terse).toBe('off');
+    expect(cfg.memory.briefTokens).toBe(defaultConfig().memory.briefTokens);
+    delete process.env.GRUG_SET;
+    expect(loadConfig().graphContext.enabled).toBe(true);
+    const r = { task: 't', pass: true, why: '', costUsd: 0.1, inputTokens: 1, freshTokens: 1, cacheReadTokens: 0, outputTokens: 1, turns: 1, ms: 1 };
+    expect(formatBench([{ ...r, arm: 'off' }, { ...r, arm: 'on' }], 'graphContext.enabled=false')).toContain('vs grug with graphContext.enabled=false');
   });
 });
 
