@@ -349,8 +349,14 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grug-bench-warm-'));
     const { env, settings } = armSetup(arm);
     log(`  warm-up [${arm}] …`);
-    await runClaude(dir, 'Reply with exactly: OK', opts.model, settings, env, 120000);
+    const w = await runClaude(dir, 'Reply with exactly: OK', opts.model, settings, env, 120000);
     fs.rmSync(dir, { recursive: true, force: true });
+    // A failed warm-up (logged out, no network, bad model) would fail every run at $0; stop and say why.
+    if (w.is_error || !w.usage) {
+      const why = String(w.result || w.error || w.subtype || 'no reply').trim().slice(0, 200);
+      const login = /auth|login|oauth|401/i.test(why) ? ' Log in first: run `claude` in a terminal and sign in, then re-run the bench.' : '';
+      throw new Error(`claude -p failed in the warm-up [${arm}]: ${why}.${login}`);
+    }
   }
 
   let order = 0;
@@ -370,7 +376,7 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
         const t0 = Date.now();
         const j = await runClaude(dir, task.prompt, opts.model, settings, env, opts.timeoutMs || 300000);
         const result = String(j.result || '');
-        const graded = j.is_error && !result ? { pass: false, why: `error: ${j.error || j.subtype || 'failed'}` } : task.check(dir, result);
+        const graded = j.is_error && !result ? { pass: false, why: `error: ${String(j.error || j.subtype || result || 'failed').slice(0, 120)}` } : task.check(dir, result);
         const u = j.usage || {};
         results.push({
           task: task.id,
