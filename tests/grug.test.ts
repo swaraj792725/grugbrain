@@ -35,6 +35,7 @@ beforeEach(() => {
   process.env.PATH = '/usr/bin:/bin'; // keep the real `claude` CLI out of reach
   delete process.env.ANTHROPIC_BASE_URL;
   delete process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.GRUG_DISABLE; // set by grug's own verify gate when it runs this suite; tests exercise the hooks
   // Hard stop if isolation ever breaks: never touch a real home directory.
   if (userHome() !== tmp || !paths.home().startsWith(tmp)) throw new Error('test HOME isolation failed');
 });
