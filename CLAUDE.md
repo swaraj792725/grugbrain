@@ -50,6 +50,13 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - handoffText adds "Saved N ago" after 10 minutes, since git/check lines describe the moment of saving.
 - Not covered: TaskCreate/TaskUpdate todos (only TodoWrite is parsed); the Code tab restore is still unconfirmed; tested on one real transcript plus synthetic ones in tests/grug.test.ts.
 
+## Routing + discover (v2.26)
+- routing.ts: PreToolUse on Agent/Task sets `updatedInput.model` (routing.lightModel, default sonnet) for subagent types in routing.lightAgents (default `Explore`) when the main model is a higher tier; never when the call names a model, never up, skipped when routing.subagentModel or env CLAUDE_CODE_SUBAGENT_MODEL is set (env wins in Claude Code anyway). Verified live (2.1.285): Explore ran on haiku with a sonnet main chat.
+- Hook inputs carry NO model field (SessionStart, UserPromptSubmit, PreToolUse dumped live). The main model comes from the last non-sidechain assistant entry; the reply making the tool call is normally already in the transcript at PreToolUse, but one run missed it, so mainModel widens the tail (256 KB, 1 MB, 4 MB; one attachment can be 300 KB) and retries once after 200 ms. Unknown -> no change.
+- The user's own setup has CLAUDE_CODE_SUBAGENT_MODEL=sonnet (routing.subagentModel), so light routing does nothing for them; tests delete that env in beforeEach.
+- discover.ts / `grug discover`: tool output by command key (setup segments cd/export/VAR= skipped). Real week: 7.5M tokens, ~70% file reads; long lines (>400 chars) 3.7% of Bash output -> no rule. Claude Code caps a single Bash result around 30k chars (biggest ~8k tokens).
+- 2026-10-05 survey of other projects (rtk, Headroom, context-mode, claude-mem, caveman, Serena, claude-context, Aider, SWE-agent, OpenHands, arXiv 2602.11988 "Evaluating AGENTS.md"): already covered or better in grug: reversible trimming (saveFullOutput pointer), model-free memory, handoff, repo map. Not possible for the Code tab: observation masking (needs request rewriting; hooks cannot edit history, proxy bypassed). Open ideas with evidence: ablate grug's own SessionStart map/brief with the bench (the AGENTS.md paper found overviews cost +20% with no success gain), type-aware post-edit diagnostics (SWE-agent lint guardrail +3 pts), opusplan advice (done).
+
 ## Open items
 - Confirm the Code tab honors autoCompactWindow (dash should show "Restored work after auto-compaction"). Hook injection (SessionStart map, UserPromptSubmit recall) is verified in the real CLI (2.1.285) but not yet in the desktop Code tab.
 - Watch the average context drop after 2.6.0; consider a default window of 120k.

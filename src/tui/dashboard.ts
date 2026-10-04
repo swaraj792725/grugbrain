@@ -402,7 +402,7 @@ export function advice(proxyUp: boolean | null): Advice[] {
     out.push({
       level: 'save',
       text: `${Math.round((opusCost / week.costUsd) * 100)}% of spend is top-tier models. Moving ~30% of that work (subagents, simple edits, search) to Sonnet 5.5 / Haiku 4.5 would save ≈ ${fmtUsd(est)}/week.`,
-      cmd: 'in Claude Code: /model sonnet for routine work'
+      cmd: 'in Claude Code: /model opusplan (Opus plans in plan mode, Sonnet does the edits) or /model sonnet for routine work; each switch re-writes the cache once'
     });
   }
   const avgCtx = week.requests ? (week.inputTokens + week.cacheReadTokens + week.cacheWriteTokens) / week.requests : 0;

@@ -36,6 +36,7 @@ beforeEach(() => {
   delete process.env.ANTHROPIC_BASE_URL;
   delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.GRUG_DISABLE; // set by grug's own verify gate when it runs this suite; tests exercise the hooks
+  delete process.env.CLAUDE_CODE_SUBAGENT_MODEL; // the developer's own routing must not leak into routing tests
   // Hard stop if isolation ever breaks: never touch a real home directory.
   if (userHome() !== tmp || !paths.home().startsWith(tmp)) throw new Error('test HOME isolation failed');
 });
@@ -1088,6 +1089,26 @@ describe('auto-recall', () => {
     const { setConfigValue } = await import('../src/config.js');
     setConfigValue('autoRecall.subagents', 'false');
     expect(await call()).toBeNull();
+  });
+
+  it('routing: Explore goes to Sonnet only when the main chat is on Opus and the call names no model', async () => {
+    const cwd = codeProject('route');
+    const { setConfigValue } = await import('../src/config.js');
+    setConfigValue('autoRecall.subagents', 'false'); // isolate routing from recall
+    const reply = (model: string) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', model, content: [{ type: 'text', text: 'ok' }] } });
+    const opus = path.join(tmp, 'opus.jsonl');
+    const sonnet = path.join(tmp, 'sonnet.jsonl');
+    fs.writeFileSync(opus, reply('claude-opus-5-5') + '\n');
+    fs.writeFileSync(sonnet, reply('claude-sonnet-5-5') + '\n');
+    const call = (transcript: string, ti: any) => runHook('pre-tool', { session_id: 'rt', cwd, transcript_path: transcript, tool_name: 'Agent', tool_input: ti }) as Promise<any>;
+    const ex = { subagent_type: 'Explore', prompt: 'find where the cart total is computed' };
+    const a = await call(opus, ex);
+    expect(a.hookSpecificOutput.updatedInput).toEqual({ ...ex, model: 'sonnet' });
+    expect(await call(sonnet, ex)).toBeNull(); // never sideways or up
+    expect(await call(opus, { ...ex, model: 'opus' })).toBeNull(); // Claude's own choice wins
+    expect(await call(opus, { subagent_type: 'general-purpose', prompt: 'refactor the cart' })).toBeNull(); // may edit code
+    setConfigValue('routing.lightAgents', '');
+    expect(await call(opus, ex)).toBeNull();
   });
 
   it('injects memory, code locations and earlier-session excerpts under the cap, once', async () => {
@@ -3216,6 +3237,50 @@ describe('batching', () => {
     saveConfig(cfg);
     const s2: any = await runHook('session-start', { session_id: 'br2', cwd, source: 'startup' });
     expect(s2?.hookSpecificOutput?.additionalContext || '').not.toContain('Batch lookups');
+  });
+});
+
+describe('grug discover', () => {
+  it('groups commands into stable keys', async () => {
+    const { commandKey } = await import('../src/discover.js');
+    expect(commandKey('cd "/a b" && npm test 2>&1 | tail -5')).toBe('npm test');
+    expect(commandKey('npx vitest run -t x')).toBe('npx vitest');
+    expect(commandKey('npm run build')).toBe('npm run build');
+    expect(commandKey('python3 -m pytest -q')).toBe('python3 -m pytest');
+    expect(commandKey('# check\nexport A=1; git status --short')).toBe('git status');
+    expect(commandKey('(npm ci && npm test)')).toBe('npm ci');
+    expect(commandKey('FOO=1 ls -la')).toBe('ls');
+    expect(commandKey('S=/tmp/x; W="$S/y" && cat "$W"')).toBe('cat');
+    expect(commandKey('cd /p; F=lib/a.ts && sed -n 1,9p $F')).toBe('sed');
+  });
+
+  it('sums Bash and MCP output per command and counts what grug shortened, inside the window', async () => {
+    const { discover } = await import('../src/discover.js');
+    const dir = path.join(tmp, '.claude', 'projects', '-p');
+    fs.mkdirSync(dir, { recursive: true });
+    const now = Date.now();
+    const use = (id: string, name: string, input: any, ts: number) => JSON.stringify({ type: 'assistant', timestamp: new Date(ts).toISOString(), message: { content: [{ type: 'tool_use', id, name, input }] } });
+    const res = (id: string, text: string, ts: number) => JSON.stringify({ type: 'user', timestamp: new Date(ts).toISOString(), message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } });
+    fs.writeFileSync(
+      path.join(dir, 's.jsonl'),
+      [
+        use('a', 'Bash', { command: 'npm test' }, now),
+        res('a', 'x'.repeat(3600), now),
+        use('b', 'Bash', { command: 'cd x && npm test' }, now),
+        res('b', 'y'.repeat(360) + '\n[grug: full original output: /t]', now),
+        use('c', 'mcp__srv__fetch', { url: 'u' }, now),
+        res('c', [{ type: 'text', text: 'z'.repeat(720) }] as any, now),
+        use('d', 'Bash', { command: 'ls' }, now - 30 * 86400000),
+        res('d', 'w'.repeat(3600), now - 30 * 86400000)
+      ].join('\n') + '\n'
+    );
+    const r = discover({ days: 7, now });
+    const npm = r.rows.find((x) => x.key === 'npm test')!;
+    expect(npm.runs).toBe(2);
+    expect(npm.tokens).toBe(1000 + Math.round(393 / 3.6));
+    expect(npm.shortenedTokens).toBe(Math.round(393 / 3.6));
+    expect(r.rows.find((x) => x.key === 'mcp srv__fetch')!.tokens).toBe(200);
+    expect(r.rows.find((x) => x.key === 'ls')).toBeUndefined(); // older than the window
   });
 });
 

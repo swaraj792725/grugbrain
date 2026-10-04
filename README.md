@@ -65,6 +65,8 @@ grug config set autoCompact.windowTokens 300000   # compact later (100k–1M), 0
 grug config set routing.subagentModel sonnet      # subagents on Sonnet 5.5, main chat stays on your model
 ```
 
+**Search subagents on Sonnet (automatic).** Claude's `Explore` subagent (read-only codebase search) inherit the main model, so on Opus every search sweep bill at Opus price (real history: 26 of 42 Explore runs on Opus). grug now send `Explore` to Sonnet when the main chat on Opus. Never upward, never when Claude name a model itself, never other subagents (they may edit code), never the main chat. Agents that pick own model (claude-code-guide → Haiku) left alone. `routing.subagentModel` (all subagents) win if set. Off: `grug config set routing.lightAgents ""`. Checked live: Explore ran on the lighter model through the hook.
+
 ## grug slim skill list (`grug slim`)
 
 Every installed skill send name + description to Claude **every reply**. Many plugins = big list (real install: 157 skills, ~7.5k tokens, ~10 ever used). `grug slim` read your transcripts, find plugin skills never used in 30 days, and list them **by name only** (Claude Code `skillOverrides: "name-only"`). Claude still see the name and can still use the skill; `/name` still work. Only the description go.
@@ -230,6 +232,7 @@ grug dash [--once]              TUI dashboard
 grug doctor                     check everything, say how to fix
 grug uninstall [--purge]        remove (keeps memory unless --purge)
 grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
+grug discover [--days 7]        which commands / MCP tools put most output in context, how much grug shortened
 
 grug graph                      open memory graph
 grug vault                      rebuild Obsidian vault, print path
@@ -327,6 +330,8 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `handoff.git` | `true` | put the real git state in the handoff (read-only `git status` / `git log`, no lock, 2.5 s limit) |
 | `autoCompact.windowTokens` | `150000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
+| `routing.lightAgents` | `Explore` | read-only subagent types sent to `routing.lightModel` when the main chat is pricier (`''` = off) |
+| `routing.lightModel` | `sonnet` | `sonnet` / `haiku` |
 | `autoRecall.subagents` | `true` | add recall + code hints for the task to each subagent prompt (cap `autoRecall.subagentTokens`, 500) |
 | `quality.verify` | `true` | at Stop, when code files changed this turn, run the project's own check (typecheck + tests) once and send Claude back with only the failing lines; silent when it passes |
 | `quality.verifyCommand` | `''` | the check to run instead of the auto-detected one |
@@ -374,7 +379,7 @@ Maintainer: `npm run release:patch` (or `release:minor`), add a `## x.y.z` secti
 - Claude Code already cache well. There grug's cache autopilot mostly idle; real wins are trim, read guard, memory, terse, advice. Dashboard split "cache saved (all)" from "where grug added cache" so grug not steal credit.
 - Memory notes come from rules, not an LLM. Good at "what files, what asked, how it ended, what you told it to remember". Not perfect summaries. Zero extra API cost.
 - Trim and read-guard savings are estimates (chars ÷ ~3.6). Cache savings and spend are real numbers from the API.
-- Model routing (Opus → Sonnet/Haiku) is advice only. grug never switch your model behind your back.
+- grug never switch your main chat model. Only read-only search subagents (`Explore`) go one tier down, and only when Claude did not pick a model (turn off: `routing.lightAgents ""`). For the main chat grug give advice: `/model opusplan` (Opus plans, Sonnet edits) or `/model sonnet`.
 
 ---
 

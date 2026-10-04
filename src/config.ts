@@ -131,6 +131,9 @@ export interface GrugConfig {
   /** Model for Claude Code subagents ('' = same as the main conversation), e.g. sonnet or haiku. */
   routing: {
     subagentModel: string;
+    /** Read-only search subagents (comma list of subagent types) run on lightModel when the main chat is on a pricier model. '' = off. */
+    lightAgents: string;
+    lightModel: string;
   };
   /** Carry a session over to a fresh one: written on /clear, session end, and context alerts. */
   handoff: {
@@ -269,7 +272,9 @@ export function defaultConfig(): GrugConfig {
       windowTokens: 150000
     },
     routing: {
-      subagentModel: ''
+      subagentModel: '',
+      lightAgents: 'Explore',
+      lightModel: 'sonnet'
     },
     handoff: {
       enabled: true,
@@ -330,7 +335,7 @@ function deepMerge<T>(base: T, over: any): T {
   return out;
 }
 
-const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'] };
+const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'], 'routing.lightModel': ['', 'sonnet', 'haiku'] };
 
 const RANGES: Record<string, [number, number]> = {
   'autoRecall.maxTokens': [100, 4000],

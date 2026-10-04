@@ -2,6 +2,11 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.26.0
+- **Search subagents on Sonnet.** Claude's `Explore` subagent (read-only codebase search) inherits the main model, so with Opus every search sweep was billed at Opus prices (in a real history: 26 of 42 Explore runs). Grug now sets `model: sonnet` on Explore calls when the main chat is on Opus. It never moves a model up, never overrides a model Claude chose, never touches other subagents (they may edit code) or the main chat, and steps aside when `routing.subagentModel` / `CLAUDE_CODE_SUBAGENT_MODEL` is set. Checked live in Claude Code 2.1.285: the Explore subagent ran on the lighter model. Off: `grug config set routing.lightAgents ""`.
+- **`grug discover`: where tool output tokens go.** Groups the last N days of Bash and MCP results by command (`npm test`, `git diff`, `mcp server__tool`), with runs, tokens, the biggest single result, and the share grug already shortened. On a real week: ~7.5M tokens of tool output, about 70% file reads (`sed -n`, `cat`, `grep`) that Claude asked for. Very long lines (minified files, lockfiles) were only 3.7% of Bash output, so no new rule for them.
+- **Model advice names `opusplan`.** `grug doctor`/`dash` and the status line tips now suggest `/model opusplan` (Opus in plan mode, Sonnet for the edits) beside `/model sonnet`, and say a model switch re-writes the cache once.
+
 ## 2.25.1
 - **`grug bench` stops when Claude Code cannot run.** If the warm-up session fails (for example the terminal `claude` login expired), the bench now stops with the reason and how to fix it, instead of reporting every run as FAIL at $0.
 
