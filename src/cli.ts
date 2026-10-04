@@ -483,9 +483,9 @@ async function main() {
           assignConfigValue(probe, pair.slice(0, i).trim(), pair.slice(i + 1));
         }
       }
-      const n = (ids.length || TASKS.length) * runs * 2;
+      const n = (ids.length || TASKS.filter((t) => !t.steps).length) * runs * 2;
       if (!flags.has('--yes')) {
-        console.log(`grug bench runs ${n} real Claude Code sessions (model: ${model}). That spends real usage (roughly $0.05–0.40 per session).`);
+        console.log(`grug bench runs ${n} real Claude Code sessions (model: ${model}). That spends real usage (roughly $0.05–0.40 per session; long-session about $1–2 per run, only with --tasks long-session).`);
         console.log(`Tasks: ${TASKS.map((t) => `${t.id} (${t.exercises})`).join(', ')}`);
         console.log('Re-run with --yes to start.');
         break;

@@ -39,6 +39,7 @@ import { typeBaseline, typeCheckMessage } from './typecheck.js';
 import { bashFileOps } from './bashops.js';
 import { BATCH_RULE, batchNudge } from './batching.js';
 import { lightAgentModel } from './routing.js';
+import { startBlocksInContext } from './resume.js';
 
 export interface HookInput {
   session_id?: string;
@@ -83,13 +84,15 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
   switch (event) {
     case 'session-start': {
       appendBuffer(sid, { t: 'start', ts: now, cwd, source: input.source });
-      // After compaction/resume/clear, earlier file reads are no longer in context.
-      if (input.source && input.source !== 'startup') appendBuffer(sid, { t: 'compact', ts: now });
+      // After compaction or /clear, earlier file reads are no longer in context. A resume brings the conversation back whole.
+      if (input.source === 'compact' || input.source === 'clear') appendBuffer(sid, { t: 'compact', ts: now });
       ensureDaemon();
+      // On resume, grug's start blocks are usually still in the conversation: do not send them twice.
+      const present = input.source === 'resume' ? startBlocksInContext(input.transcript_path) : new Set<string>();
       const parts: string[] = [];
-      const style = terseStyle(cfg.terse);
+      const style = present.has('style') ? '' : terseStyle(cfg.terse);
       if (style) parts.push(style);
-      if (cfg.batching.rule) parts.push(BATCH_RULE);
+      if (cfg.batching.rule && !present.has('batch')) parts.push(BATCH_RULE);
       let handedOff = false;
       if (cfg.handoff.enabled) {
         const h = takeHandoff(projectKey(cwd), sid, cfg.handoff.maxAgeHours, input.source === 'compact');
@@ -111,7 +114,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       let hotFiles: string[] = [];
       if (cfg.memory.enabled) {
         const db = loadMemory();
-        const brief = buildBrief(db, projectKey(cwd), handedOff ? Math.round(cfg.memory.briefTokens / 2) : cfg.memory.briefTokens, cfg.memory.halfLifeDays);
+        const brief = present.has('memory') ? { text: '', ids: [], tokens: 0 } : buildBrief(db, projectKey(cwd), handedOff ? Math.round(cfg.memory.briefTokens / 2) : cfg.memory.briefTokens, cfg.memory.halfLifeDays);
         if (brief.text) {
           parts.push(brief.text);
           appendBuffer(sid, { t: 'injected', ts: now, ids: brief.ids });
@@ -120,7 +123,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         hotFiles = hotFilesOf(db, projectKey(cwd));
       }
       let warm = cfg.autoRecall.enabled;
-      if (cfg.graphContext.enabled) {
+      if (cfg.graphContext.enabled && !present.has('map')) {
         try {
           const map = sessionCodeMap(cwd, cfg.graphContext.mapTokens, hotFiles);
           if (map) {

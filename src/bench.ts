@@ -10,18 +10,21 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { ensureDir, loadConfig, paths, writeJsonAtomic } from './config.js';
 import { health, installedCli, MARK } from './install.js';
 import { proxyHealth } from './proxy/server.js';
 import { recordActivity } from './stats.js';
 import { fmtUsd } from './tokens.js';
+import { SHOP_STEPS, shopCheck, shopFiles } from './benchlong.js';
 
 export interface BenchTask {
   id: string;
   exercises: string;
   prompt: string;
   files: () => Record<string, string>;
+  /** Follow-up prompts sent in the same session (resumed), for long-session tasks. */
+  steps?: string[];
   check: (dir: string, result: string) => { pass: boolean; why: string };
 }
 
@@ -225,6 +228,14 @@ export const TASKS: BenchTask[] = [
       return { 'config.json': JSON.stringify(cfg, null, 2) };
     },
     check: (_d, out) => (/\b13\b/.test(out.trim()) ? { pass: true, why: 'answered 13' } : { pass: false, why: `answer: ${out.slice(0, 80)}` })
+  },
+  {
+    id: 'long-session',
+    exercises: 'a long session: 6 prompts in one conversation (explore, feature, fix tests, config trap, rename, tests) in a 25-file repo',
+    prompt: SHOP_STEPS[0],
+    steps: SHOP_STEPS.slice(1),
+    files: shopFiles,
+    check: (dir) => shopCheck(dir)
   }
 ];
 
@@ -272,13 +283,14 @@ function hookSettings(): any {
 }
 
 let ownBuildRun = false;
-function runClaude(dir: string, prompt: string, model: string, settings: any, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<any> {
+function runClaude(dir: string, prompt: string, model: string, settings: any, env: NodeJS.ProcessEnv, timeoutMs: number, extra: string[] = []): Promise<any> {
   return new Promise((resolve) => {
     // Pre-approve the tools the tasks need (works for root too, unlike --dangerously-skip-permissions).
     const args = [
       '-p', prompt, '--output-format', 'json', '--model', model,
       '--allowedTools', 'Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'LS',
-      '--settings', JSON.stringify(settings)
+      '--settings', JSON.stringify(settings),
+      ...extra
     ];
     if (ownBuildRun) args.push('--setting-sources', 'project,local'); // both arms: only our hooks, not the installed ones, and the same context
     const child = spawn('claude', args, { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -322,7 +334,8 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
   const hooksInstalled = health().hooks;
   const ownBuild = hooksInstalled && path.resolve(benchCli()) !== path.resolve(installedCli());
   ownBuildRun = ownBuild;
-  const tasks = TASKS.filter((t) => !opts.taskIds?.length || opts.taskIds.includes(t.id));
+  // Long-session tasks cost several times more: only when named.
+  const tasks = TASKS.filter((t) => (opts.taskIds?.length ? opts.taskIds.includes(t.id) : !t.steps));
   const results: ArmResult[] = [];
   const baseEnv: NodeJS.ProcessEnv = { ...process.env };
   for (const k of SESSION_ENV) delete baseEnv[k];
@@ -386,7 +399,22 @@ export async function runBench(opts: BenchOptions): Promise<{ results: ArmResult
         const { env, settings } = armSetup(arm);
         log(`  ${task.id} #${run} [${arm}] …`);
         const t0 = Date.now();
-        const j = await runClaude(dir, task.prompt, opts.model, settings, env, opts.timeoutMs || 300000);
+        let j = await runClaude(dir, task.prompt, opts.model, settings, env, opts.timeoutMs || 300000, task.steps ? ['--session-id', randomUUID()] : []);
+        // Long-session tasks: the follow-up prompts resume the same conversation; usage and cost add up.
+        for (const step of task.steps || []) {
+          if (j.is_error || !j.session_id) break;
+          const n = await runClaude(dir, step, opts.model, settings, env, opts.timeoutMs || 300000, ['--resume', j.session_id]);
+          const a = j.usage || {};
+          const b = n.usage || {};
+          const add = (k: string) => (a[k] || 0) + (b[k] || 0);
+          j = {
+            ...n,
+            total_cost_usd: Number(j.total_cost_usd || 0) + Number(n.total_cost_usd || 0),
+            num_turns: (j.num_turns || 0) + (n.num_turns || 0),
+            usage: { input_tokens: add('input_tokens'), cache_read_input_tokens: add('cache_read_input_tokens'), cache_creation_input_tokens: add('cache_creation_input_tokens'), output_tokens: add('output_tokens') },
+            session_id: n.session_id || j.session_id
+          };
+        }
         const result = String(j.result || '');
         const graded = j.is_error && !result ? { pass: false, why: `error: ${String(j.error || j.subtype || result || 'failed').slice(0, 120)}` } : task.check(dir, result);
         const u = j.usage || {};

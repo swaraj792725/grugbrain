@@ -1219,6 +1219,31 @@ describe('graph-first code context', () => {
   });
 });
 
+describe('resume does not repeat start context', () => {
+  it('skips blocks already in the conversation, sends them again after a compaction', async () => {
+    const cwd = codeProject('resumed');
+    const start: any = await runHook('session-start', { session_id: 'rs1', cwd, source: 'startup' });
+    const ctx: string = start.hookSpecificOutput.additionalContext;
+    expect(ctx).toContain('[grugbrain code map');
+    const tr = path.join(tmp, 'rs1.jsonl');
+    const hookLine = JSON.stringify({ type: 'attachment', attachment: { type: 'hook_additional_context', content: [ctx] } });
+    const quoted = JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: 'see "compact_boundary" and [grugbrain code map: in the source' }] } });
+    fs.writeFileSync(tr, [hookLine, quoted, ''].join('\n'));
+    const resumed: any = await runHook('session-start', { session_id: 'rs1', cwd, source: 'resume', transcript_path: tr });
+    const again = JSON.stringify(resumed?.hookSpecificOutput?.additionalContext || '');
+    expect(again).not.toContain('code map');
+    expect(again).not.toContain('Batch lookups');
+    expect(again).not.toContain('Output style');
+    // A resume keeps earlier reads in context: no 'compact' event (that would let repeat reads through).
+    expect(readBuffer('rs1').some((e: any) => e.t === 'compact')).toBe(false);
+    fs.appendFileSync(tr, JSON.stringify({ type: 'system', subtype: 'compact_boundary' }) + '\n');
+    const afterCompact: any = await runHook('session-start', { session_id: 'rs1', cwd, source: 'resume', transcript_path: tr });
+    expect(afterCompact.hookSpecificOutput.additionalContext).toContain('[grugbrain code map');
+    const noTranscript: any = await runHook('session-start', { session_id: 'rs2', cwd, source: 'resume' });
+    expect(noTranscript.hookSpecificOutput.additionalContext).toContain('[grugbrain code map');
+  });
+});
+
 describe('durable fact capture', () => {
   it('extracts decisions, root causes, preferences and working commands at handoff time, deduped', async () => {
     const cwd = path.join(tmp, 'facts');
@@ -3265,6 +3290,36 @@ describe('batching', () => {
     const s2: any = await runHook('session-start', { session_id: 'br2', cwd, source: 'startup' });
     expect(s2?.hookSpecificOutput?.additionalContext || '').not.toContain('Batch lookups');
   });
+});
+
+describe('bench long-session task', () => {
+  it('starts with a failing test and passes the hidden check only when all six steps are done', async () => {
+    const { shopFiles, shopCheck } = await import('../src/benchlong.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'grug-shop-'));
+    for (const [rel, content] of Object.entries(shopFiles())) {
+      fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+      fs.writeFileSync(path.join(dir, rel), content);
+    }
+    expect(Object.keys(shopFiles()).length).toBeGreaterThan(20);
+    const first = shopCheck(dir);
+    expect(first.pass).toBe(false);
+    expect(first.why).toMatch(/threshold/);
+    const w = (f: string, x: (s: string) => string) => fs.writeFileSync(path.join(dir, f), x(fs.readFileSync(path.join(dir, f), 'utf8')));
+    // Reference solution, step by step.
+    fs.writeFileSync(path.join(dir, 'src/discounts.js'), "import fs from 'node:fs';\nconst codes = JSON.parse(fs.readFileSync(new URL('../config/discounts.json', import.meta.url), 'utf8'));\nexport function applyDiscount(cents, code) {\n  const pct = codes[code];\n  return pct ? Math.round(cents * (1 - pct / 100)) : cents;\n}\n");
+    w('src/checkout.js', (s) => s.replace("import { logInfo } from './logger.js';", "import { logInfo } from './logger.js';\nimport { applyDiscount } from './discounts.js';").replace('checkout(c, customer) {\n  const sub = subtotal(c);', 'checkout(c, customer, code) {\n  const sub = applyDiscount(subtotal(c), code);'));
+    w('src/shipping.js', (s) => s.replace('subtotalCents > FREE_OVER', 'subtotalCents >= FREE_OVER'));
+    expect(shopCheck(dir).why).toMatch(/6000 cents/); // the hard-coded threshold trap
+    w('config/shop.json', (s) => s.replace('5000', '7500'));
+    expect(shopCheck(dir).why).toMatch(/6000 cents/);
+    w('src/shipping.js', (s) => s.replace('const FREE_OVER = 5000;', 'const FREE_OVER = shop.freeShippingOverCents;'));
+    expect(shopCheck(dir).why).toMatch(/computeTax/);
+    for (const f of ['src/tax.js', 'src/checkout.js', 'src/receipt.js']) w(f, (s) => s.replace(/calcTax/g, 'computeTax'));
+    expect(shopCheck(dir).why).toMatch(/discount tests/);
+    w('test.js', (s) => s.replace("console.log('\\n'", "import { applyDiscount } from './src/discounts.js';\nt('SAVE10', () => eq(applyDiscount(1000, 'SAVE10'), 900));\nconsole.log('\\n'"));
+    expect(shopCheck(dir)).toEqual({ pass: true, why: 'all 6 steps done' });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }, 60000);
 });
 
 describe('GRUG_SET overrides', () => {
