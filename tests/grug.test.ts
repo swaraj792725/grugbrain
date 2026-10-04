@@ -1161,7 +1161,7 @@ describe('auto-recall', () => {
     }
     // Cold, with a time budget: returns within budget-ish, marks the result partial.
     const t0 = Date.now();
-    const cold = historyHits(cwd, 'flux capacitor overheats', { budgetMs: 30 });
+    const cold = historyHits(cwd, 'flux capacitor overheats', { budgetMs: 1 }); // 1 ms: shorter than parsing 20 files, so partial even on a fast machine
     expect(Date.now() - t0).toBeLessThan(1500);
     expect(cold.partial).toBe(true);
     warmHistory(cwd); // what `grug warm` does in the background at session start
