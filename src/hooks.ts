@@ -37,6 +37,7 @@ import { editGuardMessage } from './editguard.js';
 import { conventionHint } from './conventions.js';
 import { bashFileOps } from './bashops.js';
 import { BATCH_RULE, batchNudge } from './batching.js';
+import { lightAgentModel } from './routing.js';
 
 export interface HookInput {
   session_id?: string;
@@ -205,14 +206,30 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
 
     case 'pre-tool': {
       // A subagent starts with an empty context: add recall + code hints for the task it is given.
-      if ((input.tool_name === 'Agent' || input.tool_name === 'Task') && cfg.autoRecall.enabled && cfg.autoRecall.subagents) {
+      if (input.tool_name === 'Agent' || input.tool_name === 'Task') {
         const ti = input.tool_input || {};
+        const out: any = {};
+        let model: string | null = null;
+        try {
+          model = lightAgentModel(cfg, ti, input.transcript_path);
+        } catch {
+          /* best-effort */
+        }
+        if (model) {
+          out.model = model;
+          recordActivity({ kind: 'routing', msg: `${ti.subagent_type} subagent sent to ${model} (read-only search; main chat model unchanged)`, project: path.basename(cwd) });
+        }
+        // A subagent starts with an empty context: add recall + code hints for the task it is given.
         const task: string = typeof ti.prompt === 'string' ? ti.prompt : '';
-        if (!task || task.includes('[grugbrain recall')) return null;
-        const r = autoRecall({ cfg, sessionId: sid, cwd, prompt: task, transcriptPath: input.transcript_path, now, isolated: true });
-        if (!r) return null;
-        recordActivity({ kind: 'subagent', msg: `Subagent task got ${r.counts.memory} memory, ${r.counts.code} code, ${r.counts.history} earlier-session hint(s) (${r.tokens} tok)`, tokens: -r.tokens, project: path.basename(cwd) });
-        return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...ti, prompt: `${task}\n\n${r.text}` } } };
+        if (cfg.autoRecall.enabled && cfg.autoRecall.subagents && task && !task.includes('[grugbrain recall')) {
+          const r = autoRecall({ cfg, sessionId: sid, cwd, prompt: task, transcriptPath: input.transcript_path, now, isolated: true });
+          if (r) {
+            out.prompt = `${task}\n\n${r.text}`;
+            recordActivity({ kind: 'subagent', msg: `Subagent task got ${r.counts.memory} memory, ${r.counts.code} code, ${r.counts.history} earlier-session hint(s) (${r.tokens} tok)`, tokens: -r.tokens, project: path.basename(cwd) });
+          }
+        }
+        if (!Object.keys(out).length) return null;
+        return { hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: { ...ti, ...out } } };
       }
       // Before an edit: stored notes that name this file (once per session each).
       if (/^(Edit|Write|MultiEdit)$/.test(input.tool_name || '')) {

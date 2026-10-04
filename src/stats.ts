@@ -49,6 +49,7 @@ export type ActivityKind =
   | 'history'
   | 'handoff'
   | 'subagent'
+  | 'routing'
   | 'verify'
   | 'guard'
   | 'convention'

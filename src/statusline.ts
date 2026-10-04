@@ -28,7 +28,7 @@ const usd = (n: number) => (n >= 10 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`);
 
 export const TIPS = [
   'Tip: /clear between unrelated tasks; fresh context is cheaper per reply',
-  'Tip: /model sonnet for routine edits and search, ~half the price',
+  'Tip: /model opusplan: Opus plans, Sonnet edits; or /model sonnet for routine work',
   'Tip: use @path instead of pasting long logs or code',
   'Tip: Esc Esc rewinds a wrong turn instead of arguing with it',
   'Tip: /compact before a long break keeps a summary, drops the bulk',

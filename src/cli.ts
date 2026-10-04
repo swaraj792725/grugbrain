@@ -61,6 +61,7 @@ const HELP = `
   grug context [transcript]       what fills the context of the current session (by kind and biggest items)
   grug slim [--apply | --undo] [--days 30] [--include-new]
                                   list unused plugin skills by name only (smaller context every reply; they still work)
+  grug discover [--days 7]        which commands and MCP tools put the most output into context, and how much grug shortened
   grug maintain                   ingest + consolidate memory now (normally automatic)
   grug warm [dir] [--graph]       refresh code-graph + history caches for a project (normally automatic)
 
@@ -318,6 +319,20 @@ async function main() {
       break;
     }
 
+    case 'discover': {
+      // Where tool output tokens go: biggest command groups first, with what grug already shortened.
+      const { discover } = await import('./discover.js');
+      const days = Math.max(1, Number(flagValue('--days')) || 7);
+      const r = discover({ days });
+      const k = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+      console.log(`🪨 tool output in the last ${days} day(s): ~${k(r.totalTokens)} tokens from ${r.transcripts} transcript(s) (estimate: characters / 3.6)`);
+      if (!r.rows.length) break;
+      console.log(`\n${'command'.padEnd(36)}${'runs'.padStart(6)}${'tokens'.padStart(9)}${'biggest'.padStart(9)}  shortened by grug`);
+      for (const x of r.rows)
+        console.log(`${x.key.slice(0, 35).padEnd(36)}${String(x.runs).padStart(6)}${k(x.tokens).padStart(9)}${k(x.maxTokens).padStart(9)}  ${x.tokens ? Math.round((x.shortenedTokens / x.tokens) * 100) : 0}%`);
+      console.log('\nEach result stays in the chat until compaction, so it is re-read on every later reply. File reads (sed, cat, grep) are content Claude asked for; big repeated runs of other commands are candidates for an output rule (open an issue with the command).');
+      break;
+    }
     case 'slim': {
       // Hide unused plugin skills from the per-reply skill listing (reversible).
       const { applySlim, planSlim, undoSlim } = await import('./slim.js');
