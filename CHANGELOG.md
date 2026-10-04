@@ -2,6 +2,9 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.25.1
+- **`grug bench` stops when Claude Code cannot run.** If the warm-up session fails (for example the terminal `claude` login expired), the bench now stops with the reason and how to fix it, instead of reporting every run as FAIL at $0.
+
 ## 2.25.0
 - **`grug slim`: smaller skill list in every reply.** Claude Code sends every installed skill's name and description with each reply (on a real install: 157 skills, ~7.5k tokens, about 10 used). `grug slim` finds plugin skills not used in the last 30 days (from your transcripts: Skill tool calls and `/name` commands) and sets them to `skillOverrides: "name-only"`. Claude still sees the name and can still use the skill, `/name` still works, only the description goes. It is a dry run by default; `--apply` writes the settings (with a backup), `--undo` and `grug uninstall` remove only the overrides grug added. It never touches built-in skills, used skills, or your own overrides; skills listed for under 7 days wait unless you pass `--include-new`. Saving on the real install: up to ~4.3k tokens per reply (estimate; Claude Code may use the freed room to show full descriptions of skills you do use).
 - **Shell reads now count as using a hint.** Claude often reads code with `sed -n`, `grep -n file`, `cat`, `head` and edits with `sed -i`, `perl -i` or `>`; these never reached grug's file events. In a week of real transcripts 3.2k of 7.9k Bash commands were such reads. Recall scoring therefore saw code hints as almost never used and pushed the relevance bar to its strictest, which hid useful hints. Now these count (for recall usefulness, adoption and the handoff's file list). The saved tuning starts over once (`recall-tune.json` v2) so the old bias goes away.

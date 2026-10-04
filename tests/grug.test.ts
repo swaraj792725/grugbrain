@@ -3228,4 +3228,22 @@ describe('bench audit-services task', () => {
     expect(t.check('', 'MISSING: orders, coupons').pass).toBe(false);
     expect(t.check('', 'MISSING: orders, coupons, payouts, users').pass).toBe(false);
   });
+
+  it('stops at the warm-up when claude cannot log in, instead of failing every run at $0', async () => {
+    const { runBench } = await import('../src/bench.js');
+    const { startProxy } = await import('../src/proxy/server.js');
+    const cfg = defaultConfig();
+    const proxy = await startProxy(cfg, 0);
+    cfg.port = proxy.port;
+    saveConfig(cfg);
+    const bin = path.join(tmp, 'bin');
+    fs.mkdirSync(bin);
+    fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\necho \'{"type":"result","is_error":true,"result":"Failed to authenticate: OAuth session expired"}\'\n', { mode: 0o755 });
+    process.env.PATH = `${bin}:/usr/bin:/bin`;
+    try {
+      await expect(runBench({ model: 'sonnet', runs: 1, taskIds: ['audit-services'] })).rejects.toThrow(/warm-up \[off\].*OAuth session expired.*Log in first/);
+    } finally {
+      await proxy.close();
+    }
+  });
 });
