@@ -60,6 +60,7 @@ const HELP = `
   grug remember <text> [--dir d]  pin a note for a project
   grug context [transcript]       what fills the context of the current session (by kind and biggest items)
   grug slim [--apply | --undo] [--days 30] [--include-new]
+  grug slim --plugins [--apply | --undo] [--days 30] [--include-new]
                                   list unused plugin skills by name only (smaller context every reply; they still work)
   grug discover [--days 7]        which commands and MCP tools put the most output into context, and how much grug shortened
   grug maintain                   ingest + consolidate memory now (normally automatic)
@@ -136,6 +137,8 @@ async function main() {
         const { loadSlimState } = await import('./slim.js');
         const st = loadSlimState();
         console.log(st.hidden.length ? `✅ skill list slimmed: ${st.hidden.length} unused plugin skill(s) listed by name only (grug slim --undo to restore)` : `ℹ️  skill list not slimmed: \`grug slim\` shows which unused plugin skills could be listed by name only`);
+        const off = Object.keys(st.plugins);
+        console.log(off.length ? `✅ unused plugins off: ${off.join(', ')} (grug slim --plugins --undo to restore)` : `ℹ️  no plugins turned off: \`grug slim --plugins\` shows which installed plugins were never used`);
       }
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
@@ -336,6 +339,34 @@ async function main() {
     case 'slim': {
       // Hide unused plugin skills from the per-reply skill listing (reversible).
       const { applySlim, planSlim, undoSlim } = await import('./slim.js');
+      if (flags.has('--plugins')) {
+        // Turn off plugins with no use at all (reversible).
+        const { applyPlugins, planPlugins, undoPlugins } = await import('./pluginslim.js');
+        if (flags.has('--undo')) {
+          const r = undoPlugins();
+          console.log(r.ok ? `✅ turned back on: ${r.restored.join(', ') || 'none'}. ${r.message}` : `❌ ${r.message}`);
+          break;
+        }
+        const days = Math.max(7, Number(flagValue('--days')) || 30);
+        const plan = planPlugins({ days, minObservedDays: flags.has('--include-new') ? 0 : 7 });
+        const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+        console.log(`🪨 plugins: ${plan.plugins.length} installed (${plan.transcripts} transcripts, ${plan.observedDays} day(s) of history, uses counted over ${days} days)`);
+        const label = { used: 'keep (used)', disable: 'turn off (never used)', new: 'keep (too new to judge)', unseen: 'keep (never loaded)', off: 'off (by you)', 'off-by-grug': 'off (by grug)' };
+        for (const p of [...plan.plugins].sort((a, b) => b.tokens - a.tokens))
+          console.log(`  ${p.key.padEnd(34)}${String(p.uses).padStart(5)} uses  ~${k(p.tokens).padStart(5)} tokens/session  ${label[p.status]}`);
+        if (!plan.disable.length) {
+          console.log('  nothing to turn off (plugins first seen under 7 days ago wait; --include-new skips the wait).');
+          break;
+        }
+        console.log(`  turning off ${plan.disable.length} saves ~${k(plan.savedTokens)} tokens at the start of every session (estimate: its share of the largest session start seen; servers that connect add tools and instructions on top)`);
+        if (!flags.has('--apply')) {
+          console.log('\nrun `grug slim --plugins --apply` to do it; `grug slim --plugins --undo` turns them back on. A turned-off plugin\'s skills, agents and tools are gone until then (`claude plugin enable <name>` for one).');
+          break;
+        }
+        const r = applyPlugins(plan);
+        console.log(r.ok ? `✅ turned off ${plan.disable.map((p) => p.key).join(', ')}. ${r.message}` : `❌ ${r.message}`);
+        break;
+      }
       if (flags.has('--undo')) {
         const r = undoSlim();
         console.log(r.ok ? `✅ ${r.restored} skill(s) listed in full again. ${r.message}` : `❌ ${r.message}`);

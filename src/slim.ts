@@ -30,20 +30,33 @@ export interface SlimPlan {
   savedTokens: number;
 }
 
-interface SlimState {
+export interface SlimState {
   hidden: string[];
+  /** Plugins grug turned off: `name@marketplace` -> the enabledPlugins value before (null = not set). */
+  plugins: Record<string, boolean | null>;
   at?: string;
 }
 
 const stateFile = () => path.join(paths.home(), 'slim.json');
-const settingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'settings.json');
+export const settingsFile = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'settings.json');
 
 export function loadSlimState(): SlimState {
   const r = readJson<SlimState>(stateFile());
-  return { hidden: r.ok && Array.isArray(r.value?.hidden) ? r.value.hidden.filter((x) => typeof x === 'string') : [], at: r.ok ? r.value?.at : undefined };
+  const pl = r.ok && r.value?.plugins && typeof r.value.plugins === 'object' ? r.value.plugins : {};
+  return {
+    hidden: r.ok && Array.isArray(r.value?.hidden) ? r.value.hidden.filter((x) => typeof x === 'string') : [],
+    plugins: Object.fromEntries(Object.entries(pl).filter(([, v]) => v === null || typeof v === 'boolean')),
+    at: r.ok ? r.value?.at : undefined
+  };
 }
 
-function transcripts(days: number): string[] {
+/** Save part of the state, keeping the rest (skills and plugins share the file). */
+export function saveSlimState(part: Partial<SlimState>): void {
+  const cur = loadSlimState();
+  writeJsonAtomic(stateFile(), { hidden: cur.hidden, plugins: cur.plugins, ...part, at: new Date().toISOString() });
+}
+
+export function transcripts(days: number): string[] {
   const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'projects');
   const cutoff = Date.now() - days * 864e5;
   const out: string[] = [];
@@ -71,7 +84,7 @@ function transcripts(days: number): string[] {
 }
 
 /** Every full line of `text` that contains `needle`. */
-function linesWith(text: string, needle: string): string[] {
+export function linesWith(text: string, needle: string): string[] {
   const out: string[] = [];
   let i = text.indexOf(needle);
   while (i >= 0) {
@@ -84,7 +97,7 @@ function linesWith(text: string, needle: string): string[] {
   return out;
 }
 
-const tsOf = (e: any) => (typeof e?.timestamp === 'string' ? Date.parse(e.timestamp) || 0 : 0);
+export const tsOf = (e: any) => (typeof e?.timestamp === 'string' ? Date.parse(e.timestamp) || 0 : 0);
 
 /** Look at recent transcripts: what the listing holds, what was used, what can be hidden. */
 export function planSlim(opts: { days?: number; minObservedDays?: number } = {}): SlimPlan {
@@ -196,7 +209,7 @@ export function applySlim(plan: SlimPlan): { ok: boolean; message: string } {
       hidden.add(h.name);
     }
   });
-  if (res.ok) writeJsonAtomic(stateFile(), { hidden: [...hidden], at: new Date().toISOString() });
+  if (res.ok) saveSlimState({ hidden: [...hidden] });
   return res;
 }
 
@@ -212,7 +225,7 @@ export function stripSlimOverrides(settings: any): number {
         n++;
       }
   if (o && typeof o === 'object' && !Object.keys(o).length) delete settings.skillOverrides;
-  if (state.hidden.length) writeJsonAtomic(stateFile(), { hidden: [], at: new Date().toISOString() });
+  if (state.hidden.length) saveSlimState({ hidden: [] });
   return n;
 }
 
@@ -228,6 +241,6 @@ export function undoSlim(): { ok: boolean; message: string; restored: number } {
         restored++;
       }
   });
-  if (res.ok) writeJsonAtomic(stateFile(), { hidden: [], at: new Date().toISOString() });
+  if (res.ok) saveSlimState({ hidden: [] });
   return { ...res, restored };
 }

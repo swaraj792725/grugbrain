@@ -3246,6 +3246,88 @@ describe('grug slim', () => {
     uninstall();
     expect(JSON.parse(fs.readFileSync(settings, 'utf8')).skillOverrides).toEqual({ 'mine:x': 'off' });
   });
+
+  function pluginSetup() {
+    const claude = path.join(tmp, '.claude');
+    const round = path.join(claude, 'plugins', 'synced', 'r1');
+    for (const n of ['shop', 'seo', 'idle', 'fresh', 'hr']) {
+      fs.mkdirSync(path.join(round, n), { recursive: true });
+      fs.writeFileSync(path.join(round, `${n}.meta.json`), '{}');
+    }
+    fs.writeFileSync(
+      path.join(claude, 'plugins', 'installed_plugins.json'),
+      JSON.stringify({ version: 2, plugins: { 'lint@market': [{ scope: 'user' }], 'proj@market': [{ scope: 'project', projectPath: '/x' }], 'agents@market': [{ scope: 'user' }] } })
+    );
+    const old = new Date(Date.now() - 20 * DAY).toISOString();
+    const now = new Date().toISOString();
+    const dir = path.join(claude, 'projects', '-tmp-plug');
+    transcript(dir, 'a.jsonl', [
+      { type: 'attachment', timestamp: old, attachment: { type: 'skill_listing', names: ['shop:orders', 'seo:audit', 'idle:thing', 'lint:run', 'pdf'], content: '- shop:orders: Orders.\n- seo:audit: Audit a site for search.\n- idle:thing: Never used at all, a long description here.\n- lint:run\n- pdf: Read PDFs.' } },
+      { type: 'attachment', timestamp: old, attachment: { type: 'deferred_tools_delta', addedLines: ['mcp__plugin_shop_store__list_orders', 'mcp__plugin_idle_x__do'], needsAuthMcpServers: ['plugin:hr:gmail', 'plugin:hr:calendar'], pendingMcpServers: [] } },
+      { type: 'attachment', timestamp: old, attachment: { type: 'agent_listing_delta', addedTypes: ['agents:helper', 'general-purpose'], addedLines: ['- agents:helper: Helps.', '- general-purpose: x'] } },
+      { type: 'assistant', timestamp: now, message: { id: 'm1', content: [{ type: 'tool_use', name: 'mcp__plugin_shop_store__list_orders', input: {} }] } },
+      { type: 'assistant', timestamp: now, message: { id: 'm2', content: [{ type: 'tool_use', name: 'Agent', input: { subagent_type: 'agents:helper', prompt: 'x' } }] } },
+      { type: 'user', timestamp: now, message: { content: '<command-name>/audit</command-name>' } },
+      // Mentioned in text only, not a use.
+      { type: 'user', timestamp: now, message: { content: 'what does idle:thing do? mcp__plugin_idle_x__do' } }
+    ]);
+    transcript(dir, 'b.jsonl', [{ type: 'attachment', timestamp: new Date(Date.now() - DAY).toISOString(), attachment: { type: 'skill_listing', names: ['fresh:new'], content: '- fresh:new: Brand new.' } }]);
+    return path.join(claude, 'settings.json');
+  }
+
+  it('turns off plugins with no skill, command, tool or agent use, and undoes exactly what it changed', async () => {
+    const { planPlugins, applyPlugins, undoPlugins } = await import('../src/pluginslim.js');
+    const settings = pluginSetup();
+    fs.writeFileSync(settings, JSON.stringify({ model: 'opus', enabledPlugins: { 'lint@market': true, 'other@x': false } }));
+    const plan = planPlugins({ days: 30 });
+    const status = Object.fromEntries(plan.plugins.map((p) => [p.key, p.status]));
+    expect(status).toEqual({
+      'shop@synced': 'used', // MCP tool call
+      'seo@synced': 'used', // `/audit` typed without the prefix
+      'agents@market': 'used', // agent run
+      'idle@synced': 'disable',
+      'hr@synced': 'disable', // only needs-auth servers
+      'lint@market': 'disable',
+      'fresh@synced': 'new'
+    });
+    expect(plan.plugins.some((p) => p.key === 'proj@market')).toBe(false); // project scope: not ours to touch
+    expect(plan.disable.find((p) => p.key === 'idle@synced')!.tokens).toBeGreaterThan(0);
+    expect(planPlugins({ days: 30, minObservedDays: 0 }).disable.map((p) => p.key)).toContain('fresh@synced');
+
+    expect(applyPlugins(plan).ok).toBe(true);
+    const after = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(after.model).toBe('opus');
+    expect(after.enabledPlugins).toEqual({ 'lint@market': false, 'other@x': false, 'idle@synced': false, 'hr@synced': false });
+    expect(planPlugins({ days: 30 }).plugins.find((p) => p.key === 'idle@synced')!.status).toBe('off-by-grug');
+    expect(planPlugins({ days: 30 }).plugins.find((p) => p.key === 'other@x')).toBeUndefined();
+
+    // The user turned one back on themselves: undo leaves it, restores the rest to what they were.
+    const s2 = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    s2.enabledPlugins['hr@synced'] = true;
+    fs.writeFileSync(settings, JSON.stringify(s2));
+    const u = undoPlugins();
+    expect(u.restored.sort()).toEqual(['idle@synced', 'lint@market']);
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).enabledPlugins).toEqual({ 'lint@market': true, 'other@x': false, 'hr@synced': true });
+    expect(undoPlugins().restored).toEqual([]);
+  });
+
+  it('skill slim and plugin slim share the state file; uninstall restores plugins', async () => {
+    const { applyPlugins, planPlugins } = await import('../src/pluginslim.js');
+    const { applySlim, loadSlimState } = await import('../src/slim.js');
+    installClaudeCode(false);
+    const settings = pluginSetup();
+    applyPlugins(planPlugins({ days: 30 }));
+    applySlim({ hide: [{ name: 'a:b', chars: 10 }], unhide: [] } as any);
+    const st = loadSlimState();
+    expect(st.hidden).toEqual(['a:b']);
+    expect(Object.keys(st.plugins).sort()).toEqual(['hr@synced', 'idle@synced', 'lint@market']);
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).enabledPlugins['idle@synced']).toBe(false);
+    uninstall();
+    const after = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(after.enabledPlugins).toBeUndefined();
+    expect(after.skillOverrides).toBeUndefined();
+    expect(loadSlimState()).toMatchObject({ hidden: [], plugins: {} });
+  });
 });
 
 describe('batching', () => {

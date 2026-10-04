@@ -74,6 +74,8 @@ Every installed skill send name + description to Claude **every reply**. Many pl
 - Dry run first, change nothing: `grug slim`. Do it: `grug slim --apply`. Put back: `grug slim --undo` (uninstall too).
 - Never touch built-in skills, skills you used, or overrides you set yourself. Skill used again later → next `--apply` give its description back.
 - Skills listed under 7 days wait (not enough evidence); `--include-new` skip the wait.
+
+**Whole plugins: `grug slim --plugins`.** A loaded plugin cost every session even when nothing of it is called: its skills, its agents, its MCP tool names and instructions, and a "needs authentication" notice per server never signed in (one claude.ai synced plugin bring 20+). `grug slim --plugins` show each installed plugin with its uses in 30 days (skill call, `/command`, MCP tool call, agent run) and rough tokens per session; plugins with zero uses get `enabledPlugins["name@marketplace"]: false` (checked live: plugin, servers, skills, agents gone from the session). Dry run first; `--apply` to do it; `--undo` (and uninstall) put back exactly the value it replaced. Project-scope plugins never touched. Plugins first seen under 7 days ago wait (`--include-new` skip). Measured in `claude -p` (8 unused synced plugins off): first reply 33.9k → 32.8k tokens, 189 → 72 slash commands; desktop sessions where the plugin servers connect carry more (estimate up to ~8.6k on one real install).
 - Saving is an estimate (real install: up to ~4.3k tokens/reply). Claude Code may spend freed room showing full descriptions of skills you do use, which also help Claude pick right.
 - Bigger win, your call: turn off whole plugins/connectors you never use (Claude app: Settings > Plugins / Connectors).
 
@@ -236,6 +238,7 @@ grug dash [--once]              TUI dashboard
 grug doctor                     check everything, say how to fix
 grug uninstall [--purge]        remove (keeps memory unless --purge)
 grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
+grug slim --plugins [--apply]   turn off plugins never used in 30 days (--undo puts them back)
 grug discover [--days 7]        which commands / MCP tools put most output in context, how much grug shortened
 
 grug graph                      open memory graph
