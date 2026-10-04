@@ -196,6 +196,26 @@ export const TASKS: BenchTask[] = [
     check: (_d, out) => (/\b7,?350\b/.test(out) ? { pass: true, why: 'found 7350' } : { pass: false, why: `answer: ${out.slice(0, 80)}` })
   },
   {
+    id: 'audit-services',
+    exercises: 'batching independent lookups (fewer replies), reading many small files',
+    prompt: 'Audit every service in src/services: for each file, say whether the handler validates req.body before using it (yes/no). Do not modify anything. End with one line: MISSING: <comma-separated service names that do not validate>.',
+    files: () => {
+      const f: Record<string, string> = { 'package.json': JSON.stringify({ name: 'svc', type: 'module' }) };
+      const bad = new Set(['orders', 'coupons', 'payouts']);
+      for (const n of ['billing', 'invoices', 'users', 'orders', 'refunds', 'shipping', 'coupons', 'reports', 'inventory', 'payouts']) {
+        const guard = bad.has(n) ? '' : `  if (!req.body || typeof req.body.amount !== 'number') throw new Error('bad input');\n`;
+        f[`src/services/${n}.js`] = `// ${n} service\nexport function handle_${n}(req) {\n${guard}  const amount = req.body.amount * 100;\n  return { ok: true, amount, kind: '${n}' };\n}\n`;
+      }
+      return f;
+    },
+    check: (_d, out) => {
+      const line = /MISSING:\s*(.*)/i.exec(out)?.[1] || '';
+      const got = new Set(line.toLowerCase().split(/[\s,]+/).map((x) => x.replace(/\.js$/, '')).filter(Boolean));
+      const want = ['orders', 'coupons', 'payouts'];
+      return got.size === want.length && want.every((w) => got.has(w)) ? { pass: true, why: 'found all 3' } : { pass: false, why: `MISSING: ${line.slice(0, 80)}` };
+    }
+  },
+  {
     id: 'reread-config',
     exercises: 're-read guard',
     prompt: 'Read config.json and note the value of retry.maxAttempts. Then read config.json again to double-check it. Reply with only the number.',
@@ -245,7 +265,8 @@ function hookSettings(): any {
     SessionStart: [{ hooks: [cmd('session-start')] }],
     UserPromptSubmit: [{ hooks: [cmd('user-prompt')] }],
     PreToolUse: [{ matcher: 'Read|Grep|Edit|Write|MultiEdit', hooks: [cmd('pre-tool')] }],
-    PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep', hooks: [cmd('post-tool')] }],
+    PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep|Glob', hooks: [cmd('post-tool')] }],
+    SubagentStart: [{ hooks: [cmd('subagent-start')] }],
     Stop: [{ hooks: [{ ...cmd('stop'), timeout: 120 }] }]
   };
 }

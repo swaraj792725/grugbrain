@@ -65,6 +65,20 @@ grug config set autoCompact.windowTokens 300000   # compact later (100k–1M), 0
 grug config set routing.subagentModel sonnet      # subagents on Sonnet 5.5, main chat stays on your model
 ```
 
+## grug slim skill list (`grug slim`)
+
+Every installed skill send name + description to Claude **every reply**. Many plugins = big list (real install: 157 skills, ~7.5k tokens, ~10 ever used). `grug slim` read your transcripts, find plugin skills never used in 30 days, and list them **by name only** (Claude Code `skillOverrides: "name-only"`). Claude still see the name and can still use the skill; `/name` still work. Only the description go.
+
+- Dry run first, change nothing: `grug slim`. Do it: `grug slim --apply`. Put back: `grug slim --undo` (uninstall too).
+- Never touch built-in skills, skills you used, or overrides you set yourself. Skill used again later → next `--apply` give its description back.
+- Skills listed under 7 days wait (not enough evidence); `--include-new` skip the wait.
+- Saving is an estimate (real install: up to ~4.3k tokens/reply). Claude Code may spend freed room showing full descriptions of skills you do use, which also help Claude pick right.
+- Bigger win, your call: turn off whole plugins/connectors you never use (Claude app: Settings > Plugins / Connectors).
+
+## Batch lookups (automatic)
+
+Every reply re-send whole conversation. Real week: Claude make 1 tool call per reply, and 22% of replies were one more lone lookup in a chain (Read, Grep, `sed -n`), 18% of all context re-read. Grug tell Claude once at start: independent reads/greps go in one reply, shell steps in one Bash call. After 3 lone lookups in a row, grug add short note (max 3 per session). Not measured live yet; 18% is ceiling, not promise. Off: `grug config set batching.rule false`, `grug config set batching.nudge false`.
+
 ## grug brain (memory that never get fat)
 
 Normal memory file grow, grow, grow. Every session pay for all of it. Bad.
@@ -215,6 +229,7 @@ grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
 grug dash [--once]              TUI dashboard
 grug doctor                     check everything, say how to fix
 grug uninstall [--purge]        remove (keeps memory unless --purge)
+grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
 
 grug graph                      open memory graph
 grug vault                      rebuild Obsidian vault, print path

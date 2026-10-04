@@ -35,6 +35,8 @@ import { scoreRecalls } from './recalltune.js';
 import { verifyAtStop } from './verify.js';
 import { editGuardMessage } from './editguard.js';
 import { conventionHint } from './conventions.js';
+import { bashFileOps } from './bashops.js';
+import { BATCH_RULE, batchNudge } from './batching.js';
 
 export interface HookInput {
   session_id?: string;
@@ -85,6 +87,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const parts: string[] = [];
       const style = terseStyle(cfg.terse);
       if (style) parts.push(style);
+      if (cfg.batching.rule) parts.push(BATCH_RULE);
       let handedOff = false;
       if (cfg.handoff.enabled) {
         const h = takeHandoff(projectKey(cwd), sid, cfg.handoff.maxAgeHours, input.source === 'compact');
@@ -329,7 +332,26 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         appendBuffer(sid, { t: 'file', ts: now, path: String(ti.path), op: 'read', ranged: true });
       } else if (tool === 'Bash' && ti.command) {
         appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
+        // Shell reads/edits (sed -n, grep file, cat, sed -i, > file) count like Read/Edit.
+        const ops = bashFileOps(String(ti.command), cwd);
+        for (const k of ops.uses) appendBuffer(sid, { t: 'use', ts: now, k });
+        for (const f of ops.files) appendBuffer(sid, { t: 'file', ts: now, path: f.path, op: f.op, ...(f.ranged ? { ranged: true } : {}) });
       }
+      // A chain of one-lookup replies: suggest batching (rate-limited). Main thread only.
+      let note: string | null = null;
+      if (cfg.batching.nudge && !input.agent_id) {
+        try {
+          note = batchNudge(sid, tool, ti, input.transcript_path, cwd, now);
+          if (note) recordActivity({ kind: 'batch', msg: 'Suggested batching after a chain of single lookups', tokens: -estimateTokens(note), project: path.basename(cwd) });
+        } catch {
+          /* best-effort */
+        }
+      }
+      const withNote = (out: HookOutput): HookOutput => {
+        if (!note) return out;
+        const h = out?.hookSpecificOutput || { hookEventName: 'PostToolUse' };
+        return { ...(out || {}), hookSpecificOutput: { ...h, additionalContext: h.additionalContext ? `${h.additionalContext}\n${note}` : note } };
+      };
       if (cfg.quality.editGuard && ti.file_path && /^(Edit|Write|MultiEdit)$/.test(tool)) {
         try {
           const msg = editGuardMessage([String(ti.file_path)], cwd);
@@ -341,9 +363,9 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           /* best-effort */
         }
       }
-      if (tool !== 'Bash' && tool !== 'Grep' && !(cfg.commandRules.mcp && tool.startsWith('mcp__'))) return mediaOut;
+      if (tool !== 'Bash' && tool !== 'Grep' && !(cfg.commandRules.mcp && tool.startsWith('mcp__'))) return withNote(mediaOut);
       const original = toolOutputText(input);
-      if (original === null) return mediaOut;
+      if (original === null) return withNote(mediaOut);
       let text = original;
       let kind: 'testsum' | 'trim' | 'cmdrules' | 'json' | null = null;
       let ruleName = '';
@@ -393,7 +415,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         }
       }
       const removed = original.length - text.length;
-      if (!kind || removed < 200) return null;
+      if (!kind || removed < 200) return withNote(null);
       recordActivity({
         kind,
         msg:
@@ -415,7 +437,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           : r && typeof r === 'object' && typeof r.stdout === 'string'
             ? { ...r, stdout: text, stderr: '' }
             : text;
-      return { hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: updated } };
+      return withNote({ hookSpecificOutput: { hookEventName: 'PostToolUse', updatedToolOutput: updated } });
     }
 
     case 'subagent-start': {
@@ -424,6 +446,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       const style = terseStyle(cfg.terse);
       if (style) parts.push(style);
       parts.push('Large files: Grep for the symbol, then Read with offset/limit instead of reading the whole file.');
+      if (cfg.batching.rule) parts.push(BATCH_RULE);
       const text = parts.join('\n');
       recordActivity({ kind: 'subagent', msg: `Subagent ${input.agent_type || ''} started with terse style + read rule`.replace('  ', ' '), tokens: -estimateTokens(text), project: path.basename(cwd) });
       return { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: text } };

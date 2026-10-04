@@ -182,6 +182,13 @@ export interface GrugConfig {
     enabled: boolean;
     minTokens: number;
   };
+  /** Fewer replies: ask Claude to batch independent lookups (each reply re-sends the whole context). */
+  batching: {
+    /** One sentence at session/subagent start. */
+    rule: boolean;
+    /** A short note after a chain of single-lookup replies (at most 3 per session). */
+    nudge: boolean;
+  };
   memory: {
     enabled: boolean;
     /** Token budget for the brief injected at session start. */
@@ -294,6 +301,10 @@ export function defaultConfig(): GrugConfig {
     taskBoundary: {
       enabled: true,
       minTokens: 60000
+    },
+    batching: {
+      rule: true,
+      nudge: true
     },
     memory: {
       enabled: true,

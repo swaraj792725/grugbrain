@@ -58,6 +58,7 @@ export type ActivityKind =
   | 'graph'
   | 'facts'
   | 'remember'
+  | 'batch'
   | 'consolidate'
   | 'outline'
   | 'fallback'

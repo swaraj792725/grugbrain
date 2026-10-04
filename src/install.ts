@@ -15,6 +15,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { backupFile, userHome, grugHome, ensureDir, loadConfig, paths, readJson, saveConfig, writeFileAtomic, writeJsonAtomic } from './config.js';
 import { recordActivity } from './stats.js';
+import { stripSlimOverrides } from './slim.js';
 
 export const MARK = '--from=grugbrain';
 const LEGACY_KEYS = ['token-diet', 'claude-token-saver'];
@@ -491,6 +492,7 @@ export function uninstall(purge = false): Step[] {
       value.hooks = stripOurHooks(value.hooks);
       if (!Object.keys(value.hooks).length) delete value.hooks;
       removeTuning(value, state);
+      stripSlimOverrides(value);
       if (typeof value.statusLine?.command === 'string' && value.statusLine.command.includes(MARK)) {
         if (state.prevStatusLine) value.statusLine = state.prevStatusLine;
         else delete value.statusLine;

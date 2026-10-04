@@ -70,6 +70,7 @@ export type BufferEvent =
   | { t: 'factscan'; ts: number; offset: number; failed: string[] }
   | { t: 'recall'; ts: number; keys: string[]; tokens: number; files?: string[] }
   | { t: 'scored'; ts: number }
+  | { t: 'nudge'; ts: number; k: 'batch' }
   | { t: 'end'; ts: number; reason?: string };
 
 const DAY = 86400000;

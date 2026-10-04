@@ -23,7 +23,7 @@ import { trafficCheck } from './stats.js';
 const argv = process.argv.slice(2).filter((a) => a !== '--from=grugbrain');
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
 // Flags that take a value: `--dir path` must not leak `path` into the positional words.
-const VALUE_FLAGS = new Set(['--dir', '--port', '--budget', '--model', '--runs', '--tasks']);
+const VALUE_FLAGS = new Set(['--dir', '--port', '--budget', '--model', '--runs', '--tasks', '--days']);
 const pos = argv.filter((a, i) => !a.startsWith('--') && !(i > 0 && VALUE_FLAGS.has(argv[i - 1])));
 const cmd = pos[0] || 'help';
 
@@ -59,6 +59,8 @@ const HELP = `
   grug recall <query> [--dir d]   search memory
   grug remember <text> [--dir d]  pin a note for a project
   grug context [transcript]       what fills the context of the current session (by kind and biggest items)
+  grug slim [--apply | --undo] [--days 30] [--include-new]
+                                  list unused plugin skills by name only (smaller context every reply; they still work)
   grug maintain                   ingest + consolidate memory now (normally automatic)
   grug warm [dir] [--graph]       refresh code-graph + history caches for a project (normally automatic)
 
@@ -128,6 +130,11 @@ async function main() {
         console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; band drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
         else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not render the band; use `grug dash` or the terminal `claude` to see it');
+      }
+      {
+        const { loadSlimState } = await import('./slim.js');
+        const st = loadSlimState();
+        console.log(st.hidden.length ? `✅ skill list slimmed: ${st.hidden.length} unused plugin skill(s) listed by name only (grug slim --undo to restore)` : `ℹ️  skill list not slimmed: \`grug slim\` shows which unused plugin skills could be listed by name only`);
       }
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
@@ -308,6 +315,39 @@ async function main() {
         for (const x of b.biggest) console.log(`  ${k(x.tokens).padStart(7)}  ${x.label}`);
       }
       console.log('\nfix: /clear between tasks; grug trims big command output and skips repeat reads/screenshots.');
+      break;
+    }
+
+    case 'slim': {
+      // Hide unused plugin skills from the per-reply skill listing (reversible).
+      const { applySlim, planSlim, undoSlim } = await import('./slim.js');
+      if (flags.has('--undo')) {
+        const r = undoSlim();
+        console.log(r.ok ? `✅ ${r.restored} skill(s) listed in full again. ${r.message}` : `❌ ${r.message}`);
+        break;
+      }
+      const days = Math.max(7, Number(flagValue('--days')) || 30);
+      const plan = planSlim({ days, minObservedDays: flags.has('--include-new') ? 0 : 7 });
+      const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+      console.log(`🪨 skill listing: ${plan.listed} skills, ~${k(Math.round(plan.listingChars / 4))} tokens sent with every reply (${plan.transcripts} transcripts, ${plan.observedDays} day(s) of history)`);
+      const usedNames = Object.entries(plan.used).sort((a, b) => b[1] - a[1]);
+      if (usedNames.length) console.log(`  used in the last ${days} days: ${usedNames.slice(0, 12).map(([n, c]) => `${n} (${c})`).join(', ')}`);
+      if (plan.alreadyHidden) console.log(`  already slimmed by grug: ${plan.alreadyHidden}`);
+      if (plan.unhide.length) console.log(`  used again, description comes back: ${plan.unhide.join(', ')}`);
+      if (!plan.hide.length) console.log('  nothing unused to slim (skills listed for under 7 days wait; --include-new skips the wait).');
+      else {
+        const byPlugin: Record<string, number> = {};
+        for (const h of plan.hide) byPlugin[h.name.split(':')[0]] = (byPlugin[h.name.split(':')[0]] || 0) + 1;
+        console.log(`  never used, can list by name only: ${plan.hide.length} skills (${Object.entries(byPlugin).map(([p, n]) => `${p} ${n}`).join(', ')})`);
+        console.log(`  saves up to ~${k(plan.savedTokens)} tokens on every reply (estimate; Claude Code may use freed room to un-truncate the skills you do use)`);
+      }
+      if (!flags.has('--apply')) {
+        if (plan.hide.length || plan.unhide.length) console.log('\nrun `grug slim --apply` to do it; `grug slim --undo` puts everything back. Slimmed skills still work (Claude sees the name; /name too).');
+        break;
+      }
+      if (!plan.hide.length && !plan.unhide.length) break;
+      const r = applySlim(plan);
+      console.log(r.ok ? `✅ slimmed ${plan.hide.length}, restored ${plan.unhide.length}. ${r.message}` : `❌ ${r.message}`);
       break;
     }
 
