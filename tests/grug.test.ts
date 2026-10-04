@@ -35,6 +35,7 @@ beforeEach(() => {
   process.env.PATH = '/usr/bin:/bin'; // keep the real `claude` CLI out of reach
   delete process.env.ANTHROPIC_BASE_URL;
   delete process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.GRUG_DISABLE; // set by grug's own verify gate when it runs this suite; tests exercise the hooks
   // Hard stop if isolation ever breaks: never touch a real home directory.
   if (userHome() !== tmp || !paths.home().startsWith(tmp)) throw new Error('test HOME isolation failed');
 });
@@ -1161,7 +1162,7 @@ describe('auto-recall', () => {
     }
     // Cold, with a time budget: returns within budget-ish, marks the result partial.
     const t0 = Date.now();
-    const cold = historyHits(cwd, 'flux capacitor overheats', { budgetMs: 30 });
+    const cold = historyHits(cwd, 'flux capacitor overheats', { budgetMs: 1 }); // 1 ms: shorter than parsing 20 files, so partial even on a fast machine
     expect(Date.now() - t0).toBeLessThan(1500);
     expect(cold.partial).toBe(true);
     warmHistory(cwd); // what `grug warm` does in the background at session start
@@ -1348,10 +1349,13 @@ describe('recall usefulness tuning', () => {
     expect(nextStrictness({ codeShown: 20, codeHit: 15, strictness: 1 })).toBe(0.9);
     expect(nextStrictness({ codeShown: 20, codeHit: 1, strictness: 1.6 })).toBe(1.6);
     expect(nextStrictness({ codeShown: 20, codeHit: 15, strictness: 0.8 })).toBe(0.8);
-    fs.writeFileSync(path.join(paths.home(), 'recall-tune.json'), JSON.stringify({ strictness: 9, codeShown: 'x' }));
+    fs.writeFileSync(path.join(paths.home(), 'recall-tune.json'), JSON.stringify({ v: 2, strictness: 9, codeShown: 'x' }));
     expect(loadTune()).toEqual({ codeShown: 0, codeHit: 0, strictness: 1.6 });
     const { renderOnce } = await import('../src/tui/dashboard.js');
     expect(renderOnce({ tab: 1 } as any, 160, 80).replace(/\u001b\[[0-9;]*m/g, '')).toMatch(/recall usefulness.*strictness ×1\.60/);
+    // A pre-v2 file (scored without shell reads) starts over instead of keeping its bias.
+    fs.writeFileSync(path.join(paths.home(), 'recall-tune.json'), JSON.stringify({ strictness: 1.6, codeShown: 40, codeHit: 1 }));
+    expect(loadTune()).toEqual({ codeShown: 0, codeHit: 0, strictness: 1 });
   });
 });
 
@@ -3056,10 +3060,172 @@ describe('baseline overhead', () => {
     const sizes = [40000, 50000, 60000, 70000, 80000];
     sizes.forEach((n, i) => {
       const side = JSON.stringify({ type: 'assistant', isSidechain: true, message: { usage: { input_tokens: 1, cache_read_input_tokens: 1 } } });
+      const empty = JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 0, output_tokens: 0 } } }); // streamed placeholder
       const main = JSON.stringify({ type: 'assistant', message: { usage: { input_tokens: 10, cache_read_input_tokens: n - 10 - 5, cache_creation_input_tokens: 5 } } });
-      fs.writeFileSync(path.join(root, `s${i}.jsonl`), `${side}\n${main}\n`);
+      fs.writeFileSync(path.join(root, `s${i}.jsonl`), `${side}\n${i % 2 ? empty + '\n' : ''}${main}\n`);
     });
     const b = measureBaseline(7, 5);
     expect(b).toEqual({ sessions: 5, medianTokens: 60000 });
+  });
+});
+
+describe('shell reads and edits count as file use', () => {
+  it('parses sed/grep/cat/head reads, sed -i/perl -i/redirect edits, cd, and skips heredoc bodies', async () => {
+    const { bashFileOps } = await import('../src/bashops.js');
+    const cwd = path.join(tmp, 'proj');
+    fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+    for (const f of ['src/a.ts', 'src/b.ts', 'src/c.ts', 'out.txt']) fs.writeFileSync(path.join(cwd, f), 'x\n');
+    const abs = (f: string) => path.join(cwd, f);
+    expect(bashFileOps("sed -n '10,40p' src/a.ts", cwd)).toEqual({ files: [{ path: abs('src/a.ts'), op: 'read', ranged: true }], uses: ['read'] });
+    expect(bashFileOps('grep -n "foo" src/a.ts src/missing.ts', cwd)).toEqual({ files: [{ path: abs('src/a.ts'), op: 'read', ranged: true }], uses: ['grep'] });
+    expect(bashFileOps('cat src/b.ts | head -n 5', cwd).files).toEqual([{ path: abs('src/b.ts'), op: 'read' }]);
+    expect(bashFileOps("sed -i '' 's/a/b/' src/c.ts && echo hi > out.txt", cwd).files).toEqual([
+      { path: abs('src/c.ts'), op: 'edit' },
+      { path: abs('out.txt'), op: 'edit' }
+    ]);
+    expect(bashFileOps("perl -pi -e 's/x/y/' src/a.ts", cwd).files).toEqual([{ path: abs('src/a.ts'), op: 'edit' }]);
+    expect(bashFileOps('cd src && head -20 a.ts', cwd).files).toEqual([{ path: abs('src/a.ts'), op: 'read', ranged: true }]);
+    expect(bashFileOps("python3 - <<'EOF'\ncat src/a.ts\nsed -i 's/a/b/' src/b.ts\nEOF\necho done", cwd)).toEqual({ files: [], uses: [] });
+    expect(bashFileOps('npm test 2>&1 | tail -5', cwd)).toEqual({ files: [], uses: [] });
+  });
+
+  it('records shell reads as file events so recall scoring sees a hinted file was used', async () => {
+    const cwd = path.join(tmp, 'proj2');
+    fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(cwd, 'src', 'cart.ts'), 'export const x = 1;\n');
+    await runHook('post-tool', { session_id: 'bs1', cwd, tool_name: 'Bash', tool_input: { command: "sed -n '1,20p' src/cart.ts" } });
+    const ev = readBuffer('bs1');
+    expect(ev).toContainEqual(expect.objectContaining({ t: 'file', path: path.join(cwd, 'src', 'cart.ts'), op: 'read', ranged: true }));
+    expect(ev).toContainEqual(expect.objectContaining({ t: 'use', k: 'read' }));
+  });
+});
+
+describe('grug slim', () => {
+  function transcript(dir: string, name: string, lines: any[]) {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  }
+
+  it('lists unused plugin skills by name only, never touches used, built-in or user-set ones, and undoes cleanly', async () => {
+    const { planSlim, applySlim, undoSlim, SLIM_MODE } = await import('../src/slim.js');
+    const claude = path.join(tmp, '.claude');
+    const settings = path.join(claude, 'settings.json');
+    fs.mkdirSync(claude, { recursive: true });
+    fs.writeFileSync(settings, JSON.stringify({ model: 'opus', skillOverrides: { 'shop:mine': 'off' } }));
+    const old = new Date(Date.now() - 20 * DAY).toISOString();
+    const content = [
+      '- shop:orders: List and manage store orders with filters and exports.',
+      '- shop:mine: The user set this one.',
+      '- seo:audit: Run a full SEO audit of a site.',
+      '- seo:used: A skill Claude used.',
+      '- pdf: Read PDFs.',
+      '- data:old'
+    ].join('\n');
+    const names = ['shop:orders', 'shop:mine', 'seo:audit', 'seo:used', 'pdf', 'data:old'];
+    const dir = path.join(claude, 'projects', '-tmp-slim');
+    transcript(dir, 'a.jsonl', [
+      { type: 'attachment', timestamp: old, attachment: { type: 'skill_listing', names, content } },
+      { type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'm1', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'seo:used' } }] } },
+      { type: 'user', timestamp: new Date().toISOString(), message: { content: '<command-name>/audit</command-name>' } }
+    ]);
+    const plan = planSlim({ days: 30 });
+    expect(plan.listed).toBe(6);
+    expect(plan.hide.map((h) => h.name).sort()).toEqual(['data:old', 'shop:orders']); // seo:audit used as /audit
+    expect(plan.hide.find((h) => h.name === 'data:old')!.chars).toBe(0); // already listed without a description
+    expect(plan.savedTokens).toBe(Math.round(plan.hide.reduce((s, h) => s + h.chars, 0) / 4));
+    expect(plan.savedTokens).toBeGreaterThan(0);
+
+    // Too new to judge: a skill first listed yesterday waits unless asked.
+    transcript(dir, 'b.jsonl', [{ type: 'attachment', timestamp: new Date(Date.now() - DAY).toISOString(), attachment: { type: 'skill_listing', names: [...names, 'new:thing'], content: content + '\n- new:thing: Fresh.' } }]);
+    expect(planSlim({ days: 30 }).hide.map((h) => h.name)).not.toContain('new:thing');
+    expect(planSlim({ days: 30, minObservedDays: 0 }).hide.map((h) => h.name)).toContain('new:thing');
+
+    expect(applySlim(planSlim({ days: 30 })).ok).toBe(true);
+    const after = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(after.model).toBe('opus');
+    expect(after.skillOverrides).toEqual({ 'shop:mine': 'off', 'shop:orders': SLIM_MODE, 'data:old': SLIM_MODE });
+
+    // Used later: comes back on the next apply.
+    transcript(dir, 'c.jsonl', [{ type: 'assistant', timestamp: new Date().toISOString(), message: { id: 'm2', content: [{ type: 'tool_use', name: 'Skill', input: { skill: 'shop:orders' } }] } }]);
+    const again = planSlim({ days: 30 });
+    expect(again.unhide).toEqual(['shop:orders']);
+    applySlim(again);
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).skillOverrides).toEqual({ 'shop:mine': 'off', 'data:old': SLIM_MODE });
+
+    // The user changed one of ours: undo leaves it alone.
+    const s2 = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    s2.skillOverrides['data:old'] = 'off';
+    fs.writeFileSync(settings, JSON.stringify(s2));
+    const u = undoSlim();
+    expect(u.restored).toBe(0);
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).skillOverrides).toEqual({ 'shop:mine': 'off', 'data:old': 'off' });
+  });
+
+  it('uninstall removes the overrides grug added', async () => {
+    const { applySlim, SLIM_MODE } = await import('../src/slim.js');
+    installClaudeCode(false);
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    const s = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    s.skillOverrides = { 'mine:x': 'off' };
+    fs.writeFileSync(settings, JSON.stringify(s));
+    applySlim({ hide: [{ name: 'a:b', chars: 10 }], unhide: [] } as any);
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).skillOverrides['a:b']).toBe(SLIM_MODE);
+    uninstall();
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).skillOverrides).toEqual({ 'mine:x': 'off' });
+  });
+});
+
+describe('batching', () => {
+  function chainTranscript(file: string, replies: Array<Array<{ name: string; input: any }>>) {
+    const lines = replies.flatMap((tools, i) =>
+      tools.map((t) => JSON.stringify({ type: 'assistant', message: { id: `msg${i}`, content: [{ type: 'tool_use', id: `tu${i}${t.name}`, name: t.name, input: t.input }] } }))
+    );
+    fs.writeFileSync(file, lines.join('\n') + '\n');
+  }
+
+  it('suggests batching after a chain of single-lookup replies, rate-limited, never after parallel calls or in subagents', async () => {
+    const cwd = path.join(tmp, 'bproj');
+    fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+    for (const f of ['a.ts', 'b.ts', 'c.ts']) fs.writeFileSync(path.join(cwd, 'src', f), 'x\n');
+    const tr = path.join(tmp, 'b.jsonl');
+    const read = (f: string) => ({ name: 'Read', input: { file_path: path.join(cwd, 'src', f) } });
+    chainTranscript(tr, [[{ name: 'Edit', input: {} }], [read('a.ts')], [{ name: 'Bash', input: { command: 'grep -n x src/b.ts' } }], [read('c.ts')]]);
+    const post = (sid: string, extra: any = {}) => runHook('post-tool', { session_id: sid, cwd, transcript_path: tr, tool_name: 'Read', tool_input: read('c.ts').input, tool_response: 'x', ...extra });
+    const out: any = await post('bt1');
+    expect(out?.hookSpecificOutput?.additionalContext).toMatch(/3 lookups in a row/);
+    expect(await post('bt1')).toBeNull(); // not again within 10 minutes
+    expect(await post('bt2', { agent_id: 'a1' })).toBeNull(); // subagents: no note
+
+    // The last reply did two lookups at once: already batching, no note.
+    chainTranscript(tr, [[read('a.ts')], [read('b.ts')], [read('c.ts'), read('a.ts')]]);
+    expect(await post('bt3')).toBeNull();
+    // A test run in the chain breaks it.
+    chainTranscript(tr, [[read('a.ts')], [{ name: 'Bash', input: { command: 'npm test' } }], [read('c.ts')]]);
+    expect(await post('bt4')).toBeNull();
+  });
+
+  it('puts the batching rule in session and subagent start, and can be turned off', async () => {
+    const cwd = path.join(tmp, 'bproj2');
+    fs.mkdirSync(cwd, { recursive: true });
+    const s: any = await runHook('session-start', { session_id: 'br1', cwd, source: 'startup' });
+    expect(s.hookSpecificOutput.additionalContext).toContain('Batch lookups');
+    const a: any = await runHook('subagent-start', { session_id: 'br1', cwd, agent_id: 'x' });
+    expect(a.hookSpecificOutput.additionalContext).toContain('Batch lookups');
+    const cfg = defaultConfig();
+    cfg.batching.rule = false;
+    saveConfig(cfg);
+    const s2: any = await runHook('session-start', { session_id: 'br2', cwd, source: 'startup' });
+    expect(s2?.hookSpecificOutput?.additionalContext || '').not.toContain('Batch lookups');
+  });
+});
+
+describe('bench audit-services task', () => {
+  it('grades the MISSING line exactly', async () => {
+    const { TASKS } = await import('../src/bench.js');
+    const t = TASKS.find((x) => x.id === 'audit-services')!;
+    expect(Object.keys(t.files()).filter((f) => f.startsWith('src/services/'))).toHaveLength(10);
+    expect(t.check('', 'blah\nMISSING: orders, coupons.js, payouts').pass).toBe(true);
+    expect(t.check('', 'MISSING: orders, coupons').pass).toBe(false);
+    expect(t.check('', 'MISSING: orders, coupons, payouts, users').pass).toBe(false);
   });
 });

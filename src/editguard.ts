@@ -5,6 +5,7 @@
  */
 
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -45,7 +46,21 @@ export function syntaxError(file: string, cwd: string): string | null {
   }
   if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
     const r = run(process.execPath, ['--check', file], cwd);
-    return r.status === 0 ? null : short(r.out);
+    if (r.status === 0) return null;
+    // Node < 20 parses a .js file in a non-module package as CommonJS, so valid ESM fails; check it as .mjs.
+    if (ext === '.js' && /ES module|import statement outside a module|Unexpected token 'export'/.test(r.out)) {
+      const tmp = path.join(os.tmpdir(), `grug-check-${process.pid}-${Date.now()}.mjs`);
+      try {
+        fs.copyFileSync(file, tmp);
+        const m = run(process.execPath, ['--check', tmp], cwd);
+        return m.status === 0 ? null : short(m.out.split(tmp).join(file));
+      } catch {
+        return null;
+      } finally {
+        fs.rmSync(tmp, { force: true });
+      }
+    }
+    return short(r.out);
   }
   if (ext === '.sh' || ext === '.bash') {
     const r = run('bash', ['-n', file], cwd);

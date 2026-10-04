@@ -24,10 +24,12 @@ const MIN_SAMPLE = 10;
 const WINDOW = 60;
 
 const file = () => path.join(paths.home(), 'recall-tune.json');
+/** v2: shell reads count as hint use. Older files were scored without them (biased strict), so they start over. */
+const TUNE_VERSION = 2;
 
 export function loadTune(): RecallTune {
-  const r = readJson<Partial<RecallTune>>(file());
-  const v = r.ok ? r.value : {};
+  const r = readJson<Partial<RecallTune> & { v?: number }>(file());
+  const v = r.ok && r.value?.v === TUNE_VERSION ? r.value : {};
   const num = (x: any, d: number) => (typeof x === 'number' && Number.isFinite(x) ? x : d);
   return {
     codeShown: num(v.codeShown, 0),
@@ -71,7 +73,7 @@ export function scoreRecalls(sessionId: string, cwd: string): { shown: number; h
     t.codeHit /= 2;
   }
   t.strictness = nextStrictness(t);
-  writeJsonAtomic(file(), t);
+  writeJsonAtomic(file(), { ...t, v: TUNE_VERSION });
   appendBuffer(sessionId, { t: 'scored', ts: last });
   return { shown, hit };
 }

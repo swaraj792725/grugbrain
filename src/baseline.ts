@@ -28,7 +28,8 @@ function firstReplyContext(file: string): number {
         if (e.type !== 'assistant' || e.isSidechain) continue;
         const u = e.message?.usage;
         if (!u) continue;
-        return (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        const t = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+        if (t >= 1000) return t; // streamed/empty usage lines report 0; the real first reply follows
       } catch {
         /* partial last line */
       }
