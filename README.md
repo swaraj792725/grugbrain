@@ -77,7 +77,7 @@ Every installed skill send name + description to Claude **every reply**. Many pl
 
 ## Batch lookups (automatic)
 
-Every reply re-send whole conversation. Real week: Claude make 1 tool call per reply, and 22% of replies were one more lone lookup in a chain (Read, Grep, `sed -n`), 18% of all context re-read. Grug tell Claude once at start: independent reads/greps go in one reply, shell steps in one Bash call. After 3 lone lookups in a row, grug add short note (max 3 per session). Not measured live yet; 18% is ceiling, not promise. Off: `grug config set batching.rule false`, `grug config set batching.nudge false`.
+Every reply re-send whole conversation. Real week: Claude make 1 tool call per reply, and 22% of replies were one more lone lookup in a chain (Read, Grep, `sed -n`), 18% of all context re-read. Grug tell Claude once at start: independent reads/greps go in one reply, shell steps in one Bash call. After 3 lone lookups in a row, grug add short note (max 3 per session). Measured (Sonnet, `audit-services`, 3 runs per arm, grug on vs off): same result 3/3, 2 turns vs 3 every run, 40% less input; cost about 10% lower with a warm cache (the 42% the bench prints includes one cold-cache baseline run). Small synthetic task; real sessions differ. Off: `grug config set batching.rule false`, `grug config set batching.nudge false`.
 
 ## grug brain (memory that never get fat)
 
