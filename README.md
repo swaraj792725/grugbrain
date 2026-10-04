@@ -196,6 +196,8 @@ Real run (Claude Code 2.1.284, Haiku 4.5, 4 tasks × 2 runs × 2 arms, warm cach
 
 Test one grug feature instead of all of grug: `--compare key=value,...` runs grug in both arms, the baseline with those config overrides (for example `grug bench --compare graphContext.enabled=false --tasks find-threshold --runs 3 --yes` asks whether the code map pays for itself). The overrides apply only to the bench sessions (env `GRUG_SET`), never to your saved config.
 
+Long sessions: `grug bench --tasks long-session --runs 3 --yes` runs one session of 6 prompts in a row (explain, add a feature, fix tests, change a config value that is also hard-coded, rename a function, add tests) in a 25-file repo, graded at the end by a check Claude never sees. About $2 per session on Sonnet, so it only runs when named. Measured (Sonnet, 3 runs per arm): same quality 3/3 vs 3/3, $5.93 vs $6.40 (7% less; about 3% without the costliest baseline run), 91 turns vs 112. That run found grug re-sending its start context on every resume, fixed in 2.28.0.
+
 Grug read it straight: big win where output is noisy (tests, builds, logs), no loss anywhere, no magic where Claude Code already efficient. Most of each small task's cost is Claude Code's own ~35k-token system prompt, already cached. Bench spends real usage, so it asks for `--yes`; use `--runs 3+` for your own numbers.
 
 ## where grug work

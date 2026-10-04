@@ -26,7 +26,7 @@ export interface Handoff {
 
 const file = (project: string) => path.join(paths.home(), 'handoffs', `${project.replace(/[^\w.~-]/g, '_')}.json`);
 
-function readTail(p: string, bytes: number): string {
+export function readTail(p: string, bytes: number): string {
   try {
     const fd = fs.openSync(p, 'r');
     const size = fs.fstatSync(fd).size;
