@@ -504,7 +504,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       // Check the edits before Claude calls it done; only a real failure sends it back.
       if (cfg.quality.verify && !input.agent_id) {
         try {
-          const v = verifyAtStop(cfg, sid, cwd, now);
+          const v = await verifyAtStop(cfg, sid, cwd, now);
           if (v.block) return { decision: 'block', reason: v.reason };
         } catch {
           /* best-effort */

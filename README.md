@@ -340,7 +340,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `routing.lightAgents` | `Explore` | read-only subagent types sent to `routing.lightModel` when the main chat is pricier (`''` = off) |
 | `routing.lightModel` | `sonnet` | `sonnet` / `haiku` |
 | `autoRecall.subagents` | `true` | add recall + code hints for the task to each subagent prompt (cap `autoRecall.subagentTokens`, 500) |
-| `quality.verify` | `true` | at Stop, when code files changed this turn, run the project's own check (typecheck + tests) once and send Claude back with only the failing lines; silent when it passes |
+| `quality.verify` | `true` | at Stop, when code files changed this turn, run the project's own check (typecheck + tests) once and send Claude back with only the failing lines; silent when it passes. Runs one at a time at low priority, the whole process tree is killed on timeout, a project that timed out once is skipped, monorepos only with `verifyCommand` |
 | `quality.verifyCommand` | `''` | the check to run instead of the auto-detected one |
 | `quality.verifyTimeoutSec` / `quality.verifyMaxRounds` | `90` / `2` | hard timeout (a timeout never blocks) and the most send-backs per prompt |
 | `quality.editGuard` | `true` | after Edit/Write, check the file's syntax (JSON, JS, TS, Python, shell) and tell Claude at once if the edit broke it |
