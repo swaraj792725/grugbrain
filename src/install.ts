@@ -17,6 +17,7 @@ import { backupFile, userHome, grugHome, ensureDir, loadConfig, paths, readJson,
 import { recordActivity } from './stats.js';
 import { stripSlimOverrides } from './slim.js';
 import { stripPluginSlim } from './pluginslim.js';
+import { effectiveWindow, updateFloor } from './floor.js';
 
 export const MARK = '--from=grugbrain';
 const LEGACY_KEYS = ['token-diet', 'claude-token-saver'];
@@ -210,6 +211,11 @@ export function installClaudeCode(withProxy: boolean): Step[] {
       settings.env.ANTHROPIC_BASE_URL = ours;
       proxyOk = true;
     }
+  }
+  try {
+    updateFloor(); // measure how big sessions start before choosing the window
+  } catch {
+    /* best-effort */
   }
   applyTuning(settings, cfg, state);
   applyStatusLine(settings, cfg, state);
@@ -702,7 +708,7 @@ const TUNING: Record<string, Setter> = {
 };
 
 function wanted(cfg: ReturnType<typeof loadConfig>): Record<string, any> {
-  const w = cfg.autoCompact.windowTokens;
+  const w = effectiveWindow(cfg).window;
   return {
     autoCompactWindow: w > 0 ? w : undefined,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW: w > 0 ? String(w) : undefined,
@@ -738,6 +744,16 @@ function removeTuning(settings: any, state: InstallState): void {
     else TUNING[key].set(settings, rec.prev);
   }
   state.tuning = {};
+}
+
+/** The auto-compact window currently in ~/.claude/settings.json (0 = none). */
+export function appliedWindow(): number {
+  try {
+    const s = JSON.parse(fs.readFileSync(claudeCodeSettingsPath(), 'utf8'));
+    return Number(s.autoCompactWindow) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** Apply tuning to ~/.claude/settings.json right now (after `grug config set autoCompact.*|routing.*`). */

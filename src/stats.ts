@@ -43,6 +43,7 @@ export type ActivityKind =
   | 'update'
   | 'context-alert'
   | 'idle-alert'
+  | 'window'
   | 'media'
   | 'nav'
   | 'task-shift'

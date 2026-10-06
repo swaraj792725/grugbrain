@@ -76,6 +76,17 @@ Every installed skill send name + description to Claude **every reply**. Many pl
 - Skills listed under 7 days wait (not enough evidence); `--include-new` skip the wait.
 
 **Whole plugins: `grug slim --plugins`.** A loaded plugin cost every session even when nothing of it is called: its skills, its agents, its MCP tool names and instructions, and a "needs authentication" notice per server never signed in (one claude.ai synced plugin bring 20+). `grug slim --plugins` show each installed plugin with its uses in 30 days (skill call, `/command`, MCP tool call, agent run) and rough tokens per session; plugins with zero uses get `enabledPlugins["name@marketplace"]: false` (checked live: plugin, servers, skills, agents gone from the session). Dry run first; `--apply` to do it; `--undo` (and uninstall) put back exactly the value it replaced. Project-scope plugins never touched. Plugins first seen under 7 days ago wait (`--include-new` skip). Measured in `claude -p` (8 unused synced plugins off): first reply 33.9k → 32.8k tokens, 189 → 72 slash commands; desktop sessions where the plugin servers connect carry more (estimate up to ~8.6k on one real install).
+
+**Tool search in the desktop app.** The app runs Claude Code with `ENABLE_TOOL_SEARCH=auto`: MCP tool schemas stay out of context only while they total at least 10% of the model's window (100k tokens on a 1M model). Under that, every schema goes into every request (~100k tokens on one real install), sessions start near 180k, and auto-compaction can't make room ("context window is full"). Your settings.json can't change it; OS-level managed settings can. `grug doctor` checks and prints the commands (you run them, they need your password), then quit and reopen the app:
+
+```bash
+sudo mkdir -p "/Library/Application Support/ClaudeCode"
+```
+```bash
+printf '{\n  "parentSettingsBehavior": "merge",\n  "env": { "ENABLE_TOOL_SEARCH": "force" }\n}\n' | sudo tee "/Library/Application Support/ClaudeCode/managed-settings.json"
+```
+
+If that file already exists, add the `env` key to it instead. Until then, grug also keeps the auto-compact window at least 80k above how big your sessions start (`autoCompact.guard`).
 - Saving is an estimate (real install: up to ~4.3k tokens/reply). Claude Code may spend freed room showing full descriptions of skills you do use, which also help Claude pick right.
 - Bigger win, your call: turn off whole plugins/connectors you never use (Claude app: Settings > Plugins / Connectors).
 
@@ -238,7 +249,7 @@ grug dash [--once]              TUI dashboard
 grug doctor                     check everything, say how to fix
 grug uninstall [--purge]        remove (keeps memory unless --purge)
 grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
-grug slim --plugins [--apply]   turn off plugins never used in 30 days (--undo puts them back)
+grug slim --plugins [--apply]   turn off plugins never used in 30 days (--undo puts them back; in the desktop app only once tool search is forced on)
 grug discover [--days 7]        which commands / MCP tools put most output in context, how much grug shortened
 
 grug graph                      open memory graph
@@ -336,6 +347,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `handoff.enabled` / `maxTokens` / `maxAgeHours` | `true` / `1200` / `48` | carry work across compaction, `/clear` and new sessions |
 | `handoff.git` | `true` | put the real git state in the handoff (read-only `git status` / `git log`, no lock, 2.5 s limit) |
 | `autoCompact.windowTokens` | `150000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
+| `autoCompact.guard` | `true` | never write a window closer than 80k to how big your sessions start (measured per project from transcripts) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
 | `routing.lightAgents` | `Explore` | read-only subagent types sent to `routing.lightModel` when the main chat is pricier (`''` = off) |
 | `routing.lightModel` | `sonnet` | `sonnet` / `haiku` |

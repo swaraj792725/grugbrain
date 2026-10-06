@@ -12,6 +12,13 @@ import { ensureDir, loadConfig, paths } from './config.js';
 import { coldCacheCost, contextSize, costPerReply } from './handoff.js';
 import { computeSavings } from './savings.js';
 import { readActivity } from './stats.js';
+import { effectiveWindow } from './floor.js';
+
+/** Context size at which the line turns to a /clear hint: 80% of the window grug applies. */
+const alertLimit = (cfg: ReturnType<typeof loadConfig>) => {
+  const w = effectiveWindow(cfg).window;
+  return w > 0 ? w * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
+};
 
 const useColor = !process.env.NO_COLOR;
 const c = (code: string) => (s: string) => (useColor ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -184,7 +191,7 @@ export function renderStatusLine(raw: string, now = Date.now()): string {
       model: cs.model || modelId || '',
       idleMs: cs.lastReplyTs ? now - cs.lastReplyTs : 0,
       oneHour: cs.oneHourCache,
-      windowTokens: cfg.autoCompact.windowTokens,
+      windowTokens: effectiveWindow(cfg).window,
       firstTokens: Math.max(10000, cfg.contextAlert.firstTokens),
       tips: cfg.statusLine.tips,
       now,
@@ -198,7 +205,7 @@ export function renderStatusLine(raw: string, now = Date.now()): string {
       } catch {
         /* no transcript yet */
       }
-      const limit = cfg.autoCompact.windowTokens > 0 ? cfg.autoCompact.windowTokens * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
+      const limit = alertLimit(cfg);
       panel = composePanel({
         now,
         active: now - mtime < 6000,
@@ -250,7 +257,7 @@ export function appSummaryLine(transcriptPath: string | undefined, now = Date.no
     const cfg = loadConfig();
     const saved = cachedSaved(now);
     const cs = contextSize(transcriptPath);
-    const limit = cfg.autoCompact.windowTokens > 0 ? cfg.autoCompact.windowTokens * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
+    const limit = alertLimit(cfg);
     const recent = lastAction(now)?.msg;
     if (!(saved && saved.pct > 0) && !cs.tokens) return '🪨 grug │ on and watching │ nothing saved yet this week, it fills in as you work';
     return composeAppLine({ savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, recent });
@@ -275,7 +282,7 @@ export function appStatus(transcriptPath: string | undefined, now = Date.now()):
   const cfg = loadConfig();
   const saved = cachedSaved(now);
   const cs = contextSize(transcriptPath);
-  const limit = cfg.autoCompact.windowTokens > 0 ? cfg.autoCompact.windowTokens * 0.8 : Math.max(10000, cfg.contextAlert.firstTokens);
+  const limit = alertLimit(cfg);
   const idleMs = cs.lastReplyTs ? now - cs.lastReplyTs : 0;
   const alerts: string[] = [];
   if (cs.tokens >= limit) alerts.push(`context is ${k(cs.tokens)}: /clear soon (grug restores a handoff)`);
