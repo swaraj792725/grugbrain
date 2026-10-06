@@ -2981,24 +2981,88 @@ describe('quality gates (v2.23)', () => {
     const fail = () => (ran++, { status: 1, timedOut: false, output: 'ok 1\nok 2\n' + 'noise\n'.repeat(200) + `FAIL a.test.js\nAssertionError: expected 3 to be 4\n    at a.test.js:9:1\n${ran === 2 ? 'TypeError: different failure\n' : ''}` });
     // no edits this turn -> nothing runs
     appendBuffer('v1', { t: 'prompt', ts: Date.now() - 9000, text: 'hi' });
-    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'v1', cwd, Date.now(), fail)).block).toBe(false);
     expect(ran).toBe(0);
     edited('v1', cwd, 'a.js');
-    const r1 = verifyAtStop(cfg, 'v1', cwd, Date.now(), fail);
+    const r1 = await verifyAtStop(cfg, 'v1', cwd, Date.now(), fail);
     expect(r1.block).toBe(true);
     expect(r1.reason).toContain('AssertionError: expected 3 to be 4');
     expect(r1.reason).not.toContain('noise');
     expect(r1.reason!.length).toBeLessThan(1000);
     // the same edits are never re-checked
-    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'v1', cwd, Date.now(), fail)).block).toBe(false);
     expect(ran).toBe(1);
     // a new edit -> checked again (round 2), then the cap holds
     fs.writeFileSync(path.join(cwd, 'a.js'), 'xy');
-    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(true);
+    expect((await verifyAtStop(cfg, 'v1', cwd, Date.now(), fail)).block).toBe(true);
     fs.writeFileSync(path.join(cwd, 'a.js'), 'xyz');
-    expect(verifyAtStop(cfg, 'v1', cwd, Date.now(), fail).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'v1', cwd, Date.now(), fail)).block).toBe(false);
     expect(ran).toBe(2);
     expect(failureExcerpt('a\nb\nc')).toBe('a\nb\nc');
+  });
+
+  it('verify: monorepos are never auto-checked; a check that ran past the timeout is skipped there; one check at a time', async () => {
+    const { verifyAtStop, detectCheck } = await import('../src/verify.js');
+    const { grugHome } = await import('../src/config.js');
+    expect(detectCheck(proj({ 'package.json': '{"scripts":{"test":"vitest"}}', 'pnpm-workspace.yaml': 'packages: []' }))).toBeNull();
+    expect(detectCheck(proj({ 'package.json': '{"workspaces":["a"],"scripts":{"test":"vitest"}}' }))).toBeNull();
+    expect(detectCheck(proj({ 'package.json': '{"scripts":{"test":"pnpm -r run test"}}' }))).toBeNull();
+    expect(detectCheck(proj({ 'pnpm-workspace.yaml': '', 'package.json': '{}' }), 'pnpm --filter web test')).toBe('pnpm --filter web test');
+    const cfg = defaultConfig();
+    const cwd = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x' });
+    let ran = 0;
+    const slow = () => (ran++, { status: null, timedOut: true, output: '' });
+    edited('s1', cwd, 'a.js');
+    expect((await verifyAtStop(cfg, 's1', cwd, Date.now(), slow)).block).toBe(false);
+    edited('s2', cwd, 'a.js');
+    expect((await verifyAtStop(cfg, 's2', cwd, Date.now(), slow)).block).toBe(false);
+    expect(ran).toBe(1); // skipped after the first timeout
+    cfg.quality.verifyTimeoutSec = 300; // a longer timeout tries again
+    edited('s3', cwd, 'a.js');
+    await verifyAtStop(cfg, 's3', cwd, Date.now(), slow);
+    expect(ran).toBe(2);
+    // a live lock (another session's check) -> skip without running
+    const cwd2 = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x' });
+    fs.writeFileSync(path.join(grugHome(), 'verify.lock'), JSON.stringify({ pid: process.pid, ts: Date.now() }));
+    edited('s4', cwd2, 'a.js');
+    expect((await verifyAtStop(cfg, 's4', cwd2, Date.now(), slow)).block).toBe(false);
+    expect(ran).toBe(2);
+    // a stale lock (dead pid) is taken over, and released afterwards
+    fs.writeFileSync(path.join(grugHome(), 'verify.lock'), JSON.stringify({ pid: 999999, ts: Date.now() }));
+    edited('s5', cwd2, 'a.js');
+    await verifyAtStop(cfg, 's5', cwd2, Date.now(), () => (ran++, { status: 0, timedOut: false, output: '' }));
+    expect(ran).toBe(3);
+    expect(fs.existsSync(path.join(grugHome(), 'verify.lock'))).toBe(false);
+  });
+
+  it.skipIf(process.platform === 'win32')('verify: runCheck kills the whole process tree on timeout and leftovers on exit', async () => {
+    const { runCheck } = await import('../src/verify.js');
+    const cwd = proj({});
+    const dead = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    const pidOf = (f: string) => Number(fs.readFileSync(path.join(cwd, f), 'utf8').trim());
+    let t0 = Date.now();
+    const r = await runCheck('sh -c "sleep 30" & echo $! > bg1; sleep 30', cwd, 400);
+    expect(r.timedOut).toBe(true);
+    expect(r.status).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(5000);
+    await new Promise((res) => setTimeout(res, 100));
+    expect(dead(pidOf('bg1'))).toBe(true);
+    // the shell exits fine but leaves a child holding the pipe: it is killed and the result comes back at once
+    t0 = Date.now();
+    const ok = await runCheck('sleep 30 & echo $! > bg2; echo AssertionError: x 1>&2; exit 3', cwd, 20000);
+    expect(ok.timedOut).toBe(false);
+    expect(ok.status).toBe(3);
+    expect(ok.output).toContain('AssertionError: x');
+    expect(Date.now() - t0).toBeLessThan(5000);
+    await new Promise((res) => setTimeout(res, 100));
+    expect(dead(pidOf('bg2'))).toBe(true);
   });
 
   it('verify: a failure already shown this session does not send Claude back again', async () => {
@@ -3007,15 +3071,15 @@ describe('quality gates (v2.23)', () => {
     const cwd = proj({ 'package.json': '{"scripts":{"test":"x"}}', 'a.js': 'x' });
     const fail = (n: number) => () => ({ status: 1, timedOut: false, output: `FAIL old.test.js\nAssertionError: expected ${n} to be 4 (took ${n}ms)\n` });
     edited('r1', cwd, 'a.js');
-    expect(verifyAtStop(cfg, 'r1', cwd, Date.now(), fail(3)).block).toBe(true);
+    expect((await verifyAtStop(cfg, 'r1', cwd, Date.now(), fail(3))).block).toBe(true);
     // next prompt, new edit, same failure (only numbers differ) -> not blocked
     appendBuffer('r1', { t: 'prompt', ts: Date.now() + 10, text: 'again' });
     appendBuffer('r1', { t: 'file', ts: Date.now() + 20, path: path.join(cwd, 'a.js'), op: 'edit' });
     fs.writeFileSync(path.join(cwd, 'a.js'), 'changed');
-    expect(verifyAtStop(cfg, 'r1', cwd, Date.now(), fail(7)).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'r1', cwd, Date.now(), fail(7))).block).toBe(false);
     // a different failure still blocks
     fs.writeFileSync(path.join(cwd, 'a.js'), 'changed again');
-    expect(verifyAtStop(cfg, 'r1', cwd, Date.now(), () => ({ status: 1, timedOut: false, output: 'TypeError: x is not a function\n' })).block).toBe(true);
+    expect((await verifyAtStop(cfg, 'r1', cwd, Date.now(), () => ({ status: 1, timedOut: false, output: 'TypeError: x is not a function\n' }))).block).toBe(true);
   });
 
   it('verify: pass, timeout, docs-only edits and the off switch never block', async () => {
@@ -3026,15 +3090,15 @@ describe('quality gates (v2.23)', () => {
     const pass = () => (ran++, { status: 0, timedOut: false, output: '' });
     const slow = () => (ran++, { status: null, timedOut: true, output: '' });
     edited('p1', cwd, 'a.js');
-    expect(verifyAtStop(cfg, 'p1', cwd, Date.now(), pass).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'p1', cwd, Date.now(), pass)).block).toBe(false);
     edited('p2', cwd, 'a.js');
-    expect(verifyAtStop(cfg, 'p2', cwd, Date.now(), slow).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'p2', cwd, Date.now(), slow)).block).toBe(false);
     edited('p3', cwd, 'README.md');
-    expect(verifyAtStop(cfg, 'p3', cwd, Date.now(), pass).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'p3', cwd, Date.now(), pass)).block).toBe(false);
     expect(ran).toBe(2);
     cfg.quality.verify = false;
     edited('p4', cwd, 'a.js');
-    expect(verifyAtStop(cfg, 'p4', cwd, Date.now(), () => ({ status: 1, timedOut: false, output: 'boom' })).block).toBe(false);
+    expect((await verifyAtStop(cfg, 'p4', cwd, Date.now(), () => ({ status: 1, timedOut: false, output: 'boom' }))).block).toBe(false);
   });
 
   it('verify: the real stop hook runs the check and returns decision:block (and not for subagents)', async () => {

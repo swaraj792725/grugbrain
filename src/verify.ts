@@ -5,13 +5,16 @@
  *
  *  - Change-gated: no edits this turn (or the same edits already checked) -> nothing runs.
  *  - Bounded: at most `verifyMaxRounds` send-backs per prompt, a hard timeout, and any doubt -> stay silent.
+ *  - Contained: the check runs in its own process group at low priority, one at a time, and the whole group
+ *    is killed on timeout or exit. A project whose check once ran past the timeout is skipped from then on.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import * as os from 'node:os';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { GrugConfig } from './config.js';
+import { GrugConfig, grugHome } from './config.js';
 import { BufferEvent, appendBuffer, readBuffer } from './memory/store.js';
 import { recordActivity } from './stats.js';
 import { estimateTokens } from './tokens.js';
@@ -35,6 +38,9 @@ export function detectCheck(cwd: string, override = ''): string | null {
   const pkg = has('package.json') ? readJson(path.join(cwd, 'package.json')) : null;
   if (pkg) {
     const scripts = pkg.scripts || {};
+    // Monorepos: the root check walks every package (minutes, GBs of RAM). Only an explicit verifyCommand runs there.
+    if (pkg.workspaces || ['pnpm-workspace.yaml', 'lerna.json', 'nx.json', 'turbo.json', 'rush.json'].some(has)) return null;
+    if (/(^|\s)(-r|--recursive)(\s|$)|\bturbo run\b|\bnx run-many\b|\blerna run\b/.test(`${scripts.typecheck || ''} ${scripts.test || ''}`)) return null;
     const parts: string[] = [];
     if (scripts.typecheck) parts.push('npm run -s typecheck');
     else if (has('tsconfig.json') && has('node_modules/.bin/tsc')) parts.push('node_modules/.bin/tsc --noEmit');
@@ -96,6 +102,13 @@ export function failureExcerpt(raw: string, maxChars = MAX_CHARS): string {
   return text;
 }
 
+export interface RunResult {
+  status: number | null;
+  output: string;
+  timedOut: boolean;
+}
+export type CheckRunner = (cmd: string, cwd: string, timeoutMs: number) => RunResult | Promise<RunResult>;
+
 export interface VerifyResult {
   block: boolean;
   reason?: string;
@@ -105,13 +118,7 @@ export interface VerifyResult {
  * Decide at Stop. Returns {block:true, reason} only when the check ran, failed, and rounds remain.
  * `run` is injectable for tests.
  */
-export function verifyAtStop(
-  cfg: GrugConfig,
-  sid: string,
-  cwd: string,
-  now: number,
-  run: (cmd: string, cwd: string, timeoutMs: number) => { status: number | null; output: string; timedOut: boolean } = defaultRun
-): VerifyResult {
+export async function verifyAtStop(cfg: GrugConfig, sid: string, cwd: string, now: number, run: CheckRunner = runCheck): Promise<VerifyResult> {
   const q = cfg.quality;
   if (!q.verify) return { block: false };
   const events = readBuffer(sid);
@@ -126,11 +133,23 @@ export function verifyAtStop(
   if (failedRounds >= q.verifyMaxRounds) return { block: false };
   const cmd = detectCheck(cwd, q.verifyCommand);
   if (!cmd) return { block: false };
+  if (isSlow(cwd, cmd, q.verifyTimeoutSec)) return { block: false };
+  const release = acquireLock(now, q.verifyTimeoutSec);
+  if (!release) return { block: false }; // another session's check is running: never stack them
   const t0 = Date.now();
-  const r = run(cmd, cwd, q.verifyTimeoutSec * 1000);
+  let r: RunResult;
+  try {
+    r = await run(cmd, cwd, q.verifyTimeoutSec * 1000);
+  } finally {
+    release();
+  }
   const ms = Date.now() - t0;
   if (r.timedOut || r.status === null) {
     appendBuffer(sid, { t: 'verify', ts: now, sig, ok: null, ms });
+    if (r.timedOut) {
+      markSlow(cwd, cmd, q.verifyTimeoutSec, now);
+      recordActivity({ kind: 'verify', msg: `Check \`${cmd}\` ran past ${q.verifyTimeoutSec}s; stopped it and will skip it in this project (set quality.verifyCommand to a faster check)`, tokens: 0, project: path.basename(cwd) });
+    }
     return { block: false };
   }
   if (r.status === 0) {
@@ -156,8 +175,123 @@ export function verifyAtStop(
   return { block: true, reason };
 }
 
-function defaultRun(cmd: string, cwd: string, timeoutMs: number): { status: number | null; output: string; timedOut: boolean } {
-  const r = spawnSync(cmd, { cwd, shell: true, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024, env: { ...process.env, CI: '1', FORCE_COLOR: '0', GRUG_DISABLE: '1' } });
-  const timedOut = (r.error as any)?.code === 'ETIMEDOUT' || r.signal === 'SIGTERM';
-  return { status: r.status, output: `${r.stdout || ''}\n${r.stderr || ''}`, timedOut };
+const MAX_OUTPUT = 4 * 1024 * 1024;
+
+/**
+ * Run the check in its own process group at low priority; on timeout, when the shell exits, or when this hook
+ * process is killed, the whole group is killed. A plain spawnSync timeout kills only the shell: pnpm/vitest and
+ * their workers lived on as orphans at 1-2 GB each and piled up until the machine swapped.
+ */
+export function runCheck(cmd: string, cwd: string, timeoutMs: number): Promise<RunResult> {
+  return new Promise((resolve) => {
+    const win = process.platform === 'win32';
+    const env = { ...process.env, CI: '1', FORCE_COLOR: '0', GRUG_DISABLE: '1' };
+    const child = spawn(cmd, { cwd, shell: true, detached: !win, stdio: ['ignore', 'pipe', 'pipe'], env, windowsHide: true });
+    try {
+      if (child.pid) os.setPriority(child.pid, 10);
+    } catch {
+      /* best-effort */
+    }
+    let out = '';
+    let timedOut = false;
+    let settled = false;
+    const killAll = () => {
+      if (!child.pid) return;
+      try {
+        if (win) child.kill('SIGKILL');
+        else process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        /* already gone */
+      }
+    };
+    const onSignal = (sig: NodeJS.Signals) => {
+      killAll();
+      process.exit(sig === 'SIGINT' ? 130 : 143);
+    };
+    process.once('exit', killAll);
+    process.once('SIGTERM', onSignal);
+    process.once('SIGINT', onSignal);
+    const add = (b: Buffer) => {
+      if (out.length < MAX_OUTPUT) out += b.toString('utf8');
+    };
+    child.stdout?.on('data', add);
+    child.stderr?.on('data', add);
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killAll();
+    }, timeoutMs);
+    let status: number | null = null;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      process.removeListener('exit', killAll);
+      process.removeListener('SIGTERM', onSignal);
+      process.removeListener('SIGINT', onSignal);
+      resolve({ status: timedOut ? null : status, output: out, timedOut });
+    };
+    let grace: NodeJS.Timeout | undefined;
+    child.on('error', () => {
+      status = null;
+      finish();
+    });
+    child.on('exit', (code) => {
+      status = code;
+      killAll(); // leftovers in the group (workers, watchers) go too, which also closes their pipes
+      grace = setTimeout(finish, 2000);
+    });
+    child.on('close', finish);
+  });
+}
+
+function slowFile(): string {
+  return path.join(grugHome(), 'verify-slow.json');
+}
+
+/** A check that once ran past the timeout here is skipped until the timeout is raised or the command changes. */
+function isSlow(cwd: string, cmd: string, timeoutSec: number): boolean {
+  const e = (readJson(slowFile()) || {})[path.resolve(cwd)];
+  return !!e && e.cmd === cmd && timeoutSec <= e.timeoutSec;
+}
+
+function markSlow(cwd: string, cmd: string, timeoutSec: number, now: number): void {
+  try {
+    const all = readJson(slowFile()) || {};
+    all[path.resolve(cwd)] = { cmd, timeoutSec, ts: now };
+    fs.mkdirSync(grugHome(), { recursive: true });
+    fs.writeFileSync(slowFile(), JSON.stringify(all, null, 2));
+  } catch {
+    /* best-effort */
+  }
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e?.code === 'EPERM';
+  }
+}
+
+/** One check at a time on this machine (parallel sessions each running a full suite is what eats the RAM). */
+function acquireLock(now: number, timeoutSec: number): (() => void) | null {
+  const file = path.join(grugHome(), 'verify.lock');
+  try {
+    fs.mkdirSync(grugHome(), { recursive: true });
+    const held = readJson(file);
+    if (held && alive(held.pid) && now - held.ts < (timeoutSec + 60) * 1000) return null;
+    fs.rmSync(file, { force: true });
+    fs.writeFileSync(file, JSON.stringify({ pid: process.pid, ts: now }), { flag: 'wx' });
+  } catch {
+    return null;
+  }
+  return () => {
+    try {
+      if (readJson(file)?.pid === process.pid) fs.rmSync(file, { force: true });
+    } catch {
+      /* best-effort */
+    }
+  };
 }
