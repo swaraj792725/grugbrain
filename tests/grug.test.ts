@@ -3557,3 +3557,119 @@ describe('bench audit-services task', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------- v2.29.2 compaction thrash guard
+describe('auto-compact window guard (start floor)', () => {
+  const reply = (id: string, ctx: number, extra: any = {}) =>
+    JSON.stringify({
+      type: 'assistant',
+      timestamp: new Date().toISOString(),
+      cwd: '/work/big-app',
+      message: { id, role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: ctx - 2, output_tokens: 10 } },
+      ...extra
+    });
+  const boundary = () => JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: new Date().toISOString(), compactMetadata: { trigger: 'auto', preTokens: 178000 } });
+  const thrash = () =>
+    JSON.stringify({
+      type: 'assistant',
+      isApiErrorMessage: true,
+      timestamp: new Date().toISOString(),
+      message: { id: 'err', role: 'assistant', content: [{ type: 'text', text: 'Autocompact is thrashing: the context refilled to the limit within 3 turns of the previous compact, 3 times in a row.' }], usage: { input_tokens: 0, output_tokens: 0 } }
+    });
+  const bigSession = () =>
+    writeTranscript('/work/big-app', 's1.jsonl', [
+      reply('m1', 181000), // session start: every tool definition sent in full
+      reply('m2', 89000),
+      reply('sub', 300000, { isSidechain: true }), // subagent replies never count
+      reply('m3', 120000),
+      boundary(),
+      reply('m4', 175000), // first reply after compaction
+      boundary(),
+      reply('m5', 0), // an error reply has no context; the next real one is the sample
+      reply('m6', 176000),
+      thrash()
+    ]);
+
+  it('measures the start floor per project and raises only a too-small window', async () => {
+    const { updateFloor, projectFloors, effectiveWindow } = await import('../src/floor.js');
+    bigSession();
+    writeTranscript('/work/small', 's2.jsonl', [reply('a1', 70000).replace('big-app', 'small'), reply('a2', 72000).replace('big-app', 'small')]);
+    const r = updateFloor();
+    expect(r).toMatchObject({ tokens: 181000, project: 'big-app', changed: true });
+    expect(updateFloor().changed).toBe(false); // nothing new: no rescan, no change
+    const floors = projectFloors();
+    expect(floors[0]).toMatchObject({ project: 'big-app', floor: 181000, samples: 3, thrash: 1 });
+    expect(floors[1]).toMatchObject({ project: 'small', floor: 70000, samples: 1 });
+    const cfg = defaultConfig();
+    cfg.autoCompact.windowTokens = 200000;
+    expect(effectiveWindow(cfg)).toMatchObject({ window: 270000, configured: 200000, raised: true });
+    cfg.autoCompact.windowTokens = 300000;
+    expect(effectiveWindow(cfg)).toMatchObject({ window: 300000, raised: false });
+    cfg.autoCompact.windowTokens = 0; // Claude Code's own default is never touched
+    expect(effectiveWindow(cfg).window).toBe(0);
+    cfg.autoCompact.windowTokens = 200000;
+    cfg.autoCompact.guard = false;
+    expect(effectiveWindow(cfg).window).toBe(200000);
+  });
+
+  it('install writes the raised window; uninstall still restores the original', () => {
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, JSON.stringify({ autoCompactWindow: 500000 }));
+    bigSession();
+    installClaudeCode(false);
+    const s1 = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(s1.autoCompactWindow).toBe(270000);
+    expect(s1.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('270000');
+    uninstall();
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).autoCompactWindow).toBe(500000);
+  });
+
+  it('stop hook raises the window once when sessions start too close to it', async () => {
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, '{}');
+    const c = defaultConfig();
+    c.autoCompact.windowTokens = 200000;
+    c.quality.verify = false;
+    saveConfig(c);
+    installClaudeCode(false); // no transcripts yet: 200k as configured
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).autoCompactWindow).toBe(200000);
+    const cwd = fs.mkdtempSync(path.join(tmp, 'proj-'));
+    const tp = bigSession();
+    const out: any = await runHook('stop', { session_id: 'w1', cwd, transcript_path: tp });
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).autoCompactWindow).toBe(270000);
+    expect(out?.systemMessage).toMatch(/raised 200k → 270k.*big-app start at ~181k/);
+    expect(readActivity().some((a) => a.kind === 'window')).toBe(true);
+    const again: any = await runHook('stop', { session_id: 'w1', cwd, transcript_path: tp });
+    expect(again?.systemMessage).toBeUndefined();
+  });
+
+  it('counts requests that inlined every tool schema; detects forced tool search and the desktop Code tab', async () => {
+    const { updateFloor, projectFloors } = await import('../src/floor.js');
+    const { toolSearchForced, desktopCodePresent, forceToolSearchCommands } = await import('../src/toolsearch.js');
+    const { claudeDesktopConfigPath } = await import('../src/install.js');
+    const tools = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `mcp__s__t${i}`, description: 'd', schema: {} }));
+    const snap = (n: number, extra: any = {}) => JSON.stringify({ type: 'attachment', timestamp: new Date().toISOString(), attachment: { type: 'prompt_snapshot', tools: tools(n) }, ...extra });
+    writeTranscript('/work/big-app', 's3.jsonl', [snap(210), reply('m1', 181000), snap(49), reply('m2', 90000), snap(0), snap(205, { isSidechain: true })]);
+    updateFloor();
+    expect(projectFloors()[0]).toMatchObject({ project: 'big-app', full: 1 });
+
+    const managed = path.join(tmp, 'managed-settings.json');
+    process.env.GRUG_MANAGED_SETTINGS = managed;
+    try {
+      expect(toolSearchForced()).toBe(false); // no file
+      fs.writeFileSync(managed, JSON.stringify({ env: { ENABLE_TOOL_SEARCH: 'auto' } }));
+      expect(toolSearchForced()).toBe(false);
+      fs.writeFileSync(managed, JSON.stringify({ parentSettingsBehavior: 'merge', env: { ENABLE_TOOL_SEARCH: 'force' } }));
+      expect(toolSearchForced()).toBe(true);
+      if (process.platform !== 'win32') expect(forceToolSearchCommands().join('\n')).toContain(`sudo tee "${managed}"`);
+    } finally {
+      delete process.env.GRUG_MANAGED_SETTINGS;
+    }
+
+    expect(desktopCodePresent()).toBe(false);
+    fs.mkdirSync(path.join(path.dirname(claudeDesktopConfigPath()), 'claude-code'), { recursive: true });
+    expect(desktopCodePresent()).toBe(true);
+  });
+});

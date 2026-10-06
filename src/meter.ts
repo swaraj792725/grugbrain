@@ -16,6 +16,7 @@ import { loadConfig, userHome } from './config.js';
 import { ensureDir, paths, readJson, writeJsonAtomic } from './config.js';
 import { readRequests, recordRequest } from './stats.js';
 import { Usage } from './tokens.js';
+import { effectiveWindow } from './floor.js';
 
 interface MeterState {
   offset: number;
@@ -129,7 +130,7 @@ function meterFile(_sessionId: string, transcriptPath: string | undefined, proje
     // Proxy already saw calls in this window? Then it counted this traffic; don't double count.
     const proxied = readRequests().some((q) => !q.tag && q.source !== 'transcript' && q.ts >= first - 60000);
     const cfg = loadConfig();
-    const window = cfg.autoCompact.windowTokens;
+    const window = effectiveWindow(cfg).window;
     const baseline = cfg.savings.baselineContextTokens;
     const ordered = [...replies.entries()].sort((a, b) => a[1].ts - b[1].ts);
     for (const [id, rep] of ordered) {

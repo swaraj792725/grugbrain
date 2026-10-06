@@ -127,6 +127,8 @@ export interface GrugConfig {
   /** Let Claude Code compact on its own at this context size (0 = leave Claude Code's default). grug restores its handoff afterwards. */
   autoCompact: {
     windowTokens: number;
+    /** Never apply a window less than 80k above how big sessions start (measured from transcripts), so compaction can't thrash. */
+    guard: boolean;
   };
   /** Model for Claude Code subagents ('' = same as the main conversation), e.g. sonnet or haiku. */
   routing: {
@@ -271,7 +273,8 @@ export function defaultConfig(): GrugConfig {
       minExtraUsd: 0.25
     },
     autoCompact: {
-      windowTokens: 150000
+      windowTokens: 150000,
+      guard: true
     },
     routing: {
       subagentModel: '',

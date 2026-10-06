@@ -21,6 +21,7 @@ import { appSummaryLine } from './statusline.js';
 import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
+import { effectiveWindow, updateFloor } from './floor.js';
 import { buildHandoff, coldCacheCost, contextSize, costPerReply, handoffText, saveHandoff, takeHandoff } from './handoff.js';
 import { autoRecall } from './recall.js';
 import { isCodeProject, refreshGraphSoon, sessionCodeMap } from './graph.js';
@@ -501,16 +502,17 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
       // Pick durable facts as the session goes (only new bytes), so a long session loses none to the tail window.
       if (cfg.memory.enabled) captureFacts(sid, input.transcript_path, cwd, now, false);
+      const notice = input.agent_id ? undefined : await guardWindow(cfg, input.transcript_path, cwd);
       // Check the edits before Claude calls it done; only a real failure sends it back.
       if (cfg.quality.verify && !input.agent_id) {
         try {
           const v = await verifyAtStop(cfg, sid, cwd, now);
-          if (v.block) return { decision: 'block', reason: v.reason };
+          if (v.block) return { decision: 'block', reason: v.reason, ...(notice ? { systemMessage: notice } : {}) };
         } catch {
           /* best-effort */
         }
       }
-      return null;
+      return notice ? { systemMessage: notice } : null;
     }
 
     case 'session-end':
@@ -666,12 +668,34 @@ function fmtUsdShort(n: number): string {
   return n >= 10 ? `$${n.toFixed(0)}` : `$${n.toFixed(2)}`;
 }
 
+/**
+ * Sessions that start too close to the auto-compact window compact again right away until Claude Code
+ * gives up ("context window is full"). When the measured start floor rises, raise the window for new sessions.
+ */
+async function guardWindow(cfg: ReturnType<typeof loadConfig>, transcript: string | undefined, cwd: string): Promise<string | undefined> {
+  if (!cfg.autoCompact.guard || cfg.autoCompact.windowTokens <= 0 || !transcript) return undefined;
+  try {
+    if (!updateFloor([transcript]).changed) return undefined;
+    const eff = effectiveWindow(cfg);
+    const { appliedWindow, applyTuningNow } = await import('./install.js');
+    const before = appliedWindow();
+    if (eff.window <= before) return undefined;
+    if (!applyTuningNow().ok) return undefined;
+    const k = (n: number) => `${Math.round(n / 1000)}k`;
+    const msg = `Auto-compact window raised ${before ? `${k(before)} → ` : 'to '}${k(eff.window)}: sessions in ${eff.project} start at ~${k(eff.floor)}, too close for compaction to make room. New sessions use it.`;
+    recordActivity({ kind: 'window', msg, project: path.basename(cwd) });
+    return `grug: ${msg}`;
+  } catch {
+    return undefined;
+  }
+}
+
 /** One-line, user-only notice when the context passes 150k, 300k, 600k... tokens (once per level). */
 function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: string, transcript: string | undefined, now: number): string | undefined {
   if (!cfg.contextAlert.enabled || !transcript) return undefined;
   const { tokens, model } = contextSize(transcript);
   // With auto-compaction managed by grug there is nothing to do below ~1.2x the window.
-  const win = cfg.autoCompact.windowTokens;
+  const win = effectiveWindow(cfg).window;
   const first = win > 0 ? Math.round(win * 1.2) : Math.max(10000, cfg.contextAlert.firstTokens);
   if (tokens < first) return undefined;
   const level = Math.floor(Math.log2(tokens / first)) + 1;

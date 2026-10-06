@@ -60,7 +60,7 @@ const HELP = `
   grug remember <text> [--dir d]  pin a note for a project
   grug context [transcript]       what fills the context of the current session (by kind and biggest items)
   grug slim [--apply | --undo] [--days 30] [--include-new]
-  grug slim --plugins [--apply | --undo] [--days 30] [--include-new]
+  grug slim --plugins [--apply [--force] | --undo] [--days 30] [--include-new]
                                   list unused plugin skills by name only (smaller context every reply; they still work)
   grug discover [--days 7]        which commands and MCP tools put the most output into context, and how much grug shortened
   grug maintain                   ingest + consolidate memory now (normally automatic)
@@ -139,6 +139,44 @@ async function main() {
         console.log(st.hidden.length ? `✅ skill list slimmed: ${st.hidden.length} unused plugin skill(s) listed by name only (grug slim --undo to restore)` : `ℹ️  skill list not slimmed: \`grug slim\` shows which unused plugin skills could be listed by name only`);
         const off = Object.keys(st.plugins);
         console.log(off.length ? `✅ unused plugins off: ${off.join(', ')} (grug slim --plugins --undo to restore)` : `ℹ️  no plugins turned off: \`grug slim --plugins\` shows which installed plugins were never used`);
+      }
+      if (cfg.autoCompact.windowTokens > 0) {
+        const { updateFloor, effectiveWindow, projectFloors } = await import('./floor.js');
+        const { appliedWindow, applyTuningNow } = await import('./install.js');
+        try {
+          updateFloor(); // new transcript bytes of the last 14 days
+        } catch {
+          /* best-effort */
+        }
+        const k = (n: number) => `${Math.round(n / 1000)}k`;
+        const eff = effectiveWindow(cfg);
+        const floors = projectFloors();
+        const thrash = floors.reduce((n, p) => n + p.thrash, 0);
+        if (appliedWindow() < eff.window && flags.has('--fix')) printSteps([applyTuningNow()]);
+        const applied = appliedWindow();
+        const short = !cfg.autoCompact.guard && eff.floor + 80000 > eff.configured;
+        console.log(
+          `${applied >= eff.window && !short ? '✅' : '❌'} auto-compact window ${k(applied)} in Claude Code settings${eff.raised ? ` (you set ${k(eff.configured)}; raised because sessions in ${eff.project} start at ~${k(eff.floor)})` : ''}`
+        );
+        if (floors.length) console.log(`   sessions start at (14 days): ${floors.slice(0, 4).map((p) => `${p.project} ~${k(p.floor)}`).join(', ')}`);
+        if (thrash) console.log(`   ${thrash} session(s) stopped with "Autocompact is thrashing" (context window full) in 14 days`);
+        if (applied < eff.window) console.log('   → apply the raised window: grug doctor --fix   (new sessions use it)');
+        if (short) console.log(`   → guard is off and sessions start within 80k of the window: grug config set autoCompact.guard true`);
+      }
+      {
+        const { desktopCodePresent, toolSearchForced, forceToolSearchCommands, managedSettingsPath } = await import('./toolsearch.js');
+        if (desktopCodePresent()) {
+          const { projectFloors } = await import('./floor.js');
+          const full = projectFloors().reduce((n, p) => n + p.full, 0);
+          if (toolSearchForced()) console.log('✅ tool search forced on for the desktop app (managed settings ENABLE_TOOL_SEARCH=force)');
+          else {
+            console.log(
+              `❌ tool search is "auto" in the desktop app: when MCP tools total under 10% of the model's window, every tool schema (~100k tokens) goes into every request${full ? ` (seen ${full} time(s) in 14 days)` : ''}`
+            );
+            console.log(`   → force it on (you run these; needs your password${fs.existsSync(managedSettingsPath()) ? `; ${managedSettingsPath()} exists, so add the env key to it instead of replacing it` : ''}), then quit and reopen the app:`);
+            for (const c of forceToolSearchCommands()) console.log(`     ${c}`);
+          }
+        }
       }
       console.log(`${ok(h.proxyConfigured)} Claude Code ANTHROPIC_BASE_URL → proxy`);
       console.log(`${ok(!!up)} proxy answering on :${cfg.port}${up ? ` (up ${Math.round(up.uptimeMs / 60000)} min, ${up.served} requests)` : ''}`);
@@ -361,6 +399,14 @@ async function main() {
         console.log(`  turning off ${plan.disable.length} saves ~${k(plan.savedTokens)} tokens at the start of every session (estimate: its share of the largest session start seen; servers that connect add tools and instructions on top)`);
         if (!flags.has('--apply')) {
           console.log('\nrun `grug slim --plugins --apply` to do it; `grug slim --plugins --undo` turns them back on. A turned-off plugin\'s skills, agents and tools are gone until then (`claude plugin enable <name>` for one).');
+          break;
+        }
+        const ts = await import('./toolsearch.js');
+        if (ts.desktopCodePresent() && !ts.toolSearchForced() && !flags.has('--force')) {
+          console.log('\n❌ not turned off: the desktop app runs tool search in "auto" mode, and fewer MCP tools can drop it under its bar, which puts EVERY tool schema (~100k tokens) into every request.');
+          console.log('   Force tool search on first (you run these, then quit and reopen the app), or pass --force:');
+          for (const c of ts.forceToolSearchCommands()) console.log(`     ${c}`);
+          process.exitCode = 1;
           break;
         }
         const r = applyPlugins(plan);
