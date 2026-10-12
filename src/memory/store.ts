@@ -156,13 +156,35 @@ function upsert(db: MemoryDB, n: Omit<MemNode, 'created' | 'updated' | 'weight' 
   return node;
 }
 
+/** Edges to a removed node are dropped by consolidate's final sweep (one pass instead of one per removal);
+ * neighbors() and recomputeTouches() skip them meanwhile. */
 function removeNode(db: MemoryDB, id: string) {
   delete db.nodes[id];
-  for (const [k, e] of Object.entries(db.edges)) if (e.a === id || e.b === id) delete db.edges[k];
 }
 
-export function neighbors(db: MemoryDB, id: string): Array<{ node: MemNode; w: number }> {
+export type Adjacency = Map<string, Array<{ id: string; w: number }>>;
+
+/** Node id -> its edges, built in one pass; for callers that ask for many nodes' neighbors. */
+export function adjacency(db: MemoryDB): Adjacency {
+  const adj: Adjacency = new Map();
+  const add = (x: string, y: string, w: number) => {
+    let l = adj.get(x);
+    if (!l) adj.set(x, (l = []));
+    l.push({ id: y, w });
+  };
+  for (const e of Object.values(db.edges)) {
+    add(e.a, e.b, e.w);
+    add(e.b, e.a, e.w);
+  }
+  return adj;
+}
+
+export function neighbors(db: MemoryDB, id: string, adj?: Adjacency): Array<{ node: MemNode; w: number }> {
   const out: Array<{ node: MemNode; w: number }> = [];
+  if (adj) {
+    for (const x of adj.get(id) || []) if (db.nodes[x.id]) out.push({ node: db.nodes[x.id], w: x.w });
+    return out;
+  }
   for (const e of Object.values(db.edges)) {
     const other = e.a === id ? e.b : e.b === id ? e.a : null;
     if (other && db.nodes[other]) out.push({ node: db.nodes[other], w: e.w });
@@ -380,23 +402,23 @@ export function capAutoPins(db: MemoryDB, project: string): void {
 
 /** touches for files/topics are derived from edges, so re-ingesting never double counts. */
 function recomputeTouches(db: MemoryDB, project: string) {
+  // One pass over the edges (a neighbors() call per node made this O(nodes x edges): 18 s on a 2.4k-node memory).
   const deg = new Map<string, number>();
+  const last = new Map<string, number>();
   for (const e of Object.values(db.edges)) {
     for (const [x, y] of [[e.a, e.b], [e.b, e.a]]) {
       const n = db.nodes[x];
       const o = db.nodes[y];
-      if (!n || !o || n.project !== project) continue;
-      if ((n.type === 'file' || n.type === 'topic') && (o.type === 'session' || o.type === 'digest' || o.type === 'note'))
-        deg.set(x, (deg.get(x) || 0) + e.w);
+      if (!n || !o || n.project !== project || (n.type !== 'file' && n.type !== 'topic')) continue;
+      if (o.type === 'session' || o.type === 'digest' || o.type === 'note') deg.set(x, (deg.get(x) || 0) + e.w);
+      // last time any linked session touched it
+      if (o.type === 'session') last.set(x, Math.max(last.get(x) || 0, o.updated));
     }
   }
   for (const n of Object.values(db.nodes)) {
     if (n.project === project && (n.type === 'file' || n.type === 'topic')) {
       n.touches = deg.get(n.id) || 0;
-      // last time any linked session touched it
-      let last = n.updated;
-      for (const { node } of neighbors(db, n.id)) if (node.type === 'session') last = Math.max(last, node.updated);
-      n.updated = last;
+      n.updated = Math.max(n.updated, last.get(n.id) || 0);
     }
   }
 }

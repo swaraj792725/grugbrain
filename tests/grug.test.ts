@@ -38,6 +38,8 @@ beforeEach(() => {
   delete process.env.GRUG_SET;
   delete process.env.GRUG_DISABLE; // set by grug's own verify gate when it runs this suite; tests exercise the hooks
   delete process.env.CLAUDE_CODE_SUBAGENT_MODEL; // the developer's own routing must not leak into routing tests
+  delete process.env.CLAUDE_CODE_ENTRYPOINT; // 'cli' (terminal claude) hides app-only notices
+  process.env.GRUG_MANAGED_SETTINGS = path.join(tmp, 'managed-settings.json'); // never the machine's real managed file
   // Hard stop if isolation ever breaks: never touch a real home directory.
   if (userHome() !== tmp || !paths.home().startsWith(tmp)) throw new Error('test HOME isolation failed');
 });
@@ -3665,11 +3667,169 @@ describe('auto-compact window guard (start floor)', () => {
       expect(toolSearchForced()).toBe(true);
       if (process.platform !== 'win32') expect(forceToolSearchCommands().join('\n')).toContain(`sudo tee "${managed}"`);
     } finally {
-      delete process.env.GRUG_MANAGED_SETTINGS;
+      fs.rmSync(managed, { force: true });
     }
 
     expect(desktopCodePresent()).toBe(false);
     fs.mkdirSync(path.join(path.dirname(claudeDesktopConfigPath()), 'claude-code'), { recursive: true });
     expect(desktopCodePresent()).toBe(true);
+  });
+
+  // A sawtooth: after each compaction the context restarts at ~80k and grows 2k per reply until the window.
+  const sawtooth = (cwd: string, name: string, top: number, cycles: number, t0: number) => {
+    const lines: string[] = [];
+    let ts = t0;
+    let id = 0;
+    const at = () => new Date((ts += 60000)).toISOString();
+    for (let c = 0; c < cycles; c++) {
+      if (c) lines.push(JSON.stringify({ type: 'system', subtype: 'compact_boundary', timestamp: at() }));
+      if (c) lines.push(JSON.stringify({ type: 'user', isCompactSummary: true, timestamp: at(), message: { role: 'user', content: 'S'.repeat(16000) } }));
+      for (let ctx = 80000, first = true; ctx < top; ctx += 2000, first = false) {
+        const usage = { input_tokens: 2, cache_read_input_tokens: first ? 40000 : ctx - 2002, cache_creation_input_tokens: first ? ctx - 40002 : 2000, output_tokens: 300, cache_creation: { ephemeral_1h_input_tokens: first ? ctx - 40002 : 2000, ephemeral_5m_input_tokens: 0 } };
+        const line = { type: 'assistant', timestamp: at(), cwd, message: { id: `r${id++}`, role: 'assistant', model: 'claude-opus-5-5', content: [{ type: 'text', text: 'ok' }], usage } };
+        lines.push(JSON.stringify(line), JSON.stringify(line)); // one reply often spans two lines with the same id
+      }
+    }
+    return writeTranscript(cwd, name, lines);
+  };
+
+  it('auto window: models reads vs compactions from real growth, keeps the floor guard, ignores data from before tool search was forced', async () => {
+    const { updateFloor, autoWindowModel, effectiveWindow, projectFloors } = await import('../src/floor.js');
+    const now = Date.now();
+    sawtooth('/work/app', 'a.jsonl', 227000, 5, now - 3 * DAY);
+    updateFloor();
+    const m = autoWindowModel()!;
+    expect(m).not.toBeNull();
+    expect(m.compactions).toBe(4);
+    expect(m.base).toBe(80000);
+    expect(m.growth).toBeCloseTo(2000, -1); // duplicate lines of one reply are counted once
+    // The model's average context at the window that compacted here matches the sawtooth's own average.
+    expect(m.best).toBeGreaterThanOrEqual(130000);
+    expect(m.best).toBeLessThan(260000);
+    expect(m.unitsPerReply(m.best)).toBeLessThan(m.unitsPerReply(260000));
+    expect(m.unitsPerReply(m.best)).toBeLessThan(m.unitsPerReply(m.best - 30000));
+
+    const cfg = defaultConfig();
+    cfg.autoCompact.windowTokens = 260000;
+    expect(effectiveWindow(cfg).window).toBe(260000); // auto is opt-in
+    cfg.autoCompact.auto = true;
+    const eff = effectiveWindow(cfg);
+    expect(eff.auto).not.toBeNull();
+    expect(eff.window).toBe(Math.max(m.best, 160000)); // floor 80k + 80k
+    cfg.autoCompact.windowTokens = 0; // 0 hands control to Claude Code, even in auto
+    expect(effectiveWindow(cfg).window).toBe(0);
+
+    // A project whose sessions start at 181k keeps the guard above the model.
+    writeTranscript('/work/big-app', 'b.jsonl', [reply('m1', 181000)]);
+    updateFloor();
+    cfg.autoCompact.windowTokens = 260000;
+    expect(effectiveWindow(cfg)).toMatchObject({ window: 270000, raised: true });
+
+    // Tool search forced on after that start: the old start no longer sizes the window.
+    fs.writeFileSync(path.join(tmp, 'managed-settings.json'), JSON.stringify({ env: { ENABLE_TOOL_SEARCH: 'force' } }));
+    expect(projectFloors().map((p) => p.project)).toEqual([]);
+    expect(autoWindowModel()).toBeNull(); // and the model waits for new data
+    updateFloor();
+    expect(effectiveWindow(cfg).window).toBe(260000); // falls back to the set window
+  });
+
+  it('a first look at a big transcript starts mid-session and takes no start sample from it', async () => {
+    const { updateFloor, projectFloors } = await import('../src/floor.js');
+    const pad = JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: 'x'.repeat(1024 * 1024) } });
+    writeTranscript('/work/big-app', 'c.jsonl', [reply('m1', 60000), ...Array(17).fill(pad), reply('m2', 172000), boundary(), reply('m3', 85000)]);
+    updateFloor();
+    expect(projectFloors()[0]).toMatchObject({ project: 'big-app', floor: 85000, samples: 1 });
+  });
+
+  it('stop hook in auto mode moves the window only on a real change and says why', async () => {
+    const settings = path.join(tmp, '.claude', 'settings.json');
+    fs.mkdirSync(path.dirname(settings), { recursive: true });
+    fs.writeFileSync(settings, '{}');
+    const c = defaultConfig();
+    c.autoCompact.windowTokens = 260000;
+    c.autoCompact.auto = true;
+    c.quality.verify = false;
+    saveConfig(c);
+    installClaudeCode(false);
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).autoCompactWindow).toBe(260000); // no data yet
+    const tp = sawtooth('/work/app', 'a.jsonl', 227000, 5, Date.now() - 3 * DAY);
+    const cwd = fs.mkdtempSync(path.join(tmp, 'proj-'));
+    const out: any = await runHook('stop', { session_id: 'aw1', cwd, transcript_path: tp });
+    const w = JSON.parse(fs.readFileSync(settings, 'utf8')).autoCompactWindow;
+    expect(w).toBeLessThan(260000);
+    expect(out?.systemMessage).toMatch(/Auto-compact window set 260k → \d+k: cheapest/);
+    const again: any = await runHook('stop', { session_id: 'aw1', cwd, transcript_path: tp });
+    expect(again?.systemMessage).toBeUndefined();
+  });
+});
+
+describe('resource use (v2.30)', () => {
+  it('verify: a check that takes over verifySlowSec twice in a row is skipped in that project; a fast run resets the count', async () => {
+    const { verifyAtStop } = await import('../src/verify.js');
+    const cfg = defaultConfig();
+    cfg.quality.verifySlowSec = 1;
+    const cwd = fs.mkdtempSync(path.join(tmp, 'slow-'));
+    fs.writeFileSync(path.join(cwd, 'package.json'), '{"scripts":{"test":"x"}}');
+    let ran = 0;
+    const slow = async () => (ran++, await new Promise((r) => setTimeout(r, 1100)), { status: 0, timedOut: false, output: '' });
+    const fast = () => (ran++, { status: 0, timedOut: false, output: '' });
+    const edit = (sid: string, n: number) => {
+      fs.writeFileSync(path.join(cwd, 'a.js'), 'x'.repeat(n));
+      appendBuffer(sid, { t: 'file', ts: Date.now(), path: path.join(cwd, 'a.js'), op: 'edit' } as any);
+    };
+    appendBuffer('s1', { t: 'prompt', ts: Date.now() - 1000, text: 'go' });
+    edit('s1', 1);
+    await verifyAtStop(cfg, 's1', cwd, Date.now(), slow);
+    edit('s1', 2);
+    await verifyAtStop(cfg, 's1', cwd, Date.now(), fast); // resets
+    edit('s1', 3);
+    await verifyAtStop(cfg, 's1', cwd, Date.now(), slow);
+    edit('s1', 4);
+    await verifyAtStop(cfg, 's1', cwd, Date.now(), slow); // second in a row: marked
+    expect(ran).toBe(4);
+    expect(readActivity().some((a) => /took over 1s twice/.test(a.msg))).toBe(true);
+    edit('s1', 5);
+    await verifyAtStop(cfg, 's1', cwd, Date.now(), fast);
+    expect(ran).toBe(4); // skipped
+    cfg.quality.verifySlowSec = 5; // a higher limit runs it again
+    edit('s1', 6);
+    await verifyAtStop(cfg, 's1', cwd, Date.now(), fast);
+    expect(ran).toBe(5);
+  }, 15000);
+
+  it('terminal claude with grug status line: no duplicate app summary, app plugin told to stay quiet', async () => {
+    const { appStatus } = await import('../src/statusline.js');
+    const cwd = fs.mkdtempSync(path.join(tmp, 'term-'));
+    const start: any = await runHook('session-start', { session_id: 'q1', cwd, source: 'startup' });
+    expect(start?.systemMessage || '').toMatch(/grug/);
+    expect(appStatus(undefined).quiet).toBeUndefined();
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
+    try {
+      const again: any = await runHook('session-start', { session_id: 'q2', cwd, source: 'startup' });
+      expect(again?.systemMessage || '').not.toMatch(/saved|grug on/);
+      expect(appStatus(undefined)).toMatchObject({ quiet: true });
+    } finally {
+      delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    }
+  });
+
+  it('memory maintenance stays linear: 3k nodes / 6k edges consolidate fast, touches equal the edge sums', () => {
+    const db: MemoryDB = loadMemory();
+    const now = Date.now();
+    const project = projectKey('/work/big');
+    for (let i = 0; i < 300; i++) {
+      const sid = `s${i}`;
+      const files = Array.from({ length: 8 }, (_, j) => ({ t: 'file', ts: now - i * 1000, path: `/work/big/src/f${(i * 7 + j) % 900}.ts`, op: j % 3 ? 'read' : 'edit' }));
+      ingestSession(db, sid, [{ t: 'start', ts: now - i * 1000 - 500, cwd: '/work/big' }, { t: 'prompt', ts: now - i * 1000, text: `fix parser token ${i % 40} cache` }, ...files] as any);
+    }
+    const t0 = Date.now();
+    consolidate(db, { ...defaultConfig().memory, maxNodesPerProject: 100000 });
+    expect(Date.now() - t0).toBeLessThan(3000);
+    const f = Object.values(db.nodes).find((n) => n.type === 'file' && n.project === project)!;
+    const sum = Object.values(db.edges)
+      .filter((e) => (e.a === f.id || e.b === f.id) && db.nodes[e.a === f.id ? e.b : e.a]?.type === 'session')
+      .reduce((n, e) => n + e.w, 0);
+    expect(f.touches).toBe(sum);
+    expect(Object.values(db.edges).every((e) => db.nodes[e.a] && db.nodes[e.b])).toBe(true);
   });
 });

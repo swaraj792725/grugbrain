@@ -7,7 +7,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { ensureDir, writeFileAtomic } from '../config.js';
-import { MemNode, MemoryDB, neighbors, projectName, score } from './store.js';
+import { adjacency, MemNode, MemoryDB, neighbors, projectName, score } from './store.js';
 
 const GEN = 'generator: grugbrain';
 
@@ -43,6 +43,7 @@ export function exportVault(db: MemoryDB, vaultDir: string, halfLife: number): {
   const written = new Set<string>();
   const titles = new Map<string, string>();
   for (const n of Object.values(db.nodes)) titles.set(n.id, titleOf(n));
+  const adj = adjacency(db);
 
   const write = (rel: string, body: string) => {
     const file = path.join(root, rel);
@@ -58,7 +59,7 @@ export function exportVault(db: MemoryDB, vaultDir: string, halfLife: number): {
 
   for (const n of Object.values(db.nodes)) {
     const proj = safe(projectName(n.project));
-    const links = neighbors(db, n.id)
+    const links = neighbors(db, n.id, adj)
       .sort((a, b) => b.w - a.w)
       .slice(0, 40)
       .map(({ node }) => `[[${titles.get(node.id)}]]`);

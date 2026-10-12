@@ -129,6 +129,8 @@ export interface GrugConfig {
     windowTokens: number;
     /** Never apply a window less than 80k above how big sessions start (measured from transcripts), so compaction can't thrash. */
     guard: boolean;
+    /** Pick the window from your own transcripts (cheapest for how fast context grows and what a compaction costs); windowTokens is the fallback until there is enough data. */
+    auto: boolean;
   };
   /** Model for Claude Code subagents ('' = same as the main conversation), e.g. sonnet or haiku. */
   routing: {
@@ -175,6 +177,8 @@ export interface GrugConfig {
     verifyCommand: string;
     /** Give up (and stay silent) after this many seconds. */
     verifyTimeoutSec: number;
+    /** Skip the check in a project once it takes longer than this twice in a row (0 = never): the turn waits for it. */
+    verifySlowSec: number;
     /** Most times one turn can be sent back for the same problem. */
     verifyMaxRounds: number;
     /** After Edit/Write: a syntax check of that file; only a real error is reported. */
@@ -274,7 +278,8 @@ export function defaultConfig(): GrugConfig {
     },
     autoCompact: {
       windowTokens: 150000,
-      guard: true
+      guard: true,
+      auto: false
     },
     routing: {
       subagentModel: '',
@@ -304,6 +309,7 @@ export function defaultConfig(): GrugConfig {
       verify: true,
       verifyCommand: '',
       verifyTimeoutSec: 90,
+      verifySlowSec: 30,
       verifyMaxRounds: 2,
       editGuard: true,
       typeCheck: true,
@@ -351,6 +357,7 @@ const RANGES: Record<string, [number, number]> = {
   'taskBoundary.minTokens': [20000, 1000000],
   'graphContext.mapTokens': [100, 3000],
   'quality.verifyTimeoutSec': [5, 600],
+  'quality.verifySlowSec': [0, 600],
   'quality.verifyMaxRounds': [1, 5]
 };
 

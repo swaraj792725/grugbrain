@@ -60,10 +60,25 @@ Long session = big context = every reply re-read all of it. Real install: **~500
 
 Real Claude Code run: auto-compaction fired by itself → 120-token handoff restored → answer that needed pre-compaction content still correct → later replies ~40k tokens instead of 100k+.
 
+Compact later (100k–1M; 0 = Claude Code's default):
+
 ```bash
-grug config set autoCompact.windowTokens 300000   # compact later (100k–1M), 0 = Claude Code default
-grug config set routing.subagentModel sonnet      # subagents on Sonnet 5.5, main chat stays on your model
+grug config set autoCompact.windowTokens 300000
 ```
+
+Or let grug pick the window from your own transcripts (see below):
+
+```bash
+grug config set autoCompact.auto true
+```
+
+Subagents on Sonnet 5.5 while the main chat stays on your model:
+
+```bash
+grug config set routing.subagentModel sonnet
+```
+
+**Auto window (`autoCompact.auto`, opt-in).** Between compactions the context climbs like a saw: from where compaction leaves it up to the window, then down again. Every reply re-reads the whole context from the cache, so a big window makes every reply dearer; a small one compacts more often, and each compaction re-writes the cache and pays for a summary. grug measures from your transcripts how big the context is right after a compaction, how much it grows per reply, and what one compaction costs, then picks the cheapest window (Claude Code takes one window for all projects, so it is pooled). The floor guard still applies. The Stop hook moves the window only when the pick changes by 20k or more, and says so. `grug doctor` shows the numbers and the estimated saving even with auto off. On one real week (after tool search was forced): context ~81k after compaction, +1.5k per reply, one compaction ≈ $0.21; cheapest ~170k, guarded to 180k, estimate ~$32/week less than 260k. That is an estimate from a model that matched the measured average context (151k predicted vs 153k measured), not a measured saving. More compactions also mean more summarised history; grug's handoff restores the key facts after each one.
 
 **Search subagents on Sonnet (automatic).** Claude's `Explore` subagent (read-only codebase search) inherit the main model, so on Opus every search sweep bill at Opus price (real history: 26 of 42 Explore runs on Opus). grug now send `Explore` to Sonnet when the main chat on Opus. Never upward, never when Claude name a model itself, never other subagents (they may edit code), never the main chat. Agents that pick own model (claude-code-guide → Haiku) left alone. `routing.subagentModel` (all subagents) win if set. Off: `grug config set routing.lightAgents ""`. Checked live: Explore ran on the lighter model through the hook.
 
@@ -348,6 +363,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `handoff.git` | `true` | put the real git state in the handoff (read-only `git status` / `git log`, no lock, 2.5 s limit) |
 | `autoCompact.windowTokens` | `150000` | where Claude Code auto-compacts (100k–1M; 0 = its default) |
 | `autoCompact.guard` | `true` | never write a window closer than 80k to how big your sessions start (measured per project from transcripts) |
+| `autoCompact.auto` | `false` | pick the window from your transcripts: cheapest for how fast your context grows and what a compaction costs (`windowTokens` is the fallback until there are 3 compactions) |
 | `routing.subagentModel` | `''` | `sonnet` / `haiku` / `opus` / `inherit` for subagents |
 | `routing.lightAgents` | `Explore` | read-only subagent types sent to `routing.lightModel` when the main chat is pricier (`''` = off) |
 | `routing.lightModel` | `sonnet` | `sonnet` / `haiku` |
@@ -355,6 +371,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `quality.verify` | `true` | at Stop, when code files changed this turn, run the project's own check (typecheck + tests) once and send Claude back with only the failing lines; silent when it passes. Runs one at a time at low priority, the whole process tree is killed on timeout, a project that timed out once is skipped, monorepos only with `verifyCommand` |
 | `quality.verifyCommand` | `''` | the check to run instead of the auto-detected one |
 | `quality.verifyTimeoutSec` / `quality.verifyMaxRounds` | `90` / `2` | hard timeout (a timeout never blocks) and the most send-backs per prompt |
+| `quality.verifySlowSec` | `30` | a check that takes longer than this twice in a row is skipped in that project, because the turn waits for it (0 = never skip) |
 | `quality.editGuard` | `true` | after Edit/Write, check the file's syntax (JSON, JS, TS, Python, shell) and tell Claude at once if the edit broke it |
 | `quality.typeCheck` | `true` | TypeScript edits: type-check the file and the files that import it with the project's own TypeScript; tell Claude only about errors the edit introduced (old errors are ignored) |
 | `quality.conventions` | `true` | before editing a file, show the stored decisions/rules that name it (2 at most, once per session) |

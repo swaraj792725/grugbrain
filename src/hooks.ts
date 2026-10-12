@@ -17,7 +17,7 @@ import { buildBrief, recall } from './memory/brief.js';
 import { withMemoryLock } from './memory/maintain.js';
 import { addNote, appendBuffer, BufferEvent, loadMemory, projectKey, readBuffer, saveMemory } from './memory/store.js';
 import { recordActivity } from './stats.js';
-import { appSummaryLine } from './statusline.js';
+import { appSummaryLine, statusLineShown } from './statusline.js';
 import { estimateTokens } from './tokens.js';
 import { cachedUpdate } from './update.js';
 import { meterTranscript } from './meter.js';
@@ -146,7 +146,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       // Shown to the user only (not sent to Claude, costs no tokens).
       const upd = cachedUpdate();
       const updMsg = upd?.newer ? `🪨 grugbrain ${upd.latest} is available (you have ${upd.current}). Run in a terminal: grug update` : undefined;
-      const sum = cfg.appSummary.enabled && input.source !== 'compact' ? appSummaryLine(input.transcript_path) : undefined;
+      const sum = cfg.appSummary.enabled && input.source !== 'compact' && !statusLineShown(cfg) ? appSummaryLine(input.transcript_path) : undefined;
       const systemMessage = [sum, updMsg].filter(Boolean).join('\n') || undefined;
       if (!parts.length) return systemMessage ? { systemMessage } : null;
       return { ...(systemMessage ? { systemMessage } : {}), hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: parts.join('\n\n') } };
@@ -167,7 +167,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           .join('\n') || undefined;
       const prompts = readBuffer(sid).filter((e) => e.t === 'prompt').length; // includes this one
       const every = Math.max(1, cfg.appSummary.everyPrompts);
-      const summary = cfg.appSummary.enabled && (prompts === 1 || prompts % every === 0) ? appSummaryLine(input.transcript_path, now) : undefined;
+      const summary =
+        cfg.appSummary.enabled && (prompts === 1 || prompts % every === 0) && !statusLineShown(cfg) ? appSummaryLine(input.transcript_path, now) : undefined;
       alert = [alert, summary].filter(Boolean).join('\n') || undefined;
       const done = (extra?: HookOutput): HookOutput => (alert || extra ? { ...(alert ? { systemMessage: alert } : {}), ...(extra || {}) } : null);
       const project = projectKey(cwd);
@@ -673,22 +674,30 @@ function fmtUsdShort(n: number): string {
  * gives up ("context window is full"). When the measured start floor rises, raise the window for new sessions.
  */
 async function guardWindow(cfg: ReturnType<typeof loadConfig>, transcript: string | undefined, cwd: string): Promise<string | undefined> {
-  if (!cfg.autoCompact.guard || cfg.autoCompact.windowTokens <= 0 || !transcript) return undefined;
+  if ((!cfg.autoCompact.guard && !cfg.autoCompact.auto) || cfg.autoCompact.windowTokens <= 0 || !transcript) return undefined;
   try {
-    if (!updateFloor([transcript]).changed) return undefined;
+    if (!updateFloor([transcript]).changed && !cfg.autoCompact.auto) return undefined;
     const eff = effectiveWindow(cfg);
     const { appliedWindow, applyTuningNow } = await import('./install.js');
     const before = appliedWindow();
-    if (eff.window <= before) return undefined;
-    if (!applyTuningNow().ok) return undefined;
+    // Auto: follow the model only on a real move (>= 20k), so settings.json is not rewritten every reply.
+    const move = eff.auto && Math.abs(eff.window - before) >= AUTO_STEP;
+    if (eff.window <= before && !move) return undefined;
+    if (eff.window === before || !applyTuningNow().ok) return undefined;
     const k = (n: number) => `${Math.round(n / 1000)}k`;
-    const msg = `Auto-compact window raised ${before ? `${k(before)} → ` : 'to '}${k(eff.window)}: sessions in ${eff.project} start at ~${k(eff.floor)}, too close for compaction to make room. New sessions use it.`;
+    const from = before ? `${k(before)} → ` : 'to ';
+    const msg =
+      eff.auto && !eff.raised
+        ? `Auto-compact window set ${from}${k(eff.window)}: cheapest for how your context grows (~${k(eff.auto.base)} after compaction, +${(eff.auto.growth / 1000).toFixed(1)}k per reply). New sessions use it.`
+        : `Auto-compact window raised ${from}${k(eff.window)}: sessions in ${eff.project} start at ~${k(eff.floor)}, too close for compaction to make room. New sessions use it.`;
     recordActivity({ kind: 'window', msg, project: path.basename(cwd) });
     return `grug: ${msg}`;
   } catch {
     return undefined;
   }
 }
+
+const AUTO_STEP = 20000;
 
 /** One-line, user-only notice when the context passes 150k, 300k, 600k... tokens (once per level). */
 function contextAlert(cfg: ReturnType<typeof loadConfig>, sid: string, cwd: string, transcript: string | undefined, now: number): string | undefined {
