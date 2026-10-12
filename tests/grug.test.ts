@@ -3726,7 +3726,11 @@ describe('auto-compact window guard (start floor)', () => {
     expect(effectiveWindow(cfg)).toMatchObject({ window: 270000, raised: true });
 
     // Tool search forced on after that start: the old start no longer sizes the window.
-    fs.writeFileSync(path.join(tmp, 'managed-settings.json'), JSON.stringify({ env: { ENABLE_TOOL_SEARCH: 'force' } }));
+    const managed = path.join(tmp, 'managed-settings.json');
+    fs.writeFileSync(managed, JSON.stringify({ env: { ENABLE_TOOL_SEARCH: 'force' } }));
+    // Linux stamps mtime from a coarse clock that can trail Date.now() by a few ms; pin it after the sample.
+    const forcedAt = new Date(Date.now() + 1000);
+    fs.utimesSync(managed, forcedAt, forcedAt);
     expect(projectFloors().map((p) => p.project)).toEqual([]);
     expect(autoWindowModel()).toBeNull(); // and the model waits for new data
     updateFloor();
