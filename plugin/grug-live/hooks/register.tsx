@@ -14,6 +14,7 @@ type Status = {
   limit?: number
   recent?: string
   alerts?: string[]
+  quiet?: boolean
 }
 
 let argv: string[] | null = null
@@ -21,13 +22,18 @@ let status: Status = {}
 let busy = false
 let frame = 0
 let notified = ''
-let lastPing = 0
+let rendered = false
+let lastRefresh = 0
+let shown = ''
+/** While idle the numbers barely move: refresh every 2 min instead of every 15 s (each refresh starts a node process). */
+const IDLE_REFRESH_MS = 120000
 
-/** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Throttled; failures ignored. */
+/** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Once per session each; failures ignored. */
 async function ping($: any, kind: string) {
-  const now = Date.now()
-  if (kind === 'render' && now - lastPing < 60000) return
-  lastPing = now
+  if (kind === 'render') {
+    if (rendered) return
+    rendered = true
+  }
   try {
     if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
     await $.process.run([...argv!.slice(0, -1), 'live-ping', kind], { timeoutMs: 4000 })
@@ -37,12 +43,13 @@ async function ping($: any, kind: string) {
 }
 
 async function refresh($: any) {
+  lastRefresh = Date.now()
   try {
     if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
     const r = await $.process.run(argv, { timeoutMs: 8000 })
     if (r.exitCode === 0) status = JSON.parse(r.stdout || '{}')
     const alert = (status.alerts ?? [])[0]
-    if (alert && alert !== notified) $.ui.toast(`grug: ${alert}`)
+    if (alert && alert !== notified && !status.quiet) $.ui.toast(`grug: ${alert}`)
     notified = alert ?? ''
   } catch {
     /* grug missing or busy: keep the last numbers */
@@ -57,9 +64,15 @@ export const register: Register = on => {
     await refresh($)
     $.clock.every(1000, () => {
       frame += 1
-      $.ui.status(line())
+      const l = status.quiet ? '' : line()
+      if (l !== shown) {
+        shown = l
+        $.ui.status(l)
+      }
     })
-    $.clock.every(15000, () => refresh($))
+    $.clock.every(15000, () => {
+      if (busy || Date.now() - lastRefresh >= IDLE_REFRESH_MS) void refresh($)
+    })
     return next(e)
   })
 
@@ -85,7 +98,7 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
     void ping($, 'render')
-    if (e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey || status.quiet) return next(e)
     const { Box, Text } = $.ui.resolve(e)
     return (
       <Box>

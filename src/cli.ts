@@ -141,7 +141,7 @@ async function main() {
         console.log(off.length ? `✅ unused plugins off: ${off.join(', ')} (grug slim --plugins --undo to restore)` : `ℹ️  no plugins turned off: \`grug slim --plugins\` shows which installed plugins were never used`);
       }
       if (cfg.autoCompact.windowTokens > 0) {
-        const { updateFloor, effectiveWindow, projectFloors } = await import('./floor.js');
+        const { updateFloor, effectiveWindow, projectFloors, autoWindowModel, floorNeed, dataDays } = await import('./floor.js');
         const { appliedWindow, applyTuningNow } = await import('./install.js');
         try {
           updateFloor(); // new transcript bytes of the last 14 days
@@ -156,10 +156,27 @@ async function main() {
         const applied = appliedWindow();
         const short = !cfg.autoCompact.guard && eff.floor + 80000 > eff.configured;
         console.log(
-          `${applied >= eff.window && !short ? '✅' : '❌'} auto-compact window ${k(applied)} in Claude Code settings${eff.raised ? ` (you set ${k(eff.configured)}; raised because sessions in ${eff.project} start at ~${k(eff.floor)})` : ''}`
+          `${applied >= eff.window && !short ? '✅' : '❌'} auto-compact window ${k(applied)} in Claude Code settings${
+            eff.auto ? ` (auto: cheapest for how you work${eff.raised ? `, raised because sessions in ${eff.project} start at ~${k(eff.floor)}` : ''})` : eff.raised ? ` (you set ${k(eff.configured)}; raised because sessions in ${eff.project} start at ~${k(eff.floor)})` : ''
+          }`
         );
-        if (floors.length) console.log(`   sessions start at (14 days): ${floors.slice(0, 4).map((p) => `${p.project} ~${k(p.floor)}`).join(', ')}`);
-        if (thrash) console.log(`   ${thrash} session(s) stopped with "Autocompact is thrashing" (context window full) in 14 days`);
+        const days = dataDays();
+        if (floors.length) console.log(`   sessions start at (${days} days): ${floors.slice(0, 4).map((p) => `${p.project} ~${k(p.floor)}`).join(', ')}`);
+        const am = eff.auto || autoWindowModel();
+        if (am) {
+          const usd = (w: number) => am.unitsPerReply(w) * am.inputUsd;
+          const target = cfg.autoCompact.guard ? Math.max(am.best, floorNeed(eff.floor)) : am.best;
+          const now = applied || eff.window;
+          const perWeek = ((usd(now) - usd(target)) * am.replies * 7) / am.days;
+          console.log(
+            `   context after compaction ~${k(am.base)}, +${(am.growth / 1000).toFixed(1)}k per reply, one compaction ≈ $${(am.compactUnits * am.inputUsd).toFixed(2)}, cheapest window ~${k(am.best)} (${am.compactions} compactions, ${am.replies} replies in ${Math.round(am.days)} days)`
+          );
+          if (!cfg.autoCompact.auto && Math.abs(target - now) >= 20000)
+            console.log(
+              `   → cheapest window for that is ~${k(target)}${perWeek > 0 ? ` (estimate: ~$${Math.round(perWeek)}/week less on context reads + compactions than ${k(now)})` : ''}: grug config set autoCompact.auto true`
+            );
+        } else if (cfg.autoCompact.auto) console.log(`   auto window: not enough data yet (needs 3 compactions; ${days} days so far); using the set window`);
+        if (thrash) console.log(`   ${thrash} session(s) stopped with "Autocompact is thrashing" (context window full) in ${days} days`);
         if (applied < eff.window) console.log('   → apply the raised window: grug doctor --fix   (new sessions use it)');
         if (short) console.log(`   → guard is off and sessions start within 80k of the window: grug config set autoCompact.guard true`);
       }

@@ -34,6 +34,15 @@ export function toolSearchForced(): boolean {
   }
 }
 
+/** When tool search was forced on (the managed file's last write), 0 if it is not. */
+export function toolSearchForcedSince(): number {
+  try {
+    return toolSearchForced() ? fs.statSync(managedSettingsPath()).mtimeMs : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** The desktop app's bundled Claude Code is installed (the Code tab), which runs tool search in auto mode. */
 export function desktopCodePresent(): boolean {
   try {

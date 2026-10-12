@@ -275,11 +275,19 @@ export interface AppStatus {
   recent?: string;
   /** User-only notices: context size, cold cache. */
   alerts: string[];
+  /** The terminal draws grug's status line already: the plugin shows nothing (no duplicate line). */
+  quiet?: boolean;
+}
+
+/** Running in the terminal `claude` with grug's status line on: it already shows the numbers, so app-only notices are duplicates. */
+export function statusLineShown(cfg: ReturnType<typeof loadConfig> = loadConfig()): boolean {
+  return process.env.CLAUDE_CODE_ENTRYPOINT === 'cli' && cfg.statusLine.enabled;
 }
 
 /** Machine-readable status for the grug-live app plugin (same numbers as the status line). */
 export function appStatus(transcriptPath: string | undefined, now = Date.now()): AppStatus {
   const cfg = loadConfig();
+  if (statusLineShown(cfg)) return { tokens: 0, limit: 0, idleMs: 0, alerts: [], quiet: true };
   const saved = cachedSaved(now);
   const cs = contextSize(transcriptPath);
   const limit = alertLimit(cfg);

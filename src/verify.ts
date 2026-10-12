@@ -133,7 +133,7 @@ export async function verifyAtStop(cfg: GrugConfig, sid: string, cwd: string, no
   if (failedRounds >= q.verifyMaxRounds) return { block: false };
   const cmd = detectCheck(cwd, q.verifyCommand);
   if (!cmd) return { block: false };
-  if (isSlow(cwd, cmd, q.verifyTimeoutSec)) return { block: false };
+  if (isSlow(cwd, cmd, q.verifyTimeoutSec, q.verifySlowSec)) return { block: false };
   const release = acquireLock(now, q.verifyTimeoutSec);
   if (!release) return { block: false }; // another session's check is running: never stack them
   const t0 = Date.now();
@@ -152,6 +152,13 @@ export async function verifyAtStop(cfg: GrugConfig, sid: string, cwd: string, no
     }
     return { block: false };
   }
+  if (noteDuration(cwd, cmd, ms, q.verifySlowSec, now))
+    recordActivity({
+      kind: 'verify',
+      msg: `Check \`${cmd}\` took over ${q.verifySlowSec}s twice in a row; skipping it in this project so turns end quickly (quality.verifySlowSec, or set quality.verifyCommand to a faster check)`,
+      tokens: 0,
+      project: path.basename(cwd)
+    });
   if (r.status === 0) {
     appendBuffer(sid, { t: 'verify', ts: now, sig, ok: true, ms });
     recordActivity({ kind: 'verify', msg: `Checked the edits before finishing: \`${cmd}\` passed (${(ms / 1000).toFixed(1)}s)`, tokens: 0, project: path.basename(cwd) });
@@ -249,10 +256,37 @@ function slowFile(): string {
   return path.join(grugHome(), 'verify-slow.json');
 }
 
-/** A check that once ran past the timeout here is skipped until the timeout is raised or the command changes. */
-function isSlow(cwd: string, cmd: string, timeoutSec: number): boolean {
+/**
+ * A check that once ran past the timeout here, or took over slowSec twice in a row, is skipped until
+ * that limit is raised or the command changes. The turn does not end until the check does.
+ */
+function isSlow(cwd: string, cmd: string, timeoutSec: number, slowSec: number): boolean {
   const e = (readJson(slowFile()) || {})[path.resolve(cwd)];
-  return !!e && e.cmd === cmd && timeoutSec <= e.timeoutSec;
+  if (!e || e.cmd !== cmd) return false;
+  if (e.timeoutSec) return timeoutSec <= e.timeoutSec;
+  return !!e.slowSec && slowSec > 0 && slowSec <= e.slowSec;
+}
+
+/** Count slow runs in a row; true when this one marks the check slow (2 in a row over slowSec). A fast run resets it. */
+function noteDuration(cwd: string, cmd: string, ms: number, slowSec: number, now: number): boolean {
+  if (slowSec <= 0) return false;
+  try {
+    const all = readJson(slowFile()) || {};
+    const key = path.resolve(cwd);
+    const e = all[key]?.cmd === cmd ? all[key] : undefined;
+    if (ms <= slowSec * 1000) {
+      if (!e?.over) return false;
+      delete all[key];
+    } else {
+      const over = (e?.over || 0) + 1;
+      all[key] = over >= 2 ? { cmd, slowSec, ms, ts: now } : { cmd, over, ts: now };
+    }
+    fs.mkdirSync(grugHome(), { recursive: true });
+    fs.writeFileSync(slowFile(), JSON.stringify(all, null, 2));
+    return !!all[key]?.slowSec;
+  } catch {
+    return false;
+  }
 }
 
 function markSlow(cwd: string, cmd: string, timeoutSec: number, now: number): void {
