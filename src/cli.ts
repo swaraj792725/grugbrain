@@ -50,7 +50,7 @@ const HELP = `
   grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
                                   one-time setup; then grug works alone forever
   grug dash [--once]              live TUI dashboard: what grug did, what it would do
-  grug doctor [--fix]             check everything, say how to fix (--fix: remove broken leftovers of uninstalled tools)
+  grug doctor [--fix]             check everything, say how to fix (--fix: remove broken leftovers of uninstalled tools, put back lost slim settings)
   grug uninstall [--purge]        remove from Claude Code/Desktop (keeps memory unless --purge)
 
   grug graph [--no-open]          open the interactive memory graph
@@ -134,11 +134,25 @@ async function main() {
         else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not render the band; use `grug dash` or the terminal `claude` to see it');
       }
       {
-        const { loadSlimState } = await import('./slim.js');
-        const st = loadSlimState();
-        console.log(st.hidden.length ? `✅ skill list slimmed: ${st.hidden.length} unused plugin skill(s) listed by name only (grug slim --undo to restore)` : `ℹ️  skill list not slimmed: \`grug slim\` shows which unused plugin skills could be listed by name only`);
-        const off = Object.keys(st.plugins);
-        console.log(off.length ? `✅ unused plugins off: ${off.join(', ')} (grug slim --plugins --undo to restore)` : `ℹ️  no plugins turned off: \`grug slim --plugins\` shows which installed plugins were never used`);
+        // slim.json says what grug changed; settings.json says what is really in effect (a Claude data reset wipes it).
+        const { checkSlim, restoreSlim, settingsFile } = await import('./slim.js');
+        let sc = checkSlim();
+        if (flags.has('--fix') && (sc.missingSkills.length || sc.missingPlugins.length)) {
+          const ts = await import('./toolsearch.js');
+          const plugins = !ts.desktopCodePresent() || ts.toolSearchForced(); // same guard as `grug slim --plugins --apply`
+          const r = restoreSlim({ plugins });
+          printSteps([{ target: 'slim', ok: r.ok, message: r.ok ? `put back ${r.skills} skill override(s), ${r.plugins.length} plugin(s) off. ${r.message}` : r.message }]);
+          if (sc.missingPlugins.length && !plugins) console.log('   plugins left on: tool search is not forced for the desktop app (see `grug slim --plugins --apply`)');
+          sc = checkSlim();
+        }
+        if (sc.error) console.log(`❌ slim state unknown: ${sc.error}`);
+        else {
+          const lost = (n: number, what: string) => `❌ ${what}: ${n} change(s) grug made are missing from ${settingsFile()} (reset or edited)\n   → put them back: grug doctor --fix`;
+          if (sc.missingSkills.length) console.log(lost(sc.missingSkills.length, 'skill list slimming lost'));
+          else console.log(sc.skills ? `✅ skill list slimmed: ${sc.skills} unused plugin skill(s) listed by name only (grug slim --undo to restore)` : `ℹ️  skill list not slimmed: \`grug slim\` shows which unused plugin skills could be listed by name only`);
+          if (sc.missingPlugins.length) console.log(lost(sc.missingPlugins.length, `unused plugins back on (${sc.missingPlugins.join(', ')})`));
+          else console.log(sc.plugins.length ? `✅ unused plugins off: ${sc.plugins.join(', ')} (grug slim --plugins --undo to restore)` : `ℹ️  no plugins turned off: \`grug slim --plugins\` shows which installed plugins were never used`);
+        }
       }
       if (cfg.autoCompact.windowTokens > 0) {
         const { updateFloor, effectiveWindow, projectFloors, autoWindowModel, floorNeed, dataDays } = await import('./floor.js');
