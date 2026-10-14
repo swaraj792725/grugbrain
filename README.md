@@ -87,6 +87,7 @@ grug config set routing.subagentModel sonnet
 Every installed skill send name + description to Claude **every reply**. Many plugins = big list (real install: 157 skills, ~7.5k tokens, ~10 ever used). `grug slim` read your transcripts, find plugin skills never used in 30 days, and list them **by name only** (Claude Code `skillOverrides: "name-only"`). Claude still see the name and can still use the skill; `/name` still work. Only the description go.
 
 - Dry run first, change nothing: `grug slim`. Do it: `grug slim --apply`. Put back: `grug slim --undo` (uninstall too).
+- A Claude data reset (or a hand edit) can wipe settings.json while grug still remembers what it slimmed. `grug doctor` checks the real settings and shows ❌ when grug's skill or plugin changes are gone; `grug doctor --fix` puts back only the missing ones (values you set yourself stay yours).
 - Never touch built-in skills, skills you used, or overrides you set yourself. Skill used again later → next `--apply` give its description back.
 - Skills listed under 7 days wait (not enough evidence); `--include-new` skip the wait.
 
@@ -261,7 +262,7 @@ Pro/Max subscription or API key: both fine. Proxy pass auth headers through unto
 ```text
 grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
 grug dash [--once]              TUI dashboard
-grug doctor                     check everything, say how to fix
+grug doctor [--fix]             check everything, say how to fix (--fix: put back lost slim settings, apply a raised window, remove broken leftovers)
 grug uninstall [--purge]        remove (keeps memory unless --purge)
 grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
 grug slim --plugins [--apply]   turn off plugins never used in 30 days (--undo puts them back; in the desktop app only once tool search is forced on)

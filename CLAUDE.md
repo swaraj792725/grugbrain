@@ -117,3 +117,6 @@ Automatic token/cost optimizer for Claude Code (mainly the Claude desktop app's 
 - Interactive terminal claude sets CLAUDE_CODE_ENTRYPOINT=cli (`-p` -> sdk-cli, app -> claude-desktop); statusLineShown() hides the app summary and plugin band there. Tests delete CLAUDE_CODE_ENTRYPOINT and point GRUG_MANAGED_SETTINGS into the sandbox.
 - NEVER run `grug config set autoCompact.*|routing.*` with only GRUG_HOME sandboxed: it applies tuning to the REAL ~/.claude/settings.json (happened once in v2.30 work, restored by hand). Sandbox HOME too.
 - Terminal `claude` here bills to the API (shown "API Usage Billing"): benches cost real money; ask first.
+
+## Slim drift (v2.30.1)
+- A Claude data reset deletes ~/.claude/settings.json entirely (hooks, env, skillOverrides, enabledPlugins), while ~/.grug/slim.json survives. slim.ts `checkSlim` compares the two (missing = key absent; a different value is the user's), `restoreSlim` puts back only missing ones; `grug doctor --fix` runs it (plugins only if tool search is forced in the app). Full settings backups live in ~/.grug/backups/settings.json.*.bak.

@@ -244,3 +244,53 @@ export function undoSlim(): { ok: boolean; message: string; restored: number } {
   if (res.ok) saveSlimState({ hidden: [] });
   return { ...res, restored };
 }
+
+export interface SlimCheck {
+  /** grug's skill overrides still in settings.json, and the plugins it still has off. */
+  skills: number;
+  plugins: string[];
+  /** Recorded in slim.json but gone from settings.json (a Claude data reset, a hand edit). A different value is the user's own and not listed. */
+  missingSkills: string[];
+  missingPlugins: string[];
+  /** settings.json exists but is not valid JSON: nothing can be said. */
+  error?: string;
+}
+
+/** Compare what grug recorded with what settings.json really holds. */
+export function checkSlim(): SlimCheck {
+  const state = loadSlimState();
+  const r = readJson<any>(settingsFile());
+  if (!r.ok && r.exists) return { skills: 0, plugins: [], missingSkills: [], missingPlugins: [], error: `${settingsFile()} is not valid JSON (${r.error})` };
+  const s = r.ok && r.value ? r.value : {};
+  const o = s.skillOverrides && typeof s.skillOverrides === 'object' ? s.skillOverrides : {};
+  const e = s.enabledPlugins && typeof s.enabledPlugins === 'object' ? s.enabledPlugins : {};
+  const keys = Object.keys(state.plugins);
+  return {
+    skills: state.hidden.filter((n) => o[n] === SLIM_MODE).length,
+    plugins: keys.filter((k) => e[k] === false),
+    missingSkills: state.hidden.filter((n) => o[n] === undefined),
+    missingPlugins: keys.filter((k) => e[k] === undefined)
+  };
+}
+
+/** Put back the overrides grug recorded that settings.json lost; values the user set are left alone. */
+export function restoreSlim(opts: { plugins?: boolean } = {}): { ok: boolean; message: string; skills: number; plugins: string[] } {
+  const c = checkSlim();
+  const plugins = opts.plugins === false ? [] : c.missingPlugins;
+  if (c.error) return { ok: false, message: `${c.error}; nothing changed.`, skills: 0, plugins: [] };
+  if (!c.missingSkills.length && !plugins.length) return { ok: true, message: 'Nothing to put back.', skills: 0, plugins: [] };
+  const file = settingsFile();
+  const r = readJson<any>(file);
+  const value = r.ok && r.value ? r.value : {};
+  if (c.missingSkills.length) {
+    value.skillOverrides = value.skillOverrides && typeof value.skillOverrides === 'object' ? value.skillOverrides : {};
+    for (const n of c.missingSkills) value.skillOverrides[n] = SLIM_MODE;
+  }
+  if (plugins.length) {
+    value.enabledPlugins = value.enabledPlugins && typeof value.enabledPlugins === 'object' ? value.enabledPlugins : {};
+    for (const k of plugins) value.enabledPlugins[k] = false;
+  }
+  const bak = backupFile(file);
+  writeJsonAtomic(file, value);
+  return { ok: true, message: `Updated ${file}${bak ? ` (backup: ${path.basename(bak)})` : ''}. New sessions use it.`, skills: c.missingSkills.length, plugins };
+}

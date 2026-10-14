@@ -3394,6 +3394,44 @@ describe('grug slim', () => {
     expect(after.skillOverrides).toBeUndefined();
     expect(loadSlimState()).toMatchObject({ hidden: [], plugins: {} });
   });
+
+  it('sees slim changes lost from settings.json (a reset) and puts back only those', async () => {
+    const { applyPlugins, planPlugins } = await import('../src/pluginslim.js');
+    const { applySlim, checkSlim, restoreSlim, undoSlim, SLIM_MODE } = await import('../src/slim.js');
+    const settings = pluginSetup();
+    applyPlugins(planPlugins({ days: 30 }));
+    applySlim({ hide: [{ name: 'a:b', chars: 10 }, { name: 'c:d', chars: 10 }], unhide: [] } as any);
+    expect(checkSlim()).toMatchObject({ skills: 2, missingSkills: [], missingPlugins: [] });
+    expect(checkSlim().plugins.sort()).toEqual(['hr@synced', 'idle@synced', 'lint@market']);
+
+    // Claude data reset: settings.json gone. Nothing in effect, everything missing.
+    fs.rmSync(settings);
+    expect(checkSlim()).toMatchObject({ skills: 0, plugins: [], missingSkills: ['a:b', 'c:d'] });
+    expect(checkSlim().missingPlugins.sort()).toEqual(['hr@synced', 'idle@synced', 'lint@market']);
+
+    // The user since set one skill and one plugin themselves: theirs, not missing, not put back.
+    fs.writeFileSync(settings, JSON.stringify({ theme: 'auto', skillOverrides: { 'c:d': 'on' }, enabledPlugins: { 'hr@synced': true } }));
+    expect(restoreSlim({ plugins: false })).toMatchObject({ ok: true, skills: 1, plugins: [] });
+    expect(checkSlim().missingPlugins.sort()).toEqual(['idle@synced', 'lint@market']);
+    const r = restoreSlim();
+    expect(r.plugins.sort()).toEqual(['idle@synced', 'lint@market']);
+    const after = JSON.parse(fs.readFileSync(settings, 'utf8'));
+    expect(after).toEqual({
+      theme: 'auto',
+      skillOverrides: { 'c:d': 'on', 'a:b': SLIM_MODE },
+      enabledPlugins: { 'hr@synced': true, 'idle@synced': false, 'lint@market': false }
+    });
+    expect(checkSlim()).toMatchObject({ skills: 1, missingSkills: [], missingPlugins: [] });
+    expect(restoreSlim().message).toBe('Nothing to put back.');
+
+    // Undo still only removes values equal to grug's.
+    undoSlim();
+    expect(JSON.parse(fs.readFileSync(settings, 'utf8')).skillOverrides).toEqual({ 'c:d': 'on' });
+
+    fs.writeFileSync(settings, '{not json');
+    expect(checkSlim().error).toMatch(/not valid JSON/);
+    expect(restoreSlim().ok).toBe(false);
+  });
 });
 
 describe('batching', () => {
