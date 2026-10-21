@@ -19,5 +19,10 @@ Order:
 3. Put risky or unknown parts first so surprises come early.
 4. End with a final task: full test suite + build + grug-verify.
 
+Before the first task, check in one line each; a "no" becomes task 1:
+- Does this already exist in the repo (Grep the name and the behaviour)?
+- Do the docs or types of the library say how (not memory)?
+- For a fix: is the root cause known (grug-debug), not just the symptom?
+
 Write it to the todo list for one session; to docs/plans/<date>-<topic>.md only if it spans sessions or will run in parallel.
 Then ask: execute here step by step (grug-execute) or fan out (grug-parallel)?
