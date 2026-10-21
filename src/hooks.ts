@@ -43,6 +43,7 @@ import { lightAgentModel } from './routing.js';
 import { startBlocksInContext } from './resume.js';
 import { stripPrivate } from './privacy.js';
 import { dangerReason, dangerText } from './danger.js';
+import { proofCheck } from './proof.js';
 
 export interface HookInput {
   session_id?: string;
@@ -474,6 +475,18 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         try {
           const v = await verifyAtStop(cfg, sid, cwd, now);
           if (v.block) return { decision: 'block', reason: v.reason, ...(notice ? { systemMessage: notice } : {}) };
+        } catch {
+          /* best-effort */
+        }
+      }
+      // "Tests pass" / "fixed" with nothing run since the last edit: show the evidence first (once per turn).
+      if (cfg.quality.proof && !input.agent_id && text) {
+        try {
+          const reason = proofCheck(sid, cwd, text, now);
+          if (reason) {
+            recordActivity({ kind: 'verify', msg: 'Asked for proof: the reply said done but nothing ran after the last edit', tokens: -estimateTokens(reason), project: path.basename(cwd) });
+            return { decision: 'block', reason, ...(notice ? { systemMessage: notice } : {}) };
+          }
         } catch {
           /* best-effort */
         }

@@ -187,6 +187,8 @@ export interface GrugConfig {
     typeCheck: boolean;
     /** Before an edit: the stored project rules that concern the file (once per session each). */
     conventions: boolean;
+    /** Stop hook: a reply that says "tests pass"/"fixed" with nothing run after the last edit is sent back once for the evidence. */
+    proof: boolean;
   };
   /** Tell the user (not the model) when a prompt looks like a new task while the context is big: /clear is cheaper than dragging it along. */
   taskBoundary: {
@@ -330,7 +332,8 @@ export function defaultConfig(): GrugConfig {
       verifyMaxRounds: 2,
       editGuard: true,
       typeCheck: true,
-      conventions: true
+      conventions: true,
+      proof: true
     },
     taskBoundary: {
       enabled: true,

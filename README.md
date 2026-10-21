@@ -407,6 +407,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `routing.lightModel` | `sonnet` | `sonnet` / `haiku` |
 | `autoRecall.subagents` | `true` | add recall + code hints for the task to each subagent prompt (cap `autoRecall.subagentTokens`, 500) |
 | `quality.verify` | `true` | at Stop, when code files changed this turn, run the project's own check (typecheck + tests) once and send Claude back with only the failing lines; silent when it passes. Runs one at a time at low priority, the whole process tree is killed on timeout, a project that timed out once is skipped, monorepos only with `verifyCommand` |
+| `quality.proof` | `true` | at Stop, a reply that says "tests pass" / "fixed" / "works now" while nothing ran after the last code edit is sent back once: run the check and report it, or say it was not run. A reply that already says "not run" is never sent back. Once per prompt, at most twice per session |
 | `quality.verifyCommand` | `''` | the check to run instead of the auto-detected one |
 | `quality.verifyTimeoutSec` / `quality.verifyMaxRounds` | `90` / `2` | hard timeout (a timeout never blocks) and the most send-backs per prompt |
 | `quality.verifySlowSec` | `30` | a check that takes longer than this twice in a row is skipped in that project, because the turn waits for it (0 = never skip) |

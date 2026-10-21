@@ -4165,6 +4165,57 @@ describe('other apps: Antigravity and Codex hooks', () => {
   });
 });
 
+describe('proof gate', () => {
+  it('finds success claims, not honest "not run" replies', async () => {
+    const { claimIn } = await import('../src/proof.js');
+    expect(claimIn('Fixed it. All 12 tests pass.')).toBeTruthy();
+    expect(claimIn('The login bug is fixed.')).toBeTruthy();
+    expect(claimIn('Build succeeds now.')).toBeTruthy();
+    expect(claimIn('Changed the threshold. I have not run the tests.')).toBeNull();
+    expect(claimIn('Renamed the helper and updated two callers.')).toBeNull();
+  });
+
+  it('sends a "done" reply back once when nothing ran after the last edit', async () => {
+    const cwd = path.join(tmp, 'proofp');
+    fs.mkdirSync(path.join(cwd, 'src'), { recursive: true });
+    const f = path.join(cwd, 'src', 'a.js');
+    fs.writeFileSync(f, 'module.exports = 1;\n');
+    const t = path.join(tmp, 'proof.jsonl');
+    const say = (text: string) => fs.writeFileSync(t, line('assistant', [{ type: 'text', text }]) + '\n');
+    const sid = 'proof-1';
+    await runHook('user-prompt', { session_id: sid, cwd, prompt: 'fix the off by one in a.js' });
+    await runHook('post-tool', { session_id: sid, cwd, tool_name: 'Edit', tool_input: { file_path: f } });
+    say('Fixed the off by one; all tests pass now.');
+    const out: any = await runHook('stop', { session_id: sid, cwd, transcript_path: t });
+    expect(out.decision).toBe('block');
+    expect(out.reason).toMatch(/nothing ran after your last edit \(a\.js\)/);
+    // Once per turn: the second stop is let through.
+    expect(await runHook('stop', { session_id: sid, cwd, transcript_path: t })).toBeNull();
+
+    // A command after the edit is the evidence.
+    await runHook('user-prompt', { session_id: sid, cwd, prompt: 'now the other one' });
+    await runHook('post-tool', { session_id: sid, cwd, tool_name: 'Edit', tool_input: { file_path: f } });
+    await runHook('post-tool', { session_id: sid, cwd, tool_name: 'Bash', tool_input: { command: 'node -e "require(\'./src/a.js\')"' }, tool_response: { stdout: '' } });
+    expect(await runHook('stop', { session_id: sid, cwd, transcript_path: t })).toBeNull();
+
+    // A shell edit is not evidence; an honest reply is never sent back.
+    await runHook('user-prompt', { session_id: sid, cwd, prompt: 'third' });
+    await runHook('post-tool', { session_id: sid, cwd, tool_name: 'Bash', tool_input: { command: "sed -i '' 's/1/2/' src/a.js" }, tool_response: { stdout: '' } });
+    say('Changed it to 2, works now.');
+    expect(((await runHook('stop', { session_id: sid, cwd, transcript_path: t })) as any)?.decision).toBe('block');
+    await runHook('user-prompt', { session_id: sid, cwd, prompt: 'fourth' });
+    await runHook('post-tool', { session_id: sid, cwd, tool_name: 'Edit', tool_input: { file_path: f } });
+    say('Changed it to 3; it should be fixed but I have not run the tests.');
+    expect(await runHook('stop', { session_id: sid, cwd, transcript_path: t })).toBeNull();
+    process.env.GRUG_SET = 'quality.proof=false';
+    say('Done, it works now.');
+    await runHook('user-prompt', { session_id: 'proof-2', cwd, prompt: 'x' });
+    await runHook('post-tool', { session_id: 'proof-2', cwd, tool_name: 'Edit', tool_input: { file_path: f } });
+    expect(await runHook('stop', { session_id: 'proof-2', cwd, transcript_path: t })).toBeNull();
+    delete process.env.GRUG_SET;
+  });
+});
+
 describe('risky commands', () => {
   it('flags only commands that throw away work or data, never quoted text', async () => {
     const { dangerReason } = await import('../src/danger.js');
