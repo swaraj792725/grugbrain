@@ -26,12 +26,22 @@ const PRICES: Array<[string, ModelPrice]> = [
   ['claude-opus', { input: 5, output: 25 }],
   ['claude-sonnet-5', { input: 2, output: 10 }],
   ['claude-sonnet', { input: 3, output: 15 }],
-  ['claude-haiku', { input: 1, output: 5 }]
+  ['claude-haiku', { input: 1, output: 5 }],
+  // Other apps (Antigravity, Codex): list prices, an estimate; their cache reads are also ~10% of input.
+  ['gemini-2.5-flash', { input: 0.3, output: 2.5 }],
+  ['gemini-2.5-pro', { input: 1.25, output: 10 }],
+  ['gpt-5-mini', { input: 0.25, output: 2 }],
+  ['gpt-5-nano', { input: 0.05, output: 0.4 }],
+  ['gpt-5', { input: 1.25, output: 10 }],
+  ['o3', { input: 2, output: 8 }],
+  ['o4-mini', { input: 1.1, output: 4.4 }]
 ];
 
 export function priceFor(model: string | undefined): ModelPrice {
   const m = (model || '').replace(/^(us\.|eu\.)?anthropic\./, '');
   for (const [prefix, price] of PRICES) if (m.startsWith(prefix)) return price;
+  if (/^gemini-.*flash/.test(m)) return { input: 0.5, output: 3 };
+  if (/^gemini-/.test(m)) return { input: 2, output: 12 };
   return { input: 3, output: 15 };
 }
 

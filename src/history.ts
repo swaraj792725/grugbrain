@@ -15,6 +15,7 @@ import { paths, userHome, writeJsonAtomic } from './config.js';
 import { estimateTokens } from './tokens.js';
 import { queryTerms, rankPrompt, Ranked } from './relevance.js';
 import { archiveOnlyFiles } from './archive.js';
+import { stripPrivate } from './privacy.js';
 
 export function projectTranscriptDir(cwd: string): string {
   const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'projects');
@@ -53,7 +54,7 @@ function clip(s: string, n: number): string {
 function blocksText(content: any, who: string, out: Item[], ts: number) {
   const push = (w: string, t: string, max: number) => {
     if (!t || t.length < 12 || NOISE.test(t)) return;
-    out.push({ ts, who: w, text: clip(t, max) });
+    out.push({ ts, who: w, text: clip(stripPrivate(t), max) });
   };
   if (typeof content === 'string') return push(who, content, MAX_TEXT);
   if (!Array.isArray(content)) return;

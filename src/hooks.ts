@@ -41,6 +41,8 @@ import { bashFileOps } from './bashops.js';
 import { BATCH_RULE, batchNudge } from './batching.js';
 import { lightAgentModel } from './routing.js';
 import { startBlocksInContext } from './resume.js';
+import { stripPrivate } from './privacy.js';
+import { dangerReason, dangerText } from './danger.js';
 
 export interface HookInput {
   session_id?: string;
@@ -155,7 +157,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
     case 'user-prompt': {
       const prompt = input.prompt || '';
       const priorEvents = cfg.taskBoundary.enabled ? readBuffer(sid) : [];
-      appendBuffer(sid, { t: 'prompt', ts: now, text: prompt.slice(0, 2000) });
+      appendBuffer(sid, { t: 'prompt', ts: now, text: stripPrivate(prompt).slice(0, 2000) });
       let alert =
         [
           contextAlert(cfg, sid, cwd, input.transcript_path, now),
@@ -177,7 +179,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         if (m) {
           withMemoryLock(() => {
             const db = loadMemory();
-            addNote(db, project, m[1].trim(), now, { pinned: true });
+            addNote(db, project, stripPrivate(m[1]).trim(), now, { pinned: true });
             saveMemory(db);
           });
           recordActivity({ kind: 'remember', msg: `Pinned note: ${m[1].slice(0, 80)}`, project: path.basename(cwd) });
@@ -253,6 +255,15 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           /* best-effort */
         }
         return null;
+      }
+      // A command that throws away work or data in one go: the user says yes first.
+      if (input.tool_name === 'Bash' && cfg.safety.riskyCommands) {
+        const cmd = String(input.tool_input?.command || '');
+        const why = dangerReason(cmd);
+        if (why) {
+          recordActivity({ kind: 'guard', msg: `Asked before a risky command (${why.split(' (')[0]})`, project: path.basename(cwd) });
+          return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: dangerText(cmd, why, false) } };
+        }
       }
       // Screenshots, images, PDFs, video: skip repeats, shrink, or point at the cheaper way in.
       const media = mediaPreTool(cfg, input, sid, cwd, now, readKey);
@@ -361,7 +372,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
         // Reading via grug's own tools counts as a file read (recall usefulness, handoff files).
         appendBuffer(sid, { t: 'file', ts: now, path: String(ti.path), op: 'read', ranged: true });
       } else if (tool === 'Bash' && ti.command) {
-        appendBuffer(sid, { t: 'cmd', ts: now, cmd: String(ti.command).slice(0, 300) });
+        appendBuffer(sid, { t: 'cmd', ts: now, cmd: stripPrivate(String(ti.command)).slice(0, 300) });
         // Shell reads/edits (sed -n, grep file, cat, sed -i, > file) count like Read/Edit.
         const ops = bashFileOps(String(ti.command), cwd);
         for (const k of ops.uses) appendBuffer(sid, { t: 'use', ts: now, k });
@@ -407,54 +418,8 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       if (tool !== 'Bash' && tool !== 'Grep' && !(cfg.commandRules.mcp && tool.startsWith('mcp__'))) return withNote(mediaOut);
       const original = toolOutputText(input);
       if (original === null) return withNote(mediaOut);
-      let text = original;
-      let kind: 'testsum' | 'trim' | 'cmdrules' | 'json' | null = null;
-      let ruleName = '';
       const cmd = tool === 'Bash' ? String(ti.command || '') : '';
-      if (cfg.commandRules.enabled && tool === 'Bash') {
-        const c = applyCommandRules(cmd, text, cfg.commandRules.minChars);
-        if (c.changed) {
-          text = c.text;
-          kind = 'cmdrules';
-          ruleName = c.rule || '';
-        }
-      }
-      if (cfg.testSummary.enabled && tool === 'Bash') {
-        const s = summarizeTestOutput(text, cfg.testSummary.minChars);
-        if (s.changed) {
-          text = s.text;
-          kind = 'testsum';
-        }
-      }
-      if (cfg.commandRules.json) {
-        const j = compactJson(text, cfg.commandRules.jsonMinChars);
-        if (j.changed) {
-          text = j.text;
-          kind = kind || 'json';
-        }
-      }
-      if (cfg.proxy.trimToolResults) {
-        const r = trimToolOutput(text, {
-          // Content Claude asked to see (cat, sed -n, grep, git diff...) keeps the generous limit; only noisy runs are cut early.
-          thresholdChars: wantsContent(cmd) ? Math.max(cfg.proxy.trimThresholdChars, cfg.proxy.trimContentChars) : cfg.proxy.trimThresholdChars,
-          keepHeadChars: cfg.proxy.trimKeepHeadChars,
-          keepTailChars: cfg.proxy.trimKeepTailChars,
-          saveFull: () => saveFullOutput(original, input.scratchpad_dir)
-        });
-        if (r.changed) {
-          text = r.text;
-          kind = kind || 'trim';
-        }
-      }
-      // Whatever shortened the output, the untouched original stays recoverable.
-      if (text !== original && !text.includes('Full original output:')) {
-        try {
-          const where = saveFullOutput(original, input.scratchpad_dir);
-          if (where) text += `\n[grug: full original output: ${where} (Read it with offset/limit if something above is not enough).]`;
-        } catch {
-          /* recovery pointer is best-effort */
-        }
-      }
+      const { text, kind, ruleName } = shrinkToolText(cfg, tool, cmd, original, input.scratchpad_dir);
       const removed = original.length - text.length;
       if (!kind || removed < 200) return withNote(null);
       recordActivity({
@@ -757,6 +722,63 @@ function readKey(file: string, ti: any, agent?: string): string {
 export function wantsContent(cmd: string): boolean {
   const parts = cmd.split(/&&|\|\||;|\n/).map((x) => x.trim().replace(/^(cd\s+\S+\s*)/, ''));
   return parts.some((c) => /^(sudo\s+)?(cat|sed|awk|head|tail|grep|rg|ag|find|ls|tree|jq|git\s+(diff|show|log|blame|grep|status)|diff|nl|less|bat|curl|wc|sort|uniq|cut|xxd|od|strings)\b/.test(c));
+}
+
+export type ShrinkKind = 'testsum' | 'trim' | 'cmdrules' | 'json';
+
+/**
+ * The output-shortening chain shared by the PostToolUse hook and `grug exec` (other apps):
+ * command rules, test summary, JSON compaction, head/tail trim, then a pointer to the untouched original.
+ */
+export function shrinkToolText(cfg: ReturnType<typeof loadConfig>, tool: string, cmd: string, original: string, scratchpad?: string): { text: string; kind: ShrinkKind | null; ruleName: string } {
+  let text = original;
+  let kind: ShrinkKind | null = null;
+  let ruleName = '';
+  if (cfg.commandRules.enabled && tool === 'Bash') {
+    const c = applyCommandRules(cmd, text, cfg.commandRules.minChars);
+    if (c.changed) {
+      text = c.text;
+      kind = 'cmdrules';
+      ruleName = c.rule || '';
+    }
+  }
+  if (cfg.testSummary.enabled && tool === 'Bash') {
+    const s = summarizeTestOutput(text, cfg.testSummary.minChars);
+    if (s.changed) {
+      text = s.text;
+      kind = 'testsum';
+    }
+  }
+  if (cfg.commandRules.json) {
+    const j = compactJson(text, cfg.commandRules.jsonMinChars);
+    if (j.changed) {
+      text = j.text;
+      kind = kind || 'json';
+    }
+  }
+  if (cfg.proxy.trimToolResults) {
+    const r = trimToolOutput(text, {
+      // Content Claude asked to see (cat, sed -n, grep, git diff...) keeps the generous limit; only noisy runs are cut early.
+      thresholdChars: wantsContent(cmd) ? Math.max(cfg.proxy.trimThresholdChars, cfg.proxy.trimContentChars) : cfg.proxy.trimThresholdChars,
+      keepHeadChars: cfg.proxy.trimKeepHeadChars,
+      keepTailChars: cfg.proxy.trimKeepTailChars,
+      saveFull: () => saveFullOutput(original, scratchpad)
+    });
+    if (r.changed) {
+      text = r.text;
+      kind = kind || 'trim';
+    }
+  }
+  // Whatever shortened the output, the untouched original stays recoverable.
+  if (text !== original && !text.includes('Full original output:')) {
+    try {
+      const where = saveFullOutput(original, scratchpad);
+      if (where) text += `\n[grug: full original output: ${where} (Read it with offset/limit if something above is not enough).]`;
+    } catch {
+      /* recovery pointer is best-effort */
+    }
+  }
+  return { text, kind, ruleName };
 }
 
 /** The untouched output of a trimmed command: in the session scratchpad (no permission prompt), else grug's cache. */

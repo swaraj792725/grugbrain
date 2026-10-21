@@ -198,7 +198,18 @@ export interface GrugConfig {
   skills: { enabled: boolean };
   /** Other AI apps: what each supports (MCP server, rules file, skills). */
   platforms: {
-    antigravity: { enabled: boolean; mcp: boolean };
+    /**
+     * hooks: grug's hooks in that app (recall, read guard, verify, meter).
+     * rewrite: run noisy commands (tests, builds, installs) through `grug exec` so their output is shortened.
+     * The rewrite needs a permission decision in both apps: `ask` keeps the user's approval, `allow` approves
+     * the rewritten command, `auto` (Codex) rewrites only where commands run without approval anyway, `off` never.
+     */
+    antigravity: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'ask' | 'allow' | 'off' };
+    codex: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'auto' | 'allow' | 'off' };
+  };
+  /** Ask the user before a shell command that throws away work or data in one go (rm -rf ~, force push, reset --hard, DROP TABLE). */
+  safety: {
+    riskyCommands: boolean;
   };
   batching: {
     /** One sentence at session/subagent start. */
@@ -327,7 +338,11 @@ export function defaultConfig(): GrugConfig {
     },
     skills: { enabled: true },
     platforms: {
-      antigravity: { enabled: true, mcp: true }
+      antigravity: { enabled: true, mcp: true, hooks: true, rewrite: 'ask' },
+      codex: { enabled: true, mcp: true, hooks: true, rewrite: 'auto' }
+    },
+    safety: {
+      riskyCommands: true
     },
     batching: {
       rule: true,
@@ -357,7 +372,10 @@ function deepMerge<T>(base: T, over: any): T {
   return out;
 }
 
-const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'], 'routing.lightModel': ['', 'sonnet', 'haiku'] };
+const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'], 'routing.lightModel': ['', 'sonnet', 'haiku'],
+  'platforms.antigravity.rewrite': ['ask', 'allow', 'off'],
+  'platforms.codex.rewrite': ['auto', 'allow', 'off']
+};
 
 const RANGES: Record<string, [number, number]> = {
   'autoRecall.maxTokens': [100, 4000],

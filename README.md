@@ -6,7 +6,7 @@
 
 Install once. grug sit between Claude Code and Anthropic API, trim fat, stick cache, guard big files, remember every session in small brain that never get fat. grug draw brain picture. grug write Obsidian notes. grug show cave dashboard.
 
-grug also bring **10 small workflow skills** (plan, test first, debug to root cause, prove before "done"; ~10k characters, not ~128k) and works in **Antigravity** too (MCP tools, rules, skills). See [grug ways](#grug-ways-workflow-skills) and [where grug work](#where-grug-work).
+grug also bring **12 small workflow skills** (plan, test first, debug to root cause, prove before "done", explore cheap, write your own skill; ~13k characters, not ~128k) and works in **Antigravity** and **Codex** too (hooks, MCP tools, rules, skills, meter). See [grug ways](#grug-ways-workflow-skills) and [where grug work](#where-grug-work).
 
 ```bash
 npx github:swaraj792725/grugbrain install
@@ -112,6 +112,10 @@ If that file already exists, add the `env` key to it instead. Until then, grug a
 
 Every reply re-send whole conversation. Real week: Claude make 1 tool call per reply, and 22% of replies were one more lone lookup in a chain (Read, Grep, `sed -n`), 18% of all context re-read. Grug tell Claude once at start: independent reads/greps go in one reply, shell steps in one Bash call. After 3 lone lookups in a row, grug add short note (max 3 per session). Measured (Sonnet, `audit-services`, 2 benches x 3 runs per arm, grug on vs off): same result 6/6 vs 6/6; grug took 2 turns in every run, the baseline 3 to 12; about 40-47% less input; cost about 13% lower with a warm cache ($0.178 vs $0.204 per run; one cold-cache baseline run left out, with it the bench prints up to 42%). Grug's runs were also steady ($0.175-0.181), the baseline's were not. Small synthetic task; real sessions differ. Off: `grug config set batching.rule false`, `grug config set batching.nudge false`.
 
+## grug careful (risky commands ask first)
+
+Some commands throw away work in one go: `rm -rf ~`, force push, `git reset --hard`, `git clean -fd`, `DROP TABLE`, `curl ... | sh`. Before one runs, grug asks you, with the reason (Claude Code and Antigravity show their approval prompt, Codex holds it back once). Quoted text and scripts inside heredocs are not checked, so a commit message that says `rm -rf` is fine. Modes that skip every prompt skip this one too. Off: `grug config set safety.riskyCommands false`.
+
 ## grug brain (memory that never get fat)
 
 Normal memory file grow, grow, grow. Every session pay for all of it. Bad.
@@ -119,6 +123,7 @@ Normal memory file grow, grow, grow. Every session pay for all of it. Bad.
 grug brain is **graph**: projects · sessions · files · topics · notes · digests.
 
 - **auto capture**: hooks log prompts, files touched, commands, final answer. You type `remember: we deploy with fly.io` → pinned note.
+- **private**: put `<private>...</private>` around anything grug must not keep (a key, a customer name). Claude still sees it; grug's memory, facts, handoff, archive and history search get `[private]` instead.
 - **auto notes**: grug pick sentences like "root cause was…", "decided…", "never…" from Claude's last answer.
 - **decay**: every node lose score over time (half-life 14 days) unless used again.
 - **fold**: sessions older than 21 days squash into one monthly **digest** per project. Old buffers deleted.
@@ -240,8 +245,11 @@ Grug read it straight: big win where output is noisy (tests, builds, logs), no l
 | **Claude Desktop** chat | MCP tools (`outline`, `read_symbol`, `repo_map`, `search`, `recall`, `remember`, `project_brief`…) + shared memory. Desktop's own API calls are private, so no proxy, no measured stats. |
 | **claude.ai** in browser | nothing. grug cannot reach inside browser. grug honest. |
 | your own app on the Anthropic SDK | set `ANTHROPIC_BASE_URL=http://127.0.0.1:4747` → proxy + stats |
-| **Antigravity** (app, IDE, `agy` CLI) | one grug plugin in `~/.gemini/config/plugins/grugbrain`: MCP tools + shared memory, short rules (terse, read, batch), the grug workflow skills. Checked live in `agy` 1.0.12. No output trimming (its hooks cannot change tool output), no meter yet |
-| **ChatGPT** app / web | nothing yet. OpenAI runs the chat on its servers: no hooks, no local transcript; only remote (HTTPS) MCP connectors. Codex (OpenAI's coding agent) has Claude-style hooks: next on the list |
+| **Antigravity** (app, IDE, `agy` CLI) | one grug plugin in `~/.gemini/config/plugins/grugbrain`: hooks (start context + code map, prompt recall, re-read guard, edit/type guards, verify gate, handoff, facts, meter), MCP tools + shared memory, short rules, the workflow skills. Noisy commands (tests, builds, installs) run through `grug exec`, which shortens their output (errors kept); you still approve the command (`platforms.antigravity.rewrite ask`, or `allow` / `off`). Checked live in `agy` 1.0.12 |
+| **Codex** (OpenAI's coding agent) | `~/.codex`: hooks (same set as Antigravity), the grug MCP server in `config.toml`, rules in `AGENTS.md`, skills in `~/.agents/skills`. Codex asks you once to trust new hooks (`/hooks`). `grug exec` rewrite only when Codex would not ask anyway (`platforms.codex.rewrite auto`: full-access modes). Built from Codex's hook docs, not yet run in a real Codex |
+| **ChatGPT** app / web | nothing. OpenAI runs the chat on its servers: no hooks, no local transcript; only remote (HTTPS) MCP connectors |
+
+How it works in the other apps: their hooks call grug, which turns each event into the Claude Code one (tool names translated: `view_file` → Read, `run_command` / `exec_command` → Bash, `apply_patch` → Edit) and puts the app's own log into a Claude-format copy in `~/.grug/foreign/`, so memory, handoff, facts and the meter work unchanged. Neither app lets a hook change a tool's output after it ran, so the shortening happens before: the command itself is wrapped. Things only Claude Code has (auto-compact window, status line) stay off there.
 
 Pro/Max subscription or API key: both fine. Proxy pass auth headers through untouched. On a subscription you are limited by usage, not billed per token, so "$" in dashboard mean *API-equivalent value*. Fewer token still mean you hit limits later.
 
@@ -249,7 +257,7 @@ Pro/Max subscription or API key: both fine. Proxy pass auth headers through unto
 
 ## grug ways (workflow skills)
 
-Plan, test first, debug to the root cause, prove before saying done. Same discipline as big skill packs, few words: 10 skills, ~10k characters in total (Superpowers' 15 skills ~128k). A skill costs only its one-line description each reply until used; then only that one file is read.
+Plan, test first, debug to the root cause, prove before saying done. Same discipline as big skill packs, few words: 12 skills, ~13k characters in total (Superpowers' 15 skills ~128k). A skill costs only its one-line description each reply until used; then only that one file is read.
 
 | skill | use when |
 |---|---|
@@ -263,8 +271,10 @@ Plan, test first, debug to the root cause, prove before saying done. Same discip
 | `grug-worktree` | work that should not touch the current checkout |
 | `grug-parallel` | 2+ independent tasks: short-brief subagents, check each result |
 | `grug-finish` | branch done: merge, PR, keep or discard, clean up |
+| `grug-explore` | learning an unfamiliar codebase: search first, read ranges, follow one thread, note what you found |
+| `grug-skill` | writing your own skill: real cases first, one-sentence trigger, short steps, test it was followed |
 
-`grug install` copies them to `~/.claude/skills/` and into the Antigravity plugin (same `SKILL.md` format). `grug platforms` shows what is installed where; `grug config set skills.enabled false` then `grug platforms --apply` takes them out. Only `grug-*` folders are ever touched.
+`grug install` copies them to `~/.claude/skills/`, into the Antigravity plugin and to `~/.agents/skills` for Codex (same `SKILL.md` format). `grug platforms` shows what is installed where; `grug config set skills.enabled false` then `grug platforms --apply` takes them out. Only `grug-*` folders are ever touched.
 
 ---
 
@@ -289,7 +299,8 @@ grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
 grug dash [--once]              TUI dashboard
 grug doctor [--fix]             check everything, say how to fix (--fix: put back lost slim settings, apply a raised window, remove broken leftovers)
 grug uninstall [--purge]        remove (keeps memory unless --purge)
-grug platforms [--apply]        grug on other AI apps (Antigravity) + workflow skills: what works where
+grug platforms [--apply]        grug on other AI apps (Antigravity, Codex) + workflow skills: what works where
+grug exec -- '<command>'        run a command, print its output shortened (errors kept), same exit code
 grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
 grug slim --plugins [--apply]   turn off plugins never used in 30 days (--undo puts them back; in the desktop app only once tool search is forced on)
 grug discover [--days 7]        which commands / MCP tools put most output in context, how much grug shortened

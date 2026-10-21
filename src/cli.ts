@@ -78,7 +78,9 @@ const HELP = `
   grug config [path | get <k> | set <k> <v>]
   grug savings                    one-line spend/savings summary
 
-  (internal) daemon · proxy · mcp · hook <event>
+  grug exec -- '<command>'        run a command, print its output shortened (errors kept)
+
+  (internal) daemon · proxy · mcp · hook <event> · hook-ag / hook-codex <Event> · agent-end
 `;
 
 async function main() {
@@ -340,6 +342,44 @@ async function main() {
       process.exit(0);
     }
 
+    case 'hook-ag':
+    case 'hook-codex': {
+      let out: any = null;
+      try {
+        const raw = await readStdinJson();
+        if (cmd === 'hook-ag') out = await (await import('./agents/antigravity.js')).runAntigravityHook(pos[1] || '', raw);
+        else out = await (await import('./agents/codex.js')).runCodexHook(pos[1] || '', raw);
+      } catch {
+        out = null; // never break the app
+      }
+      // Antigravity: no output at all means "no opinion" (an empty object would deny a tool).
+      if (out) process.stdout.write(JSON.stringify(out));
+      process.exit(0);
+    }
+
+    case 'exec': {
+      // grug exec [--app <name>] -- '<command>': the command is everything after `--`, untouched.
+      const raw = process.argv.slice(2);
+      const dd = raw.indexOf('--');
+      const command = (dd >= 0 ? raw.slice(dd + 1) : raw.slice(raw.indexOf('exec') + 1)).join(' ');
+      if (!command.trim()) {
+        console.error("usage: grug exec [--app <name>] -- '<command>'");
+        process.exit(2);
+      }
+      const { runExec } = await import('./agents/exec.js');
+      process.exit(await runExec(command, flagValue('app') || 'another app'));
+    }
+
+    case 'agent-end': {
+      try {
+        const client = pos[1] === 'codex' ? 'codex' : 'antigravity';
+        await (await import('./agents/common.js')).agentEnd(client, pos[2] || '', pos[3] || process.cwd(), pos[4], pos[5]);
+      } catch {
+        /* background upkeep is best-effort */
+      }
+      process.exit(0);
+    }
+
     case 'statusline': {
       try {
         const { renderStatusLine } = await import('./statusline.js');
@@ -430,10 +470,11 @@ async function main() {
 What works where (✓ yes, ~ partly, · not possible there):
   app                 MCP tools  rules  skills  context hooks  output trim  meter
   Claude Code         ✓          ✓      ✓       ✓              ✓            ✓
-  Antigravity         ✓          ✓      ✓       ~ (planned)    ·            ~ (planned)
-  Codex (CLI/app)     ✓ planned  ✓      ✓       ✓ planned      ·            ✓ planned
+  Antigravity         ✓          ✓      ✓       ✓              ~ exec       ✓
+  Codex (CLI/app)     ✓          ✓      ✓       ✓              ~ exec       ✓
   Cursor / Copilot    ✓ planned  ✓      ✓       ~              ·            ·
   ChatGPT app/web     ~ remote   ·      ·       ·              ·            ·
+~ exec: those apps cannot change a tool's output, so noisy commands are run through grug exec (shortened, errors kept).
 ChatGPT runs the chat on OpenAI's servers: no hooks, no local transcript, only remote MCP connectors.
 grug install sets up every app it finds; grug platforms --apply redoes just this part, --remove takes it out.`);
       break;
