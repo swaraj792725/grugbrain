@@ -22,6 +22,7 @@ interface ShadowState {
   pending?: string[];
   lastTotal?: number;
   lastPrompt?: string;
+  lastReply?: string;
 }
 
 const MAX_CHUNK = 8 * 1024 * 1024;
@@ -151,10 +152,29 @@ function convertCodex(e: any, st: ShadowState, cwd: string): any[] {
   if (e.type === 'turn_context' && p.model) st.model = p.model;
   if (e.type === 'event_msg') {
     if (p.type === 'user_message' && p.message) {
-      st.lastPrompt = String(p.message);
+      if (String(p.message).trim() === st.lastPrompt) return [];
+      st.lastPrompt = String(p.message).trim();
       return [{ ...base, type: 'user', message: { role: 'user', content: String(p.message) } }];
     }
-    if (p.type === 'agent_message' && p.message) return [{ ...base, type: 'assistant', message: { id: id(), role: 'assistant', model: st.model || 'gpt', content: [{ type: 'text', text: String(p.message) }] } }];
+    // Codex 0.16x writes prompts and replies as completed items (seen live in 0.163.0).
+    if (p.type === 'item_completed' && (p.item?.type === 'UserMessage' || p.item?.type === 'AgentMessage')) {
+      const text = textOf(p.item.content).trim();
+      if (!text) return [];
+      if (p.item.type === 'UserMessage') {
+        if (text === st.lastPrompt) return [];
+        st.lastPrompt = text;
+        return [{ ...base, type: 'user', message: { role: 'user', content: text } }];
+      }
+      if (text === st.lastReply) return [];
+      st.lastReply = text;
+      return [{ ...base, type: 'assistant', message: { id: id(), role: 'assistant', model: st.model || 'gpt', content: [{ type: 'text', text }] } }];
+    }
+    if (p.type === 'agent_message' && p.message) {
+      const text = String(p.message).trim();
+      if (text === st.lastReply) return [];
+      st.lastReply = text;
+      return [{ ...base, type: 'assistant', message: { id: id(), role: 'assistant', model: st.model || 'gpt', content: [{ type: 'text', text }] } }];
+    }
     if (p.type === 'token_count' && p.info?.last_token_usage) {
       const total = Number(p.info.total_token_usage?.total_tokens) || 0;
       if (total && total === st.lastTotal) return []; // a repeat (rate-limit ping)

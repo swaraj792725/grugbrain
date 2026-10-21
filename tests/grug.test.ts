@@ -4045,6 +4045,27 @@ describe('other apps: Antigravity and Codex hooks', () => {
     expect(lines[4].message).toMatchObject({ model: 'gpt-5', usage: { input_tokens: 1000, cache_read_input_tokens: 4000, output_tokens: 100 } });
     expect(sh.codexCommand({ command: wrapLike('pytest') })).toBe('pytest');
   });
+
+  it('reads the Codex 0.16x rollout: prompts and replies as completed items, no doubles with the old events', async () => {
+    const sh = await import('../src/agents/shadow.js');
+    const src = path.join(tmp, 'rollout2.jsonl');
+    const L = (type: string, payload: any) => JSON.stringify({ timestamp: '2026-10-21T10:00:00Z', type, payload }) + '\n';
+    const item = (type: string, text: string) => L('event_msg', { type: 'item_completed', item: { type, content: [{ type: type === 'UserMessage' ? 'text' : 'Text', text }] } });
+    fs.writeFileSync(
+      src,
+      L('turn_context', { model: 'gpt-5' }) +
+        item('UserMessage', 'change the threshold to 60') +
+        L('event_msg', { type: 'user_message', message: 'change the threshold to 60' }) +
+        L('response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'change the threshold to 60' }] }) +
+        item('AgentMessage', 'Changed it; tests not run.') +
+        L('event_msg', { type: 'agent_message', message: 'Changed it; tests not run.' })
+    );
+    const out = sh.syncShadow('codex', 's2', src, undefined, '/repo')!;
+    const lines = fs.readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(lines.map((l) => l.type)).toEqual(['user', 'assistant']);
+    expect(lines[1].message.content[0].text).toBe('Changed it; tests not run.');
+    expect(sh.lastPrompt('codex', 's2')).toBe('change the threshold to 60');
+  });
   const wrapLike = (c: string) => `'/x/grug' exec --app codex -- '${c}'`;
 
   it('Antigravity hooks: start context + recall once per turn, read guards as deny, noisy commands rewritten with approval kept', async () => {
@@ -4118,6 +4139,52 @@ describe('other apps: Antigravity and Codex hooks', () => {
     expect(await runCodexHook('Stop', { ...base, stop_hook_active: false })).toBeNull();
     expect(await runCodexHook('SessionEnd', { ...base, reason: 'exit' })).toBeNull();
     expect(fs.existsSync(path.join(tmp, '.claude', 'settings.json'))).toBe(false);
+  });
+
+  it('shell prints of one file count as reads: cat / sed -n / head, never pipes or media', async () => {
+    const { shellRead, reword } = await import('../src/agents/common.js');
+    const proj = codeProject();
+    const f = path.join(proj, 'src', 'a.ts');
+    expect(shellRead('cat src/a.ts', proj)).toEqual({ file_path: f });
+    expect(shellRead("cat -- 'src/a.ts'", proj)).toEqual({ file_path: f });
+    expect(shellRead("sed -n '10,29p' src/a.ts", proj)).toEqual({ file_path: f, offset: 10, limit: 20 });
+    expect(shellRead('head -n 40 src/a.ts', proj)).toEqual({ file_path: f, offset: 1, limit: 40 });
+    for (const c of ['cat src/a.ts | wc -l', 'cat src/a.ts > x', 'cat a b', 'cat $(ls)', 'cat src/missing.ts', 'cat src', "sed -n '9,3p' src/a.ts"]) expect(shellRead(c, proj), c).toBeNull();
+    fs.writeFileSync(path.join(proj, 'logo.png'), 'x');
+    expect(shellRead('cat logo.png', proj)).toBeNull();
+    // The code map hint is reworded once, not doubled.
+    const hint = reword('codex', 'Grep for the symbol, then Read with offset/limit for just that part (a ranged Read also satisfies Edit).');
+    expect(hint).toBe("rg for the symbol, then print a range with sed -n 'START,ENDp' for just that part.");
+    expect(reword('antigravity', 'then Read with offset/limit for just that part')).toBe('then view_file with StartLine/EndLine for just that part');
+  });
+
+  it('Codex and Antigravity: an unchanged cat is held back once; Stop reads the reply from the hook input', async () => {
+    const { runCodexHook } = await import('../src/agents/codex.js');
+    const { runAntigravityHook } = await import('../src/agents/antigravity.js');
+    const proj = codeProject();
+    const big = path.join(proj, 'src', 'big.js');
+    fs.writeFileSync(big, 'const FREE_SHIP = 50;\n' + 'export function f() { return 1; }\n'.repeat(400));
+    const base = { session_id: 'cx-cat', cwd: proj, model: 'gpt-5', permission_mode: 'default' };
+    const cat = { tool_name: 'Bash', tool_input: { command: 'cat src/big.js' } };
+    expect(await runCodexHook('PreToolUse', { ...base, ...cat })).toBeNull();
+    await runCodexHook('PostToolUse', { ...base, ...cat, tool_response: 'const FREE_SHIP = 50;' });
+    const again: any = await runCodexHook('PreToolUse', { ...base, ...cat });
+    expect(again.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(again.hookSpecificOutput.permissionDecisionReason).toMatch(/big\.js is unchanged.*repeat the same command/s);
+    expect(await runCodexHook('PreToolUse', { ...base, ...cat })).toBeNull();
+
+    const ag = { conversationId: 'ag-cat', workspacePaths: [proj], toolCall: { name: 'run_command', args: { CommandLine: 'cat src/big.js', Cwd: proj } } };
+    expect(await runAntigravityHook('PreToolUse', ag)).toBeNull();
+    await runAntigravityHook('PostToolUse', ag);
+    expect((await runAntigravityHook('PreToolUse', ag))?.decision).toBe('deny');
+
+    // Proof gate with no transcript: the reply text comes from last_assistant_message.
+    await runCodexHook('UserPromptSubmit', { ...base, prompt: 'change the free shipping threshold to 60' });
+    const patch = { tool_name: 'apply_patch', tool_input: { command: '*** Begin Patch\n*** Update File: src/big.js\n@@\n-const FREE_SHIP = 50;\n+const FREE_SHIP = 60;\n*** End Patch' } };
+    await runCodexHook('PostToolUse', { ...base, ...patch, tool_response: 'Success' });
+    const stop: any = await runCodexHook('Stop', { ...base, stop_hook_active: false, last_assistant_message: 'Fixed. All tests pass now.' });
+    expect(stop.decision).toBe('block');
+    expect(stop.reason).toMatch(/nothing ran after your last edit \(big\.js\)/);
   });
 
   it('installs into Codex next to the user own config and takes only its own parts out', async () => {

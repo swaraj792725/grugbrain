@@ -60,6 +60,8 @@ export interface HookInput {
   agent_id?: string;
   agent_type?: string;
   scratchpad_dir?: string;
+  /** Stop: the reply's text when the app sends it (Codex); else it is taken from the transcript. */
+  last_assistant_message?: string;
 }
 
 type HookOutput = Record<string, any> | null;
@@ -465,7 +467,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
       } catch {
         /* metering is best-effort */
       }
-      const text = lastAssistantText(input.transcript_path);
+      const text = (typeof input.last_assistant_message === 'string' && input.last_assistant_message.trim()) || lastAssistantText(input.transcript_path);
       if (text) appendBuffer(sid, { t: 'assistant', ts: now, text: text.slice(0, 4000) });
       // Pick durable facts as the session goes (only new bytes), so a long session loses none to the tail window.
       if (cfg.memory.enabled) captureFacts(sid, input.transcript_path, cwd, now, false);
@@ -724,6 +726,16 @@ function hotFilesOf(db: ReturnType<typeof loadMemory>, project: string): string[
     .sort((a, b) => b.touches - a.touches)
     .slice(0, 12)
     .map((n) => n.label);
+}
+
+/** Note a file read done without the Read tool (another app's shell print), for the re-read guard. */
+export function recordRead(sid: string, ti: { file_path: string; offset?: number; limit?: number }, agent?: string): void {
+  try {
+    const st = fs.statSync(ti.file_path);
+    appendBuffer(sid, { t: 'read', ts: Date.now(), path: ti.file_path, key: readKey(ti.file_path, ti, agent), mtime: st.mtimeMs, size: st.size });
+  } catch {
+    /* file vanished */
+  }
 }
 
 function readKey(file: string, ti: any, agent?: string): string {

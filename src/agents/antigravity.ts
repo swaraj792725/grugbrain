@@ -11,8 +11,8 @@
  * The app's own log is converted to a Claude-format shadow transcript first (shadow.ts).
  */
 import { loadConfig } from '../config.js';
-import { runHook, spawnDetached, type HookInput } from '../hooks.js';
-import { AG_CONTEXT_MARK, contextOf, FOREIGN_OVERRIDES, loadMeta, queueNote, reword, saveMeta, START_OVERRIDES, takeNotes, withOverrides } from './common.js';
+import { recordRead, runHook, spawnDetached, type HookInput } from '../hooks.js';
+import { AG_CONTEXT_MARK, contextOf, FOREIGN_OVERRIDES, loadMeta, queueNote, reword, saveMeta, shellRead, START_OVERRIDES, takeNotes, withOverrides } from './common.js';
 import { shouldWrap, wrapCommand } from './exec.js';
 import { agTool, lastPrompt, syncShadow } from './shadow.js';
 
@@ -64,7 +64,9 @@ export async function runAntigravityHook(event: string, raw: any): Promise<any |
       case 'pre-tool': {
         const call = raw.toolCall || {};
         const m = agTool(String(call.name || ''), call.args);
-        const out = await runHook('pre-tool', { ...base, tool_name: m.name, tool_input: m.input });
+        // A shell print of one file is checked as a read (re-read and big-file guards).
+        const read = m.name === 'Bash' ? shellRead(String(m.input.command || ''), cwd) : null;
+        const out = await runHook('pre-tool', { ...base, tool_name: read ? 'Read' : m.name, tool_input: read || m.input });
         const h = out?.hookSpecificOutput || {};
         if (h.permissionDecision === 'deny') return { decision: 'deny', reason: reword(C, String(h.permissionDecisionReason || 'grugbrain')) };
         // A risky command: Antigravity's own approval prompt asks the user, even when it is set to always allow.
@@ -84,6 +86,8 @@ export async function runAntigravityHook(event: string, raw: any): Promise<any |
         const m = agTool(String(call.name || ''), call.args);
         // No tool_response: Antigravity cannot replace a result, so nothing is trimmed (or counted) here.
         const out = await runHook('post-tool', { ...base, tool_name: m.name, tool_input: m.input });
+        const read = m.name === 'Bash' ? shellRead(String(m.input.command || ''), cwd) : null;
+        if (read) recordRead(sid, read);
         const text = contextOf(out);
         if (text) queueNote(C, conv, text);
         return {};

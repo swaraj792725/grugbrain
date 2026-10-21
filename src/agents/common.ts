@@ -27,12 +27,45 @@ export function reword(client: Client, text: string): string {
   return text
     .replace(/repeat the same Read and it will be allowed/g, 'repeat the same command and it will be allowed')
     .replace(/\bRead (just (?:that|these line) ranges?|it) with offset\/limit/g, "print $1 with sed -n 'START,ENDp'")
-    .replace(/\bRead with offset\/limit\b/g, "sed -n 'START,ENDp' on just that part")
+    .replace(/\bRead with offset\/limit\b/g, "print a range with sed -n 'START,ENDp'")
     .replace(/\ba ranged Read\b/g, "a ranged sed -n")
     .replace(/\bA ranged Read\b/g, 'A ranged sed -n')
     .replace(/\bGrep\b/g, 'rg')
     .replace(/\s*\((?:that|a ranged sed -n) also satisfies Edit\)/g, '')
     .replace(/\bone Bash call\b/g, 'one shell command');
+}
+
+const MEDIA = /\.(png|jpe?g|gif|webp|pdf|ipynb|svg|ico|bmp|tiff?|mp4|mov|webm)$/i;
+
+/**
+ * A plain shell print of one file (`cat f`, `sed -n 'A,Bp' f`, `head -n N f`) as Read input, so the
+ * re-read and big-file guards cover it: these apps read files through the shell.
+ */
+export function shellRead(cmd: string, cwd: string): { file_path: string; offset?: number; limit?: number } | null {
+  const c = String(cmd || '').trim();
+  if (!c || c.length > 1000 || /[|;&<>`$(){}\n\\]/.test(c.replace(/'[^']*'/g, "''"))) return null;
+  let file = '';
+  let offset: number | undefined;
+  let limit: number | undefined;
+  let m: RegExpMatchArray | null;
+  if ((m = c.match(/^cat\s+(?:--\s+)?(['"]?)([^\s'"]+)\1$/))) file = m[2];
+  else if ((m = c.match(/^sed\s+-n\s+(['"]?)(\d+),(\d+)p\1\s+(['"]?)([^\s'"]+)\4$/)) && +m[3] >= +m[2]) {
+    file = m[5];
+    offset = +m[2];
+    limit = +m[3] - +m[2] + 1;
+  } else if ((m = c.match(/^head\s+-n\s*(\d+)\s+(['"]?)([^\s'"]+)\2$/))) {
+    file = m[3];
+    offset = 1;
+    limit = +m[1];
+  }
+  if (!file || MEDIA.test(file)) return null;
+  const abs = path.resolve(cwd, file);
+  try {
+    if (!fs.statSync(abs).isFile()) return null;
+  } catch {
+    return null;
+  }
+  return { file_path: abs, ...(offset ? { offset, limit } : {}) };
 }
 
 /** First words of the context grug adds as a (persistent) user message in Antigravity; never a prompt. */
