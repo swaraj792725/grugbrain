@@ -194,6 +194,12 @@ export interface GrugConfig {
     minTokens: number;
   };
   /** Fewer replies: ask Claude to batch independent lookups (each reply re-sends the whole context). */
+  /** grug's lean workflow skills (grug-plan, grug-debug, ...) copied into Claude Code and other apps. */
+  skills: { enabled: boolean };
+  /** Other AI apps: what each supports (MCP server, rules file, skills). */
+  platforms: {
+    antigravity: { enabled: boolean; mcp: boolean };
+  };
   batching: {
     /** One sentence at session/subagent start. */
     rule: boolean;
@@ -318,6 +324,10 @@ export function defaultConfig(): GrugConfig {
     taskBoundary: {
       enabled: true,
       minTokens: 60000
+    },
+    skills: { enabled: true },
+    platforms: {
+      antigravity: { enabled: true, mcp: true }
     },
     batching: {
       rule: true,

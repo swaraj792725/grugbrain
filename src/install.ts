@@ -18,6 +18,7 @@ import { recordActivity } from './stats.js';
 import { stripSlimOverrides } from './slim.js';
 import { stripPluginSlim } from './pluginslim.js';
 import { effectiveWindow, updateFloor } from './floor.js';
+import { copySkills, installPlatforms, uninstallPlatforms } from './platforms.js';
 
 export const MARK = '--from=grugbrain';
 const LEGACY_KEYS = ['token-diet', 'claude-token-saver'];
@@ -34,6 +35,8 @@ export interface InstallOptions {
   desktop?: boolean;
   proxy?: boolean;
   service?: boolean;
+  /** Workflow skills + other AI apps (Antigravity). */
+  platforms?: boolean;
 }
 
 interface InstallState {
@@ -93,6 +96,7 @@ export function copyApp(): Step {
   }
   fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({ name: 'grugbrain-app', private: true, type: 'commonjs' }) + '\n');
   copyPlugin(src);
+  copySkills(src);
   return { target: 'app', ok: true, message: `Copied runtime to ${dest}` };
 }
 
@@ -467,7 +471,7 @@ export function commandStatus(): 'on-path' | 'rc' | 'missing' {
 }
 
 export function install(opts: InstallOptions = {}): Step[] {
-  const o = { code: true, desktop: true, proxy: true, service: true, ...opts };
+  const o = { code: true, desktop: true, proxy: true, service: true, platforms: true, ...opts };
   ensureDir(paths.home());
   const cfg = loadConfig();
   saveConfig(cfg); // materialize defaults so `grug config` shows them
@@ -476,6 +480,7 @@ export function install(opts: InstallOptions = {}): Step[] {
   if (o.code) steps.push(...installClaudeCode(o.proxy));
   if (o.desktop) steps.push(installDesktop());
   if (o.service) steps.push(installService());
+  if (o.platforms) steps.push(...installPlatforms());
   steps.push(installCommand());
   const state = loadState();
   state.installedAt = new Date().toISOString();
@@ -526,6 +531,7 @@ export function uninstall(purge = false): Step[] {
     }
   }
   steps.push({ target: 'claude-code-mcp', ok: true, message: 'MCP server removed' });
+  steps.push(...uninstallPlatforms());
   uninstallCommand();
   steps.push({ target: 'command', ok: true, message: '`grug` command removed' });
 

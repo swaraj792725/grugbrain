@@ -36,6 +36,7 @@ beforeEach(() => {
   delete process.env.ANTHROPIC_BASE_URL;
   delete process.env.CLAUDE_CONFIG_DIR;
   delete process.env.GRUG_SET;
+  delete process.env.GRUG_NO_APP_DETECT;
   delete process.env.GRUG_DISABLE; // set by grug's own verify gate when it runs this suite; tests exercise the hooks
   delete process.env.CLAUDE_CODE_SUBAGENT_MODEL; // the developer's own routing must not leak into routing tests
   delete process.env.CLAUDE_CODE_ENTRYPOINT; // 'cli' (terminal claude) hides app-only notices
@@ -3519,6 +3520,7 @@ describe('GRUG_SET overrides', () => {
     expect(cfg.terse).toBe('off');
     expect(cfg.memory.briefTokens).toBe(defaultConfig().memory.briefTokens);
     delete process.env.GRUG_SET;
+  delete process.env.GRUG_NO_APP_DETECT;
     expect(loadConfig().graphContext.enabled).toBe(true);
     const r = { task: 't', pass: true, why: '', costUsd: 0.1, inputTokens: 1, freshTokens: 1, cacheReadTokens: 0, outputTokens: 1, turns: 1, ms: 1 };
     expect(formatBench([{ ...r, arm: 'off' }, { ...r, arm: 'on' }], 'graphContext.enabled=false')).toContain('vs grug with graphContext.enabled=false');
@@ -3873,5 +3875,72 @@ describe('resource use (v2.30)', () => {
       .reduce((n, e) => n + e.w, 0);
     expect(f.touches).toBe(sum);
     expect(Object.values(db.edges).every((e) => db.nodes[e.a] && db.nodes[e.b])).toBe(true);
+  });
+});
+
+describe('platforms + workflow skills', () => {
+  beforeEach(() => {
+    process.env.GRUG_NO_APP_DETECT = '1'; // the developer's own /Applications must not decide what a test installs
+  });
+
+  it('ships lean skills with valid frontmatter', async () => {
+    const { bundledSkillsDir, bundledSkillNames } = await import('../src/platforms.js');
+    const dir = bundledSkillsDir()!;
+    const names = bundledSkillNames(dir);
+    expect(names.length).toBeGreaterThanOrEqual(10);
+    for (const n of names) {
+      const text = fs.readFileSync(path.join(dir, n, 'SKILL.md'), 'utf8');
+      const fm = text.match(/^---\nname: (.+)\ndescription: (.+)\n---\n/);
+      expect(fm?.[1]).toBe(n);
+      expect(fm![2].length).toBeLessThan(300); // the description is listed every reply
+      expect(text.length).toBeLessThan(2500);
+    }
+  });
+
+  it('installs skills for Claude Code and a grug plugin for Antigravity, and removes only its own', async () => {
+    const pl = await import('../src/platforms.js');
+    expect(pl.claudeSkillsDir().startsWith(tmp)).toBe(true);
+    const mine = path.join(pl.claudeSkillsDir(), 'my-skill', 'SKILL.md');
+    fs.mkdirSync(path.dirname(mine), { recursive: true });
+    fs.writeFileSync(mine, '---\nname: my-skill\ndescription: mine\n---\n');
+
+    // No Antigravity on this machine: skills only.
+    let steps = pl.installPlatforms();
+    expect(steps.find((s) => s.target === 'antigravity')?.message).toMatch(/not found/);
+    expect(fs.existsSync(path.join(pl.claudeSkillsDir(), 'grug-debug', 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(pl.antigravityPluginDir())).toBe(false);
+
+    // Antigravity present (its config dir exists, with the user's own plugin settings).
+    const conf = path.join(pl.antigravityConfigDir(), 'config.json');
+    fs.mkdirSync(path.dirname(conf), { recursive: true });
+    fs.writeFileSync(conf, JSON.stringify({ plugins: { flutter: { enabled: true }, grugbrain: { enabled: true } } }));
+    steps = pl.installPlatforms();
+    pl.installPlatforms(); // idempotent
+    const dir = pl.antigravityPluginDir();
+    expect(dir.startsWith(tmp)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'plugin.json'), 'utf8')).name).toBe('grugbrain');
+    const mcp = JSON.parse(fs.readFileSync(path.join(dir, 'mcp_config.json'), 'utf8'));
+    expect(mcp.mcpServers.grugbrain.args).toEqual([path.join(paths.app(), 'cli.js'), 'mcp']);
+    const rules = fs.readFileSync(path.join(dir, 'rules', 'AGENTS.md'), 'utf8');
+    expect(rules).toMatch(/Batch lookups/);
+    expect(rules).toMatch(/grug-debug/);
+    expect(pl.bundledSkillNames(path.join(dir, 'skills')).length).toBe(pl.bundledSkillNames().length);
+    expect(pl.platformStatus().every((r) => !r.present || r.installed)).toBe(true);
+
+    // Turning things off removes them on the next install.
+    saveConfig({ ...defaultConfig(), skills: { enabled: false }, platforms: { antigravity: { enabled: true, mcp: false } } });
+    pl.installPlatforms();
+    expect(fs.existsSync(path.join(pl.claudeSkillsDir(), 'grug-debug'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'mcp_config.json'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'skills', 'grug-debug'))).toBe(false);
+    expect(fs.readFileSync(path.join(dir, 'rules', 'AGENTS.md'), 'utf8')).not.toMatch(/grug-debug/);
+
+    saveConfig(defaultConfig());
+    pl.installPlatforms();
+    pl.uninstallPlatforms();
+    expect(fs.existsSync(dir)).toBe(false);
+    expect(fs.existsSync(path.join(pl.claudeSkillsDir(), 'grug-plan'))).toBe(false);
+    expect(fs.existsSync(mine)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(conf, 'utf8'))).toEqual({ plugins: { flutter: { enabled: true } } });
   });
 });

@@ -2,6 +2,11 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.31.0
+- **grug ways: 10 lean workflow skills.** `grug-brainstorm`, `grug-plan`, `grug-execute`, `grug-tdd`, `grug-debug`, `grug-verify`, `grug-review`, `grug-worktree`, `grug-parallel`, `grug-finish`: the plan / test-first / root-cause / prove-it discipline of big skill packs in ~10k characters total (Superpowers' 15 skills are ~128k). Each costs one short description line per reply until used. `grug install` puts them in `~/.claude/skills/`; only `grug-*` folders are ever touched. Off: `skills.enabled false`.
+- **Antigravity support (app, IDE and `agy` CLI).** `grug install` writes one plugin, `~/.gemini/config/plugins/grugbrain`: the grug MCP server (memory, recall, history, outline, search ...), always-on rules (terse style, ranged reads, batch lookups) and the skills. Checked live: `agy plugin validate` passes; in `agy -p` (Gemini 3.8 Flash) the agent listed all 10 skills, all 15 grug tools and the batch rule. Uninstall removes the folder and its `config.json` entry. Antigravity hooks cannot change tool output, so no trimming there; hooks and a meter are next.
+- **`grug platforms`**: what grug can do in each AI app (Claude Code, Antigravity, Codex, Cursor/Copilot, ChatGPT) and what is installed; `--apply` / `--remove`. `grug doctor` shows each found app and `--fix` puts a missing one back. `grug install --no-platforms` skips this part.
+
 ## 2.30.1
 - **Fix: `grug doctor` said skills were slimmed and plugins off when they were not.** It read only grug's own record (`~/.grug/slim.json`). After a Claude data reset wiped `~/.claude/settings.json`, doctor still showed ✅ while all 136 skill overrides and 8 plugin switches were gone. Doctor now checks the real settings: ❌ with the count of lost changes, and `grug doctor --fix` writes back only the missing ones (a value you set yourself is left alone; plugins stay on in the desktop app unless tool search is forced, same rule as `grug slim --plugins --apply`). Backup first, other settings kept.
 

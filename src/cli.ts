@@ -47,7 +47,7 @@ async function readAllStdin(): Promise<string> {
 const HELP = `
 🪨 grugbrain v${VERSION}: grug make Claude use few token.
 
-  grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
+  grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service] [--no-platforms]
                                   one-time setup; then grug works alone forever
   grug dash [--once]              live TUI dashboard: what grug did, what it would do
   grug doctor [--fix]             check everything, say how to fix (--fix: remove broken leftovers of uninstalled tools, put back lost slim settings)
@@ -59,6 +59,7 @@ const HELP = `
   grug recall <query> [--dir d]   search memory
   grug remember <text> [--dir d]  pin a note for a project
   grug context [transcript]       what fills the context of the current session (by kind and biggest items)
+  grug platforms [--apply|--remove] grug on other AI apps (Antigravity) + workflow skills: what works where
   grug slim [--apply | --undo] [--days 30] [--include-new]
   grug slim --plugins [--apply [--force] | --undo] [--days 30] [--include-new]
                                   list unused plugin skills by name only (smaller context every reply; they still work)
@@ -88,7 +89,8 @@ async function main() {
         code: !flags.has('--no-code'),
         desktop: !flags.has('--no-desktop'),
         proxy: !flags.has('--no-proxy'),
-        service: !flags.has('--no-service')
+        service: !flags.has('--no-service'),
+        platforms: !flags.has('--no-platforms')
       });
       printSteps(steps);
       if (!steps[0].ok) process.exit(1);
@@ -152,6 +154,18 @@ async function main() {
           else console.log(sc.skills ? `✅ skill list slimmed: ${sc.skills} unused plugin skill(s) listed by name only (grug slim --undo to restore)` : `ℹ️  skill list not slimmed: \`grug slim\` shows which unused plugin skills could be listed by name only`);
           if (sc.missingPlugins.length) console.log(lost(sc.missingPlugins.length, `unused plugins back on (${sc.missingPlugins.join(', ')})`));
           else console.log(sc.plugins.length ? `✅ unused plugins off: ${sc.plugins.join(', ')} (grug slim --plugins --undo to restore)` : `ℹ️  no plugins turned off: \`grug slim --plugins\` shows which installed plugins were never used`);
+        }
+      }
+      {
+        const pl = await import('./platforms.js');
+        let rows = pl.platformStatus();
+        if (flags.has('--fix') && rows.some((r) => r.present && !r.installed)) {
+          printSteps(pl.installPlatforms());
+          rows = pl.platformStatus();
+        }
+        for (const r of rows) {
+          if (!r.present) continue;
+          console.log(`${r.installed ? '✅' : '❌'} ${r.name}: ${r.detail}${r.installed ? '' : '\n   → put it in: grug doctor --fix'}`);
         }
       }
       if (cfg.autoCompact.windowTokens > 0) {
@@ -403,6 +417,25 @@ async function main() {
       for (const x of r.rows)
         console.log(`${x.key.slice(0, 35).padEnd(36)}${String(x.runs).padStart(6)}${k(x.tokens).padStart(9)}${k(x.maxTokens).padStart(9)}  ${x.tokens ? Math.round((x.shortenedTokens / x.tokens) * 100) : 0}%`);
       console.log('\nEach result stays in the chat until compaction, so it is re-read on every later reply. File reads (sed, cat, grep) are content Claude asked for; big repeated runs of other commands are candidates for an output rule (open an issue with the command).');
+      break;
+    }
+    case 'platforms': {
+      // Other AI apps: what grug can do there, and what is installed.
+      const pl = await import('./platforms.js');
+      if (flags.has('--apply')) printSteps(pl.installPlatforms());
+      else if (flags.has('--remove')) printSteps(pl.uninstallPlatforms());
+      console.log('🪨 grug on other AI apps\n');
+      for (const r of pl.platformStatus()) console.log(`${!r.present ? '·' : r.installed ? '✅' : '❌'} ${r.name.padEnd(20)} ${r.present ? r.detail : 'not found on this machine'}`);
+      console.log(`
+What works where (✓ yes, ~ partly, · not possible there):
+  app                 MCP tools  rules  skills  context hooks  output trim  meter
+  Claude Code         ✓          ✓      ✓       ✓              ✓            ✓
+  Antigravity         ✓          ✓      ✓       ~ (planned)    ·            ~ (planned)
+  Codex (CLI/app)     ✓ planned  ✓      ✓       ✓ planned      ·            ✓ planned
+  Cursor / Copilot    ✓ planned  ✓      ✓       ~              ·            ·
+  ChatGPT app/web     ~ remote   ·      ·       ·              ·            ·
+ChatGPT runs the chat on OpenAI's servers: no hooks, no local transcript, only remote MCP connectors.
+grug install sets up every app it finds; grug platforms --apply redoes just this part, --remove takes it out.`);
       break;
     }
     case 'slim': {

@@ -6,6 +6,8 @@
 
 Install once. grug sit between Claude Code and Anthropic API, trim fat, stick cache, guard big files, remember every session in small brain that never get fat. grug draw brain picture. grug write Obsidian notes. grug show cave dashboard.
 
+grug also bring **10 small workflow skills** (plan, test first, debug to root cause, prove before "done"; ~10k characters, not ~128k) and works in **Antigravity** too (MCP tools, rules, skills). See [grug ways](#grug-ways-workflow-skills) and [where grug work](#where-grug-work).
+
 ```bash
 npx github:swaraj792725/grugbrain install
 ```
@@ -238,8 +240,31 @@ Grug read it straight: big win where output is noisy (tests, builds, logs), no l
 | **Claude Desktop** chat | MCP tools (`outline`, `read_symbol`, `repo_map`, `search`, `recall`, `remember`, `project_brief`…) + shared memory. Desktop's own API calls are private, so no proxy, no measured stats. |
 | **claude.ai** in browser | nothing. grug cannot reach inside browser. grug honest. |
 | your own app on the Anthropic SDK | set `ANTHROPIC_BASE_URL=http://127.0.0.1:4747` → proxy + stats |
+| **Antigravity** (app, IDE, `agy` CLI) | one grug plugin in `~/.gemini/config/plugins/grugbrain`: MCP tools + shared memory, short rules (terse, read, batch), the grug workflow skills. Checked live in `agy` 1.0.12. No output trimming (its hooks cannot change tool output), no meter yet |
+| **ChatGPT** app / web | nothing yet. OpenAI runs the chat on its servers: no hooks, no local transcript; only remote (HTTPS) MCP connectors. Codex (OpenAI's coding agent) has Claude-style hooks: next on the list |
 
 Pro/Max subscription or API key: both fine. Proxy pass auth headers through untouched. On a subscription you are limited by usage, not billed per token, so "$" in dashboard mean *API-equivalent value*. Fewer token still mean you hit limits later.
+
+---
+
+## grug ways (workflow skills)
+
+Plan, test first, debug to the root cause, prove before saying done. Same discipline as big skill packs, few words: 10 skills, ~10k characters in total (Superpowers' 15 skills ~128k). A skill costs only its one-line description each reply until used; then only that one file is read.
+
+| skill | use when |
+|---|---|
+| `grug-brainstorm` | idea open or vague: questions one at a time, 2-3 approaches, short agreed design |
+| `grug-plan` | multi-step change: small tasks with exact files and a check command each |
+| `grug-execute` | carrying out a plan: one task at a time, check after each, stop on blockers |
+| `grug-tdd` | feature or bug fix in a tested project: red, green, refactor |
+| `grug-debug` | bug or failing test: reproduce, one hypothesis at a time, root cause, then fix |
+| `grug-verify` | before saying done/fixed/passing: run the checks, report what they printed |
+| `grug-review` | asking for a review (short brief to a reviewer subagent) or answering one |
+| `grug-worktree` | work that should not touch the current checkout |
+| `grug-parallel` | 2+ independent tasks: short-brief subagents, check each result |
+| `grug-finish` | branch done: merge, PR, keep or discard, clean up |
+
+`grug install` copies them to `~/.claude/skills/` and into the Antigravity plugin (same `SKILL.md` format). `grug platforms` shows what is installed where; `grug config set skills.enabled false` then `grug platforms --apply` takes them out. Only `grug-*` folders are ever touched.
 
 ---
 
@@ -264,6 +289,7 @@ grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
 grug dash [--once]              TUI dashboard
 grug doctor [--fix]             check everything, say how to fix (--fix: put back lost slim settings, apply a raised window, remove broken leftovers)
 grug uninstall [--purge]        remove (keeps memory unless --purge)
+grug platforms [--apply]        grug on other AI apps (Antigravity) + workflow skills: what works where
 grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
 grug slim --plugins [--apply]   turn off plugins never used in 30 days (--undo puts them back; in the desktop app only once tool search is forced on)
 grug discover [--days 7]        which commands / MCP tools put most output in context, how much grug shortened
