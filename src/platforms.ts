@@ -99,15 +99,18 @@ const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 export const AG_HOOK_TOOLS = 'run_command|view_file|read_file|replace_file_content|multi_replace_file_content|write_to_file|grep_search';
 
-/** Antigravity hooks.json for the plugin: PreInvocation/Stop flat lists, tool events grouped by matcher. */
+/** Antigravity hooks.json for the plugin: one named hook (agy rejects bare event keys: "cannot unmarshal array
+ *  into ... JSONHookSpec"); PreInvocation/Stop flat lists, tool events grouped by matcher. */
 export function antigravityHooks(): any {
   const { node, cli } = cliCommand();
   const h = (event: string, timeout: number) => ({ type: 'command', command: `${shq(node)} ${shq(cli)} hook-ag ${event}`, timeout });
   return {
-    PreInvocation: [h('PreInvocation', 30)],
-    PreToolUse: [{ matcher: AG_HOOK_TOOLS, hooks: [h('PreToolUse', 20)] }],
-    PostToolUse: [{ matcher: AG_HOOK_TOOLS, hooks: [h('PostToolUse', 30)] }],
-    Stop: [h('Stop', 120)]
+    grugbrain: {
+      PreInvocation: [h('PreInvocation', 30)],
+      PreToolUse: [{ matcher: AG_HOOK_TOOLS, hooks: [h('PreToolUse', 20)] }],
+      PostToolUse: [{ matcher: AG_HOOK_TOOLS, hooks: [h('PostToolUse', 30)] }],
+      Stop: [h('Stop', 120)]
+    }
   };
 }
 

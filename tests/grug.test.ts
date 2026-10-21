@@ -4259,7 +4259,10 @@ describe('other apps: Antigravity and Codex hooks', () => {
     // Antigravity's plugin carries hooks too.
     fs.mkdirSync(pl.antigravityConfigDir(), { recursive: true });
     pl.installPlatforms();
-    const ag = JSON.parse(fs.readFileSync(path.join(pl.antigravityPluginDir(), 'hooks.json'), 'utf8'));
+    const agFile = JSON.parse(fs.readFileSync(path.join(pl.antigravityPluginDir(), 'hooks.json'), 'utf8'));
+    // agy wants named hooks at the top level ({name: {events}}); bare event keys fail to parse.
+    expect(Object.keys(agFile)).toEqual(['grugbrain']);
+    const ag = agFile.grugbrain;
     expect(ag.PreToolUse[0].matcher).toMatch(/run_command/);
     expect(ag.PreInvocation[0].command).toMatch(/hook-ag PreInvocation$/);
 
