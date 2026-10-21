@@ -413,7 +413,7 @@ async function main() {
       try {
         const { appStatus } = await import('./statusline.js');
         const { latestTranscript } = await import('./ctxbreak.js');
-        process.stdout.write(JSON.stringify(appStatus(latestTranscript(process.cwd()) || undefined)));
+        process.stdout.write(JSON.stringify(appStatus(latestTranscript(process.cwd()) || undefined, Date.now(), process.argv.includes('--busy'))));
       } catch {
         process.stdout.write('{}');
       }

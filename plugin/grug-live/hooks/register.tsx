@@ -1,21 +1,19 @@
+import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
-const FRAMES = ['🪨', '🪨.', '🪨..', '🪨...']
+import type { Status } from '../types'
+
+const REPO = 'https://github.com/swaraj792725/grugbrain'
+const IDLE_FRAMES = ['(ò_ó)', '(ò_ó)', '(-_ó)', '(ò_ó)']
 const bar = (f: number, w: number) => {
   const n = Math.round(Math.max(0, Math.min(1, f)) * w)
   return '█'.repeat(n) + '░'.repeat(w - n)
 }
 const k = (n: number) => `${Math.round(n / 1000)}k`
+const usd = (n: number) => (n >= 100 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`)
 
-type Status = {
-  savedPct?: number
-  netUsd?: number
-  tokens?: number
-  limit?: number
-  recent?: string
-  alerts?: string[]
-  quiet?: boolean
-}
+/** The numbers and grug's scene from `grug app-status`; the band reads it, so a write redraws the band. */
+const statusAtom = atom({ plugin: 'grug-live', key: 'status' } as const, {})
 
 let argv: string[] | null = null
 let status: Status = {}
@@ -46,28 +44,38 @@ async function refresh($: any) {
   lastRefresh = Date.now()
   try {
     if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
-    const r = await $.process.run(argv, { timeoutMs: 8000 })
+    const r = await $.process.run(busy ? [...argv!, '--busy'] : argv, { timeoutMs: 8000 })
     if (r.exitCode === 0) status = JSON.parse(r.stdout || '{}')
     const alert = (status.alerts ?? [])[0]
     if (alert && alert !== notified && !status.quiet) $.ui.toast(`grug: ${alert}`)
     notified = alert ?? ''
+    await update($, statusAtom, () => status)
   } catch {
     /* grug missing or busy: keep the last numbers */
   }
 }
 
+/** One text line (status entry, and the band where no SVG is drawn): grug's face animates frame by frame. */
+function line(s: Status): string {
+  const frames = s.grug?.frames ?? IDLE_FRAMES
+  const parts = [`${frames[frame % frames.length]} ${s.grug?.say ?? (busy ? 'GRUG WATCH CLAUDE WORK' : 'grug on')}`]
+  if (s.savedPct !== undefined) parts.push(`saved ${bar(s.savedPct, 10)} ~${Math.round(s.savedPct * 100)}%`)
+  if (s.tokens && s.limit) parts.push(`ctx ${bar(s.tokens / s.limit, 8)} ${k(s.tokens)}`)
+  if (s.alerts?.[0]) parts.push(`⚠ ${s.alerts[0]}`)
+  else if (s.recent) parts.push(s.recent.slice(0, 50))
+  return parts.join(' │ ')
+}
 
 export const register: Register = on => {
-
   on('session.start', async ($, e, next) => {
     void ping($, 'session')
     await refresh($)
     $.clock.every(1000, () => {
       frame += 1
-      const l = status.quiet ? '' : line()
+      const l = status.quiet ? '' : line(status)
       if (l !== shown) {
         shown = l
-        $.ui.status(l)
+        $.ui.status(l || undefined)
       }
     })
     $.clock.every(15000, () => {
@@ -78,6 +86,7 @@ export const register: Register = on => {
 
   on('prompt.submit', ($, e, next) => {
     busy = true
+    refresh($).catch(() => {})
     return next(e)
   })
 
@@ -87,22 +96,45 @@ export const register: Register = on => {
     return next(e)
   })
 
-  const line = () => {
-    const parts = [busy ? `grug working ${FRAMES[frame % FRAMES.length]}` : '🪨 grug on']
-    if (status.savedPct !== undefined) parts.push(`saved ${bar(status.savedPct, 10)} ~${Math.round(status.savedPct * 100)}%`)
-    if (status.tokens && status.limit) parts.push(`ctx ${bar(status.tokens / status.limit, 8)} ${k(status.tokens)}`)
-    if (status.alerts?.[0]) parts.push(`⚠ ${status.alerts[0]}`)
-    else if (status.recent) parts.push(status.recent.slice(0, 50))
-    return parts.join(' │ ')
-  }
-
-  on('ui.render', { component: 'AbovePrompt' }, ($, e, next) => {
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     void ping($, 'render')
-    if (e.props.hasSurvey || status.quiet) return next(e)
-    const { Box, Text } = $.ui.resolve(e)
+    const s = await read($, statusAtom)
+    if (e.props.hasSurvey || s.quiet) return next(e)
+    if (e.surface === 'terminal') {
+      const { Box, Text } = $.ui.resolve(e)
+      return (
+        <Box>
+          <Text color="claude">{line(s)}</Text>
+        </Box>
+      )
+    }
+    const { Box, Text, Svg, Link } = $.ui.resolve(e)
+    const g = s.grug
+    const alert = s.alerts?.[0]
+    const ctx = s.tokens && s.limit ? s.tokens / s.limit : 0
+    const ctxColor = ctx >= 1 ? 'error' : ctx >= 0.75 ? 'warning' : 'success'
     return (
-      <Box>
-        <Text dimColor>{line()}</Text>
+      <Box flexDirection="row" alignItems="center" gap="sm">
+        {g ? <Svg source={g.svg} alt={g.say} width={104} height={50} isInteractive /> : <Text>{IDLE_FRAMES[0]}</Text>}
+        <Box flexDirection="column" flexShrink={1}>
+          <Text weight="bold" color={alert ? 'warning' : 'claude'}>
+            {g?.say ?? 'grug on'}
+          </Text>
+          <Text>
+            {s.savedPct !== undefined ? <Text dimColor>saved </Text> : ''}
+            {s.savedPct !== undefined ? <Text color="success">{bar(s.savedPct, 10)}</Text> : ''}
+            {s.savedPct !== undefined ? <Text weight="bold"> ~{Math.round(s.savedPct * 100)}%</Text> : ''}
+            {s.netUsd && s.netUsd >= 0.01 ? <Text dimColor> ({usd(s.netUsd)} this week)</Text> : ''}
+            {ctx ? <Text dimColor>{'  │  ctx '}</Text> : ''}
+            {ctx ? <Text color={ctxColor}>{bar(ctx, 8)}</Text> : ''}
+            {ctx ? <Text weight="bold"> {k(s.tokens!)}</Text> : ''}
+          </Text>
+          <Text dimColor italic wrap="truncate-end">
+            {alert ? `⚠ ${alert}` : s.recent ? `last: ${s.recent.slice(0, 70)}` : 'grugbrain: grug make Claude use few token'}
+            {'  '}
+            <Link href={REPO} label="what is grug? ↗" />
+          </Text>
+        </Box>
       </Box>
     )
   })

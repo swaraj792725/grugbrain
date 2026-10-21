@@ -944,6 +944,39 @@ describe('auto-compaction + restore', () => {
     expect(st.tokens).toBeGreaterThan(80000);
     expect(st.alerts.some((a) => /cache expired/.test(a))).toBe(true);
     expect(appStatus(undefined).alerts).toEqual([]);
+    expect(st.grug?.act).toBe('cold');
+    expect(appStatus(undefined, Date.now(), true).grug?.act).toBe('work');
+  });
+
+  it('grug art: the scene follows what grug did, every act draws a valid animated SVG', async () => {
+    const { GRUG_ACTS, actFor, pickAct, grugSay, grugSvg, grugFrames, grugScene } = await import('../src/grugart.js');
+    expect(actFor('trim')).toBe('smash');
+    expect(actFor('auto-recall')).toBe('dig');
+    expect(actFor('reread')).toBe('guard');
+    expect(actFor('verify')).toBe('check');
+    expect(actFor('nope')).toBeUndefined();
+    expect(pickAct({ alerts: ['cache expired while idle'], kind: 'trim' })).toBe('cold');
+    expect(pickAct({ alerts: ['context 400k'], kind: 'trim' })).toBe('alarm');
+    expect(pickAct({ kind: 'trim', busy: true })).toBe('smash');
+    expect(pickAct({ busy: true })).toBe('work');
+    expect(pickAct({ idleMs: 30 * 60000, savedPct: 0.5 })).toBe('sleep');
+    expect(pickAct({ savedPct: 0.5 })).toBe('proud');
+    expect(pickAct({})).toBe('watch');
+    expect(grugSay('proud', { netUsd: 412 })).toContain('$412');
+    for (const act of GRUG_ACTS) {
+      const svg = grugSvg(act);
+      expect(svg.startsWith('<svg') && svg.endsWith('</svg>')).toBe(true);
+      expect(svg.length).toBeLessThan(131072);
+      expect(svg).toContain('<animate');
+      expect(svg).toContain('<title>');
+      const tags = svg.replace(/<[^>]*\/>/g, '');
+      const opens = (tags.match(/<[a-zA-Z][^>]*>/g) ?? []).map((t) => t.match(/^<([a-zA-Z]+)/)![1]);
+      const closes = (tags.match(/<\/[a-zA-Z]+>/g) ?? []).map((t) => t.slice(2, -1));
+      expect(opens.sort()).toEqual(closes.sort());
+      expect(grugFrames(act).length).toBeGreaterThan(0);
+      expect(grugSay(act).length).toBeGreaterThan(0);
+    }
+    expect(grugScene({ kind: 'graph' })).toMatchObject({ act: 'map' });
   });
 
   it('after auto-compaction the same session gets its own handoff back', async () => {
@@ -2866,7 +2899,7 @@ describe('app summary line', () => {
   it('composes a plain one-line summary with savings and context bars', async () => {
     const { composeAppLine } = await import('../src/statusline.js');
     const l = composeAppLine({ savedPct: 0.42, netUsd: 120, tokens: 90000, limit: 120000, recent: 'Trimmed npm output' });
-    expect(l).toContain('🪨 grug');
+    expect(l).toContain('ᕦ(ò_ó)ᕤ grug');
     expect(l).toMatch(/saved [█▏▎▍▌▋▊▉░]{10} ~42%/);
     expect(l).toContain('75% of /clear limit (90k)');
     expect(l).toContain('last: Trimmed npm output');
@@ -2889,14 +2922,14 @@ describe('app summary line', () => {
       const out: any = await runHook('user-prompt', { session_id: 'sum1', cwd, transcript_path: t, prompt: `please explain the billing module part ${i}` });
       msgs.push(out?.systemMessage);
     }
-    expect(msgs[0] || '').toContain('🪨 grug'); // the first prompt always shows it
-    expect(msgs[1] || '').not.toContain('🪨 grug');
-    expect(msgs[2] || '').toContain('🪨 grug');
+    expect(msgs[0] || '').toContain('ᕦ(ò_ó)ᕤ grug'); // the first prompt always shows it
+    expect(msgs[1] || '').not.toContain('ᕦ(ò_ó)ᕤ grug');
+    expect(msgs[2] || '').toContain('ᕦ(ò_ó)ᕤ grug');
     cfg.appSummary.enabled = false;
     saveConfig(cfg);
     for (let i = 0; i < 3; i++) {
       const out: any = await runHook('user-prompt', { session_id: 'sum2', cwd, prompt: `please explain the billing module part ${i}` });
-      expect(out?.systemMessage || '').not.toContain('🪨 grug');
+      expect(out?.systemMessage || '').not.toContain('ᕦ(ò_ó)ᕤ grug');
     }
   });
 });
