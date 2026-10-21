@@ -6,7 +6,7 @@
 
 Install once. grug sit between Claude Code and Anthropic API, trim fat, stick cache, guard big files, remember every session in small brain that never get fat. grug draw brain picture. grug write Obsidian notes. grug show cave dashboard.
 
-grug also bring **12 small workflow skills** (plan, test first, debug to root cause, prove before "done", explore cheap, write your own skill; ~13k characters, not ~128k) and works in **Antigravity** and **Codex** too (hooks, MCP tools, rules, skills, meter). See [grug ways](#grug-ways-workflow-skills) and [where grug work](#where-grug-work).
+grug also bring **12 small workflow skills** (plan, test first, debug to root cause, prove before "done", explore cheap, write your own skill; ~13k characters, not ~128k) and works in **Antigravity** and **Codex** too (hooks, memory tools, rules, skills, meter). See [grug ways](#grug-ways-workflow-skills) and [where grug work](#where-grug-work).
 
 ```bash
 npx github:swaraj792725/grugbrain install
@@ -267,7 +267,7 @@ Grug read it straight: big win where output is noisy (tests, builds, logs), no l
 | **claude.ai** in browser | nothing. grug cannot reach inside browser. grug honest. |
 | your own app on the Anthropic SDK | set `ANTHROPIC_BASE_URL=http://127.0.0.1:4747` → proxy + stats |
 | **Antigravity** (app, IDE, `agy` CLI) | one grug plugin in `~/.gemini/config/plugins/grugbrain`: hooks (start context + code map, prompt recall, re-read guard, edit/type guards, verify gate, handoff, facts, meter), MCP tools + shared memory, short rules, the workflow skills. Noisy commands (tests, builds, installs) run through `grug exec`, which shortens their output (errors kept); you still approve the command (`platforms.antigravity.rewrite ask`, or `allow` / `off`). Checked live in `agy` 1.0.12; measured with Gemini 3.8 Flash on a two-prompt task with noisy tests (3 runs each): −31% input tokens, same results |
-| **Codex** (OpenAI's coding agent) | `~/.codex`: hooks (same set as Antigravity), the grug MCP server in `config.toml`, rules in `AGENTS.md`, skills in `~/.agents/skills`. Codex asks you once to trust new hooks (`/hooks`). `grug exec` rewrite only when Codex would not ask anyway (`platforms.codex.rewrite auto`: full-access modes). Checked live in Codex 0.163 with a scripted stand-in model (start context, shorter test output, re-read and risky-command holds, proof gate). Same scripted task, grug on vs off: −10% characters sent in Codex, −13% in Claude Code |
+| **Codex** (OpenAI's coding agent) | `~/.codex`: hooks (same set as Antigravity), rules in `AGENTS.md` that name the shell commands `grug history` / `recall` / `outline` (no MCP server by default: Codex re-sends every tool schema each request, grug's cost 3.4k characters; `platforms.codex.mcpTools lean` or `full` brings it back), skills in `~/.agents/skills`. Codex asks you once to trust new hooks (`/hooks`). `grug exec` rewrite only when Codex would not ask anyway (`platforms.codex.rewrite auto`: full-access modes). Checked live in Codex 0.163 with a scripted stand-in model (start context, shorter test output, re-read and risky-command holds, proof gate). Same scripted task, grug on vs off: −13% characters sent in Codex, −13% in Claude Code |
 | **ChatGPT** app / web | nothing. OpenAI runs the chat on its servers: no hooks, no local transcript; only remote (HTTPS) MCP connectors |
 
 How it works in the other apps: their hooks call grug, which turns each event into the Claude Code one (tool names translated: `view_file` → Read, `run_command` / `exec_command` → Bash, `apply_patch` → Edit) and puts the app's own log into a Claude-format copy in `~/.grug/foreign/`, so memory, handoff, facts and the meter work unchanged. Neither app lets a hook change a tool's output after it ran, so the shortening happens before: the command itself is wrapped. Things only Claude Code has (auto-compact window, status line) stay off there.
@@ -330,6 +330,7 @@ grug graph                      open memory graph
 grug vault                      rebuild Obsidian vault, print path
 grug brief [dir]                what grug would tell Claude about a project
 grug recall <query>             search memory
+grug history <words>            search this project's earlier conversations (Codex rules use it)
 grug remember <text>            pin note for current project
 grug maintain                   ingest + consolidate now (normally automatic)
 
