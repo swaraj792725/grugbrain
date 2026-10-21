@@ -18,7 +18,9 @@ import { maintain, withMemoryLock } from './memory/maintain.js';
 import { addNote, loadMemory, projectKey, saveMemory } from './memory/store.js';
 import { proxyHealth, startProxy } from './proxy/server.js';
 import { advice, openPath, runDashboard } from './tui/dashboard.js';
-import { trafficCheck } from './stats.js';
+import { recordActivity, trafficCheck } from './stats.js';
+import { searchHistory } from './history.js';
+import { estimateTokens } from './tokens.js';
 
 const argv = process.argv.slice(2).filter((a) => a !== '--from=grugbrain');
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
@@ -57,6 +59,7 @@ const HELP = `
   grug vault                      rebuild + show the Obsidian-compatible memory vault
   grug brief [dir]                show what grug would tell Claude about a project
   grug recall <query> [--dir d]   search memory
+  grug history <words> [--dir d]  search this project's earlier conversations
   grug remember <text> [--dir d]  pin a note for a project
   grug context [transcript]       what fills the context of the current session (by kind and biggest items)
   grug platforms [--apply|--remove] grug on other AI apps (Antigravity) + workflow skills: what works where
@@ -590,6 +593,16 @@ grug install sets up every app it finds; grug platforms --apply redoes just this
       const q = pos.slice(1).join(' ');
       const r = recall(loadMemory(), projectKey(dir), q, cfg.memory.recallTokens * 3, cfg.memory.halfLifeDays);
       console.log(r.text || 'Nothing relevant in memory.');
+      break;
+    }
+
+    case 'history': {
+      const q = pos.slice(1).join(' ');
+      if (!q) throw new Error("usage: grug history <words> [--dir <project>]");
+      const dir = path.resolve(flagValue('dir') || process.cwd());
+      const out = searchHistory(dir, q);
+      recordActivity({ kind: 'history', msg: `History lookup: ${q.slice(0, 60)}`, tokens: -estimateTokens(out) });
+      console.log(out);
       break;
     }
 

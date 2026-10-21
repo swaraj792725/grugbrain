@@ -83,6 +83,13 @@ export function platformRules(client: 'antigravity' | 'codex', cfg = loadConfig(
       : "Large files: search for the symbol first (rg -n), then print only the needed lines (sed -n 'START,ENDp') instead of cat-ing the whole file."
   );
   if (cfg.batching.rule) parts.push(BATCH_RULE.replace('one Bash call', client === 'antigravity' ? 'one command' : 'one shell command'));
+  if (client === 'codex' && cfg.platforms.codex.mcp && cfg.platforms.codex.mcpTools === 'shell') {
+    const { node, cli } = cliCommand();
+    const g = `${shq(node)} ${shq(cli)}`;
+    parts.push(
+      `grug memory (shell, cheap): \`${g} history '<words>'\` for an exact detail from earlier conversations of this project (after compaction or a new session) instead of guessing; \`${g} recall '<words>'\` for saved notes and decisions; \`${g} outline <file>\` for a big file's shape.`
+    );
+  }
   const skills = bundledSkillNames();
   if (cfg.skills.enabled && skills.length) parts.push('', `Workflow skills ${skills.join(', ')}: use the one that fits before starting that kind of work.`);
   return parts.join('\n') + '\n';
@@ -265,8 +272,9 @@ function installCodex(): Step[] {
   // MCP server: a marked block in config.toml (left alone if the user has their own grugbrain entry).
   const tomlFile = path.join(home, 'config.toml');
   const toml = withoutBlock(readText(tomlFile), TOML_START, TOML_END);
-  if (cfg.platforms.codex.mcp && /^\s*\[mcp_servers\.grugbrain\]/m.test(toml)) done.push('MCP server (your own entry kept)');
-  else if (cfg.platforms.codex.mcp) {
+  const mcp = cfg.platforms.codex.mcp && cfg.platforms.codex.mcpTools !== 'shell';
+  if (mcp && /^\s*\[mcp_servers\.grugbrain\]/m.test(toml)) done.push('MCP server (your own entry kept)');
+  else if (mcp) {
     writeIfChanged(tomlFile, (toml.trim() ? toml.replace(/\n*$/, '\n\n') : '') + codexMcpBlock() + '\n');
     done.push('MCP server');
   } else if (fs.existsSync(tomlFile)) writeIfChanged(tomlFile, toml);

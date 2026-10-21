@@ -206,10 +206,12 @@ export interface GrugConfig {
      * The rewrite needs a permission decision in both apps: `ask` keeps the user's approval, `allow` approves
      * the rewritten command, `auto` (Codex) rewrites only where commands run without approval anyway, `off` never.
      * mcpTools: `lean` lists only history, recall and outline (every listed schema is re-sent on each request
-     * there, and the others went unused), `full` lists all of them.
+     * there, and the others went unused), `full` lists all of them. `shell` (Codex): no MCP server at all; the
+     * rules name `grug history|recall|outline` as shell commands instead. Codex adds its own MCP resource tools
+     * whenever any server exists, so grug's server cost 3.4k chars on every request.
      */
     antigravity: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'ask' | 'allow' | 'off'; mcpTools: 'lean' | 'full' };
-    codex: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'auto' | 'allow' | 'off'; mcpTools: 'lean' | 'full' };
+    codex: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'auto' | 'allow' | 'off'; mcpTools: 'shell' | 'lean' | 'full' };
   };
   /** Ask the user before a shell command that throws away work or data in one go (rm -rf ~, force push, reset --hard, DROP TABLE). */
   safety: {
@@ -344,7 +346,7 @@ export function defaultConfig(): GrugConfig {
     skills: { enabled: true },
     platforms: {
       antigravity: { enabled: true, mcp: true, hooks: true, rewrite: 'ask', mcpTools: 'lean' },
-      codex: { enabled: true, mcp: true, hooks: true, rewrite: 'auto', mcpTools: 'lean' }
+      codex: { enabled: true, mcp: true, hooks: true, rewrite: 'auto', mcpTools: 'shell' }
     },
     safety: {
       riskyCommands: true
@@ -381,7 +383,7 @@ const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routi
   'platforms.antigravity.rewrite': ['ask', 'allow', 'off'],
   'platforms.codex.rewrite': ['auto', 'allow', 'off'],
   'platforms.antigravity.mcpTools': ['lean', 'full'],
-  'platforms.codex.mcpTools': ['lean', 'full']
+  'platforms.codex.mcpTools': ['shell', 'lean', 'full']
 };
 
 const RANGES: Record<string, [number, number]> = {

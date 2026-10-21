@@ -4277,8 +4277,9 @@ describe('other apps: Antigravity and Codex hooks', () => {
     expect(steps.some((s) => s.target === 'codex hooks' && /\/hooks/.test(s.message))).toBe(true);
     const t = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
     expect(t.startsWith(toml)).toBe(true);
-    expect(t.match(/\[mcp_servers\.grugbrain\]/g)?.length).toBe(1);
-    expect(t).toContain(JSON.stringify(path.join(paths.app(), 'cli.js')));
+    // Default `shell`: no grug MCP server (Codex re-sends every schema plus its own resource tools each request);
+    // the rules name grug's shell commands instead.
+    expect(t).toBe(toml);
     const hooks = JSON.parse(fs.readFileSync(path.join(home, 'hooks.json'), 'utf8')).hooks;
     expect(hooks.PreToolUse[0]).toEqual(userHook);
     expect(hooks.PreToolUse.length).toBe(2);
@@ -4287,6 +4288,15 @@ describe('other apps: Antigravity and Codex hooks', () => {
     const md = fs.readFileSync(path.join(home, 'AGENTS.md'), 'utf8');
     expect(md.startsWith('# my rules\n')).toBe(true);
     expect(md).toMatch(/sed -n/);
+    expect(md).toMatch(/cli\.js' history '<words>'/);
+    const cfg = loadConfig();
+    cfg.platforms.codex.mcpTools = 'lean';
+    saveConfig(cfg);
+    pl.installPlatforms();
+    const t2 = fs.readFileSync(path.join(home, 'config.toml'), 'utf8');
+    expect(t2.match(/\[mcp_servers\.grugbrain\]/g)?.length).toBe(1);
+    expect(t2).toContain(JSON.stringify(path.join(paths.app(), 'cli.js')));
+    expect(fs.readFileSync(path.join(home, 'AGENTS.md'), 'utf8')).not.toMatch(/ history '<words>'/);
     expect(pl.bundledSkillNames(pl.codexSkillsDir()).length).toBe(pl.bundledSkillNames().length);
     expect(pl.platformStatus().find((r) => r.id === 'codex')).toMatchObject({ present: true, installed: true });
     // Antigravity's plugin carries hooks too.
