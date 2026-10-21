@@ -103,9 +103,9 @@ const userRequest = (c: string) => {
   return (m ? m[1] : c).trim();
 };
 
-function convertAntigravity(e: any, st: ShadowState): any[] {
+function convertAntigravity(e: any, st: ShadowState, cwd: string): any[] {
   const ts = e.created_at || new Date().toISOString();
-  const base = { isSidechain: false, timestamp: ts };
+  const base = { isSidechain: false, cwd, timestamp: ts };
   if (e.type === 'USER_INPUT') {
     const text = userRequest(String(e.content || ''));
     // grug's own context (sent as a user message so it stays in the conversation) is not a prompt.
@@ -147,7 +147,7 @@ function textOf(content: any): string {
 
 function convertCodex(e: any, st: ShadowState, cwd: string): any[] {
   const p = e.payload || {};
-  const base = { isSidechain: false, timestamp: e.timestamp || new Date().toISOString() };
+  const base = { isSidechain: false, cwd, timestamp: e.timestamp || new Date().toISOString() };
   const id = () => `cx-${++st.n}`;
   if (e.type === 'turn_context' && p.model) st.model = p.model;
   if (e.type === 'event_msg') {
@@ -254,7 +254,7 @@ export function syncShadow(client: Client, sid: string, source: string | undefin
           } catch {
             continue;
           }
-          const conv = client === 'antigravity' ? convertAntigravity(e, st) : convertCodex(e, st, cwd);
+          const conv = client === 'antigravity' ? convertAntigravity(e, st, cwd) : convertCodex(e, st, cwd);
           for (const c of conv) lines.push(JSON.stringify(c));
         }
         if (lines.length) fs.appendFileSync(out, lines.join('\n') + '\n');

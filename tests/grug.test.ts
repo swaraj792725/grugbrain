@@ -11,7 +11,7 @@ import { cavemanCompress, terseStyle } from '../src/compress/caveman.js';
 import { repoMap } from '../src/compress/repomap.js';
 import { transformRequest } from '../src/proxy/transform.js';
 import { startProxy } from '../src/proxy/server.js';
-import { defaultConfig, saveConfig, paths, userHome } from '../src/config.js';
+import { defaultConfig, loadConfig, saveConfig, paths, userHome } from '../src/config.js';
 import {
   addNote, appendBuffer, consolidate, ingestSession, loadMemory, MemoryDB, projectKey, readBuffer
 } from '../src/memory/store.js';
@@ -1914,7 +1914,7 @@ describe('media wiring', () => {
   it('registers the hooks for MCP tools too, and shows media savings on the dashboard', async () => {
     installClaudeCode(false);
     const s = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
-    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|Grep|Edit|Write|MultiEdit|Agent|Task|mcp__.*');
+    expect(s.hooks.PreToolUse[0].matcher).toBe('Read|Grep|Edit|Write|MultiEdit|Agent|Task|Bash|mcp__.*');
     expect(s.hooks.PostToolUse[0].matcher).toContain('mcp__.*');
     const { recordActivity } = await import('../src/stats.js');
     recordActivity({ kind: 'media', msg: 'Skipped a repeat screenshot', tokens: 1800 });
@@ -4066,6 +4066,45 @@ describe('other apps: Antigravity and Codex hooks', () => {
     expect(lines[1].message.content[0].text).toBe('Changed it; tests not run.');
     expect(sh.lastPrompt('codex', 's2')).toBe('change the threshold to 60');
   });
+  it('history also searches Codex / Antigravity shadows of the same project', async () => {
+    const sh = await import('../src/agents/shadow.js');
+    const { searchHistory } = await import('../src/history.js');
+    const src = path.join(tmp, 'rollout-h.jsonl');
+    const L = (type: string, payload: any) => JSON.stringify({ timestamp: '2026-10-21T10:00:00Z', type, payload }) + '\n';
+    fs.writeFileSync(src, L('event_msg', { type: 'user_message', message: 'why does checkout throw ERR_SHIP_ZONE' }) + L('event_msg', { type: 'agent_message', message: 'ERR_SHIP_ZONE comes from zones.js line 40.' }));
+    const proj = path.join(tmp, 'hproj');
+    fs.mkdirSync(proj, { recursive: true });
+    const out = sh.syncShadow('codex', 'h1', src, undefined, proj)!;
+    expect(JSON.parse(fs.readFileSync(out, 'utf8').split('\n')[0]).cwd).toBe(proj);
+    expect(searchHistory(proj, 'ERR_SHIP_ZONE')).toMatch(/zones\.js line 40/);
+    const other = path.join(tmp, 'hother');
+    fs.mkdirSync(other, { recursive: true });
+    expect(searchHistory(other, 'ERR_SHIP_ZONE')).toMatch(/^No earlier conversations/);
+  });
+
+  it('MCP tier: Codex / Antigravity list only history, recall and outline unless set to full; Claude lists all', () => {
+    const names = () => handleMessage({ jsonrpc: '2.0', id: 1, method: 'tools/list' }).result.tools.map((t: any) => t.name);
+    const instr = () => handleMessage({ jsonrpc: '2.0', id: 2, method: 'initialize', params: {} }).result.instructions as string;
+    const prev = process.env.GRUG_CLIENT;
+    try {
+      delete process.env.GRUG_CLIENT;
+      expect(names().length).toBeGreaterThan(10);
+      process.env.GRUG_CLIENT = 'codex';
+      expect(names().sort()).toEqual(['history', 'outline', 'recall']);
+      expect(instr()).not.toMatch(/read_symbol|repo_map|pdf_text/);
+      expect(handleMessage({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'repo_map', arguments: {} } }).error.code).toBe(-32602);
+      const cfg = loadConfig();
+      cfg.platforms.codex.mcpTools = 'full';
+      saveConfig(cfg);
+      expect(names().length).toBeGreaterThan(10);
+      process.env.GRUG_CLIENT = 'antigravity';
+      expect(names().length).toBe(3);
+    } finally {
+      if (prev === undefined) delete process.env.GRUG_CLIENT;
+      else process.env.GRUG_CLIENT = prev;
+    }
+  });
+
   const wrapLike = (c: string) => `'/x/grug' exec --app codex -- '${c}'`;
 
   it('Antigravity hooks: start context + recall once per turn, read guards as deny, noisy commands rewritten with approval kept', async () => {

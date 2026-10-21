@@ -268,6 +268,7 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
           return { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: dangerText(cmd, why, false) } };
         }
       }
+      if (input.tool_name === 'Bash') return null;
       // Screenshots, images, PDFs, video: skip repeats, shrink, or point at the cheaper way in.
       const media = mediaPreTool(cfg, input, sid, cwd, now, readKey);
       if (media) return media;

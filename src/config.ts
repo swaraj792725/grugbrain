@@ -205,9 +205,11 @@ export interface GrugConfig {
      * rewrite: run noisy commands (tests, builds, installs) through `grug exec` so their output is shortened.
      * The rewrite needs a permission decision in both apps: `ask` keeps the user's approval, `allow` approves
      * the rewritten command, `auto` (Codex) rewrites only where commands run without approval anyway, `off` never.
+     * mcpTools: `lean` lists only history, recall and outline (every listed schema is re-sent on each request
+     * there, and the others went unused), `full` lists all of them.
      */
-    antigravity: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'ask' | 'allow' | 'off' };
-    codex: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'auto' | 'allow' | 'off' };
+    antigravity: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'ask' | 'allow' | 'off'; mcpTools: 'lean' | 'full' };
+    codex: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'auto' | 'allow' | 'off'; mcpTools: 'lean' | 'full' };
   };
   /** Ask the user before a shell command that throws away work or data in one go (rm -rf ~, force push, reset --hard, DROP TABLE). */
   safety: {
@@ -341,8 +343,8 @@ export function defaultConfig(): GrugConfig {
     },
     skills: { enabled: true },
     platforms: {
-      antigravity: { enabled: true, mcp: true, hooks: true, rewrite: 'ask' },
-      codex: { enabled: true, mcp: true, hooks: true, rewrite: 'auto' }
+      antigravity: { enabled: true, mcp: true, hooks: true, rewrite: 'ask', mcpTools: 'lean' },
+      codex: { enabled: true, mcp: true, hooks: true, rewrite: 'auto', mcpTools: 'lean' }
     },
     safety: {
       riskyCommands: true
@@ -377,7 +379,9 @@ function deepMerge<T>(base: T, over: any): T {
 
 const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'], 'routing.lightModel': ['', 'sonnet', 'haiku'],
   'platforms.antigravity.rewrite': ['ask', 'allow', 'off'],
-  'platforms.codex.rewrite': ['auto', 'allow', 'off']
+  'platforms.codex.rewrite': ['auto', 'allow', 'off'],
+  'platforms.antigravity.mcpTools': ['lean', 'full'],
+  'platforms.codex.mcpTools': ['lean', 'full']
 };
 
 const RANGES: Record<string, [number, number]> = {

@@ -30,6 +30,22 @@ const INSTRUCTIONS = `grugbrain saves tokens. Prefer its tools over reading whol
 - pdf_text(path, pages) to read a PDF as text (cheap); Read pages as images only for scans/figures. video_frames(path) for a frame sheet of a video. media_info(path) to see what a file costs.
 - history(query) to fetch an exact detail from earlier in this project's conversations (e.g. after compaction) instead of guessing.`;
 
+const LEAN_INSTRUCTIONS = `grugbrain: memory of this project's earlier conversations (history, recall) and cheap file outlines (outline).`;
+
+/** Tools listed in Codex / Antigravity by default: their schemas ride on every request and the rest went unused. */
+export const LEAN_TOOLS = ['history', 'recall', 'outline'];
+
+/** `lean` for Codex / Antigravity (GRUG_CLIENT) unless set to full; Claude Code always gets every tool. */
+export function mcpTier(): 'lean' | 'full' {
+  const client = process.env.GRUG_CLIENT;
+  if (client !== 'codex' && client !== 'antigravity') return 'full';
+  return loadConfig().platforms?.[client]?.mcpTools === 'full' ? 'full' : 'lean';
+}
+
+export function toolList(tier = mcpTier()) {
+  return tier === 'lean' ? TOOLS.filter((t) => LEAN_TOOLS.includes(t.name)) : TOOLS;
+}
+
 type Json = any;
 
 const TOOLS = [
@@ -82,7 +98,7 @@ const TOOLS = [
   {
     name: 'history',
     description:
-      "Search this project's earlier Claude Code conversations (full transcripts, including before compaction or /clear) and return only the matching excerpts: what the user asked, what was decided, errors, command output. Use it instead of guessing about earlier context.",
+      "Search this project's earlier conversations (full transcripts, including before compaction or /clear) and return only the matching excerpts: what the user asked, what was decided, errors, command output. Use it instead of guessing about earlier context.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -402,20 +418,20 @@ export function handleMessage(msg: Json): Json | null {
         protocolVersion: SUPPORTED_PROTOCOLS.includes(asked) ? asked : SUPPORTED_PROTOCOLS[0],
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'grugbrain', version: VERSION },
-        instructions: INSTRUCTIONS
+        instructions: mcpTier() === 'lean' ? LEAN_INSTRUCTIONS : INSTRUCTIONS
       });
     }
     case 'ping':
       return reply({});
     case 'tools/list':
-      return reply({ tools: TOOLS });
+      return reply({ tools: toolList() });
     case 'resources/list':
       return reply({ resources: [] });
     case 'prompts/list':
       return reply({ prompts: [] });
     case 'tools/call': {
       const name = msg.params?.name;
-      if (!TOOLS.some((t) => t.name === name)) return error(-32602, `Unknown tool: ${name}`);
+      if (!toolList().some((t) => t.name === name)) return error(-32602, `Unknown tool: ${name}`);
       try {
         const r = callToolRich(name, msg.params?.arguments || {});
         return reply({ content: [{ type: 'text', text: r.text }, ...r.images.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType }))] });

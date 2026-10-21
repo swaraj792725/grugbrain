@@ -9,7 +9,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import { GrugConfig } from './config.js';
 import {
-  countPageRange, estimateImageTokens, hasTool, IMAGE_RE, imageSizeOfBase64, imageSizeOfFile, PDF_RE, pdfPageCount, resizeImageFile, VIDEO_RE
+  countPageRange, estimateImageTokens, hasTool, IMAGE_RE, imageSizeOfBase64, imageSizeOfFile, PDF_RE, pdfPageCount, resizeImageFile, videoDuration, VIDEO_RE
 } from './media.js';
 import { BufferEvent, appendBuffer, readBuffer } from './memory/store.js';
 import { recordActivity } from './stats.js';
@@ -87,6 +87,8 @@ export function mediaPreTool(cfg: GrugConfig, input: MediaInput, sid: string, cw
   const tool = input.tool_name || '';
   const ti = input.tool_input || {};
   const proj = path.basename(cwd);
+  // Codex / Antigravity: shell commands, since grug's PDF/video tools are not listed there by default.
+  const foreign = /^(ag|cx)-/.test(sid);
 
   // 1. A screenshot that would show the page exactly as the last one did.
   if (mg.dedupeScreenshots) {
@@ -208,7 +210,9 @@ export function mediaPreTool(cfg: GrugConfig, input: MediaInput, sid: string, cw
         permissionDecision: 'deny',
         permissionDecisionReason:
           `grugbrain: ${path.basename(file)} has ${total || 'many'} pages and this Read asks for ${want}; page images cost about 1.5-3k tokens each. ` +
-          `First try the grugbrain pdf_text tool (path, pages): the text of a text page costs a fraction of that, and it lists pages that are scans or figures. ` +
+          (foreign
+            ? `First print the text with pdftotext -layout -f FIRST -l LAST '${file}' - (a text page costs a fraction of that); pages that print empty are scans or figures. `
+            : `First try the grugbrain pdf_text tool (path, pages): the text of a text page costs a fraction of that, and it lists pages that are scans or figures. `) +
           `Then Read only those pages (pages="N") as images. To read these pages as images anyway, repeat the same Read and it will be allowed.`
       }
     };
@@ -223,7 +227,9 @@ export function mediaPreTool(cfg: GrugConfig, input: MediaInput, sid: string, cw
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: hasTool('ffmpeg')
+        permissionDecisionReason: hasTool('ffmpeg') && foreign
+          ? `grugbrain: ${path.basename(file)} is a video. Make one contact sheet of evenly spaced frames and view that instead (about one image instead of one per frame): ffmpeg -i '${file}' -vf "fps=${(12 / (videoDuration(file) || 120)).toFixed(4)},scale=320:-1,tile=4x3" -frames:v 1 /tmp/sheet.jpg. Repeat the Read to proceed anyway.`
+          : hasTool('ffmpeg')
           ? `grugbrain: ${path.basename(file)} is a video. Use the grugbrain video_frames tool (path, count, from, to): it returns one contact-sheet image of evenly spaced frames, which costs about one image instead of one per frame. Repeat the Read to proceed anyway.`
           : `grugbrain: ${path.basename(file)} is a video and cannot be read as a file. Extract a few frames first (ffmpeg is not installed: brew install ffmpeg), then Read a contact sheet instead of many single frames. Repeat the Read to proceed anyway.`
       }
