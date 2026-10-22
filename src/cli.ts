@@ -18,7 +18,9 @@ import { maintain, withMemoryLock } from './memory/maintain.js';
 import { addNote, loadMemory, projectKey, saveMemory } from './memory/store.js';
 import { proxyHealth, startProxy } from './proxy/server.js';
 import { advice, openPath, runDashboard } from './tui/dashboard.js';
-import { trafficCheck } from './stats.js';
+import { recordActivity, trafficCheck } from './stats.js';
+import { searchHistory } from './history.js';
+import { estimateTokens } from './tokens.js';
 
 const argv = process.argv.slice(2).filter((a) => a !== '--from=grugbrain');
 const flags = new Set(argv.filter((a) => a.startsWith('--')));
@@ -47,7 +49,7 @@ async function readAllStdin(): Promise<string> {
 const HELP = `
 🪨 grugbrain v${VERSION}: grug make Claude use few token.
 
-  grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
+  grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service] [--no-platforms]
                                   one-time setup; then grug works alone forever
   grug dash [--once]              live TUI dashboard: what grug did, what it would do
   grug doctor [--fix]             check everything, say how to fix (--fix: remove broken leftovers of uninstalled tools, put back lost slim settings)
@@ -57,8 +59,10 @@ const HELP = `
   grug vault                      rebuild + show the Obsidian-compatible memory vault
   grug brief [dir]                show what grug would tell Claude about a project
   grug recall <query> [--dir d]   search memory
+  grug history <words> [--dir d]  search this project's earlier conversations
   grug remember <text> [--dir d]  pin a note for a project
   grug context [transcript]       what fills the context of the current session (by kind and biggest items)
+  grug platforms [--apply|--remove] grug on other AI apps (Antigravity) + workflow skills: what works where
   grug slim [--apply | --undo] [--days 30] [--include-new]
   grug slim --plugins [--apply [--force] | --undo] [--days 30] [--include-new]
                                   list unused plugin skills by name only (smaller context every reply; they still work)
@@ -77,7 +81,9 @@ const HELP = `
   grug config [path | get <k> | set <k> <v>]
   grug savings                    one-line spend/savings summary
 
-  (internal) daemon · proxy · mcp · hook <event>
+  grug exec -- '<command>'        run a command, print its output shortened (errors kept)
+
+  (internal) daemon · proxy · mcp · hook <event> · hook-ag / hook-codex <Event> · agent-end
 `;
 
 async function main() {
@@ -88,7 +94,8 @@ async function main() {
         code: !flags.has('--no-code'),
         desktop: !flags.has('--no-desktop'),
         proxy: !flags.has('--no-proxy'),
-        service: !flags.has('--no-service')
+        service: !flags.has('--no-service'),
+        platforms: !flags.has('--no-platforms')
       });
       printSteps(steps);
       if (!steps[0].ok) process.exit(1);
@@ -121,7 +128,7 @@ async function main() {
         } catch {
           /* no settings */
         }
-        console.log(`${ok(dirs.includes('grug-live') && fs.existsSync(pluginDir()))} grug-live band above the prompt (app plugin; needs a new session)`);
+        console.log(`${ok(dirs.includes('grug-live') && fs.existsSync(pluginDir()))} grug-live footer entry below the prompt (app plugin; needs a new session)`);
         let hb: any = {};
         try {
           hb = JSON.parse(fs.readFileSync(path.join(paths.home(), 'live-heartbeat.json'), 'utf8'));
@@ -129,9 +136,11 @@ async function main() {
           /* never loaded */
         }
         const ago = (t?: number) => (t ? `${Math.max(1, Math.round((Date.now() - t) / 60000))} min ago` : 'never');
-        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; band drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}`);
+        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}; stage above the prompt: ${hb.bandAt ? ago(hb.bandAt) : 'never'}${hb.bandCols ? ` (${hb.bandCols[0]} cells wide)` : ''}`);
+        for (const [dir, c] of Object.entries<any>(hb.cwds || {}).slice(0, 6))
+          console.log(`   ${path.basename(dir)}: loaded ${c.sessionAt ? ago(c.sessionAt) : 'earlier'}, stage ${c.bandAt ? ago(c.bandAt) : 'never'}${c.skipAt ? `, skipped ${ago(c.skipAt)} (${c.skip})` : ''}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
-        else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not render the band; use `grug dash` or the terminal `claude` to see it');
+        else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not draw plugin status entries; use `grug dash` or the terminal `claude` to see it');
       }
       {
         // slim.json says what grug changed; settings.json says what is really in effect (a Claude data reset wipes it).
@@ -152,6 +161,18 @@ async function main() {
           else console.log(sc.skills ? `✅ skill list slimmed: ${sc.skills} unused plugin skill(s) listed by name only (grug slim --undo to restore)` : `ℹ️  skill list not slimmed: \`grug slim\` shows which unused plugin skills could be listed by name only`);
           if (sc.missingPlugins.length) console.log(lost(sc.missingPlugins.length, `unused plugins back on (${sc.missingPlugins.join(', ')})`));
           else console.log(sc.plugins.length ? `✅ unused plugins off: ${sc.plugins.join(', ')} (grug slim --plugins --undo to restore)` : `ℹ️  no plugins turned off: \`grug slim --plugins\` shows which installed plugins were never used`);
+        }
+      }
+      {
+        const pl = await import('./platforms.js');
+        let rows = pl.platformStatus();
+        if (flags.has('--fix') && rows.some((r) => r.present && !r.installed)) {
+          printSteps(pl.installPlatforms());
+          rows = pl.platformStatus();
+        }
+        for (const r of rows) {
+          if (!r.present) continue;
+          console.log(`${r.installed ? '✅' : '❌'} ${r.name}: ${r.detail}${r.installed ? '' : '\n   → put it in: grug doctor --fix'}`);
         }
       }
       if (cfg.autoCompact.windowTokens > 0) {
@@ -326,6 +347,44 @@ async function main() {
       process.exit(0);
     }
 
+    case 'hook-ag':
+    case 'hook-codex': {
+      let out: any = null;
+      try {
+        const raw = await readStdinJson();
+        if (cmd === 'hook-ag') out = await (await import('./agents/antigravity.js')).runAntigravityHook(pos[1] || '', raw);
+        else out = await (await import('./agents/codex.js')).runCodexHook(pos[1] || '', raw);
+      } catch {
+        out = null; // never break the app
+      }
+      // Antigravity: no output at all means "no opinion" (an empty object would deny a tool).
+      if (out) process.stdout.write(JSON.stringify(out));
+      process.exit(0);
+    }
+
+    case 'exec': {
+      // grug exec [--app <name>] -- '<command>': the command is everything after `--`, untouched.
+      const raw = process.argv.slice(2);
+      const dd = raw.indexOf('--');
+      const command = (dd >= 0 ? raw.slice(dd + 1) : raw.slice(raw.indexOf('exec') + 1)).join(' ');
+      if (!command.trim()) {
+        console.error("usage: grug exec [--app <name>] -- '<command>'");
+        process.exit(2);
+      }
+      const { runExec } = await import('./agents/exec.js');
+      process.exit(await runExec(command, flagValue('app') || 'another app'));
+    }
+
+    case 'agent-end': {
+      try {
+        const client = pos[1] === 'codex' ? 'codex' : 'antigravity';
+        await (await import('./agents/common.js')).agentEnd(client, pos[2] || '', pos[3] || process.cwd(), pos[4], pos[5]);
+      } catch {
+        /* background upkeep is best-effort */
+      }
+      process.exit(0);
+    }
+
     case 'statusline': {
       try {
         const { renderStatusLine } = await import('./statusline.js');
@@ -338,7 +397,7 @@ async function main() {
 
     case 'live-ping': {
       try {
-        const kind = process.argv[3] === 'render' ? 'render' : 'session';
+        const kind = ['render', 'band', 'skip'].includes(process.argv[3]) ? process.argv[3] : 'session';
         const f = path.join(paths.home(), 'live-heartbeat.json');
         let j: any = {};
         try {
@@ -346,8 +405,16 @@ async function main() {
         } catch {
           /* first ping */
         }
-        j[kind === 'render' ? 'renderAt' : 'sessionAt'] = Date.now();
+        j[`${kind}At`] = Date.now();
         if (kind === 'render') j.renders = (j.renders || 0) + 1;
+        if (kind === 'band' && Number(process.argv[4]) > 0) j.bandCols = [Number(process.argv[4]), Number(process.argv[5]) || 0];
+        // per folder (the plugin runs grug in the session's cwd): which sessions drew the stage, which skipped it and why
+        const cwds: Record<string, any> = (j.cwds = j.cwds || {});
+        const c = (cwds[process.cwd()] = cwds[process.cwd()] || {});
+        c[`${kind}At`] = Date.now();
+        if (kind === 'skip') c.skip = process.argv[4] || '?';
+        const last = (v: any) => Math.max(0, ...Object.values(v).filter((x): x is number => typeof x === 'number'));
+        for (const k of Object.keys(cwds).sort((a, b) => last(cwds[b]) - last(cwds[a])).slice(12)) delete cwds[k];
         fs.writeFileSync(f, JSON.stringify(j));
       } catch {
         /* best effort */
@@ -359,7 +426,9 @@ async function main() {
       try {
         const { appStatus } = await import('./statusline.js');
         const { latestTranscript } = await import('./ctxbreak.js');
-        process.stdout.write(JSON.stringify(appStatus(latestTranscript(process.cwd()) || undefined)));
+        const fi = process.argv.indexOf('--from');
+        const from = fi > 0 ? process.argv[fi + 1] : undefined;
+        process.stdout.write(JSON.stringify(appStatus(latestTranscript(process.cwd()) || undefined, Date.now(), process.argv.includes('--busy'), from, process.argv.includes('--start'))));
       } catch {
         process.stdout.write('{}');
       }
@@ -403,6 +472,26 @@ async function main() {
       for (const x of r.rows)
         console.log(`${x.key.slice(0, 35).padEnd(36)}${String(x.runs).padStart(6)}${k(x.tokens).padStart(9)}${k(x.maxTokens).padStart(9)}  ${x.tokens ? Math.round((x.shortenedTokens / x.tokens) * 100) : 0}%`);
       console.log('\nEach result stays in the chat until compaction, so it is re-read on every later reply. File reads (sed, cat, grep) are content Claude asked for; big repeated runs of other commands are candidates for an output rule (open an issue with the command).');
+      break;
+    }
+    case 'platforms': {
+      // Other AI apps: what grug can do there, and what is installed.
+      const pl = await import('./platforms.js');
+      if (flags.has('--apply')) printSteps(pl.installPlatforms());
+      else if (flags.has('--remove')) printSteps(pl.uninstallPlatforms());
+      console.log('🪨 grug on other AI apps\n');
+      for (const r of pl.platformStatus()) console.log(`${!r.present ? '·' : r.installed ? '✅' : '❌'} ${r.name.padEnd(20)} ${r.present ? r.detail : 'not found on this machine'}`);
+      console.log(`
+What works where (✓ yes, ~ partly, · not possible there):
+  app                 MCP tools  rules  skills  context hooks  output trim  meter
+  Claude Code         ✓          ✓      ✓       ✓              ✓            ✓
+  Antigravity         ✓          ✓      ✓       ✓              ~ exec       ✓
+  Codex (CLI/app)     ✓          ✓      ✓       ✓              ~ exec       ✓
+  Cursor / Copilot    ✓ planned  ✓      ✓       ~              ·            ·
+  ChatGPT app/web     ~ remote   ·      ·       ·              ·            ·
+~ exec: those apps cannot change a tool's output, so noisy commands are run through grug exec (shortened, errors kept).
+ChatGPT runs the chat on OpenAI's servers: no hooks, no local transcript, only remote MCP connectors.
+grug install sets up every app it finds; grug platforms --apply redoes just this part, --remove takes it out.`);
       break;
     }
     case 'slim': {
@@ -516,6 +605,16 @@ async function main() {
       const q = pos.slice(1).join(' ');
       const r = recall(loadMemory(), projectKey(dir), q, cfg.memory.recallTokens * 3, cfg.memory.halfLifeDays);
       console.log(r.text || 'Nothing relevant in memory.');
+      break;
+    }
+
+    case 'history': {
+      const q = pos.slice(1).join(' ');
+      if (!q) throw new Error("usage: grug history <words> [--dir <project>]");
+      const dir = path.resolve(flagValue('dir') || process.cwd());
+      const out = searchHistory(dir, q);
+      recordActivity({ kind: 'history', msg: `History lookup: ${q.slice(0, 60)}`, tokens: -estimateTokens(out) });
+      console.log(out);
       break;
     }
 

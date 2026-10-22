@@ -6,6 +6,8 @@
 
 Install once. grug sit between Claude Code and Anthropic API, trim fat, stick cache, guard big files, remember every session in small brain that never get fat. grug draw brain picture. grug write Obsidian notes. grug show cave dashboard.
 
+grug also bring **12 small workflow skills** (plan, test first, debug to root cause, prove before "done", explore cheap, write your own skill; ~13k characters, not ~128k) and works in **Antigravity** and **Codex** too (hooks, memory tools, rules, skills, meter). See [grug ways](#grug-ways-workflow-skills) and [where grug work](#where-grug-work).
+
 ```bash
 npx github:swaraj792725/grugbrain install
 ```
@@ -110,6 +112,10 @@ If that file already exists, add the `env` key to it instead. Until then, grug a
 
 Every reply re-send whole conversation. Real week: Claude make 1 tool call per reply, and 22% of replies were one more lone lookup in a chain (Read, Grep, `sed -n`), 18% of all context re-read. Grug tell Claude once at start: independent reads/greps go in one reply, shell steps in one Bash call. After 3 lone lookups in a row, grug add short note (max 3 per session). Measured (Sonnet, `audit-services`, 2 benches x 3 runs per arm, grug on vs off): same result 6/6 vs 6/6; grug took 2 turns in every run, the baseline 3 to 12; about 40-47% less input; cost about 13% lower with a warm cache ($0.178 vs $0.204 per run; one cold-cache baseline run left out, with it the bench prints up to 42%). Grug's runs were also steady ($0.175-0.181), the baseline's were not. Small synthetic task; real sessions differ. Off: `grug config set batching.rule false`, `grug config set batching.nudge false`.
 
+## grug careful (risky commands ask first)
+
+Some commands throw away work in one go: `rm -rf ~`, force push, `git reset --hard`, `git clean -fd`, `DROP TABLE`, `curl ... | sh`. Before one runs, grug asks you, with the reason (Claude Code and Antigravity show their approval prompt, Codex holds it back once). Quoted text and scripts inside heredocs are not checked, so a commit message that says `rm -rf` is fine. Modes that skip every prompt skip this one too. Off: `grug config set safety.riskyCommands false`.
+
 ## grug brain (memory that never get fat)
 
 Normal memory file grow, grow, grow. Every session pay for all of it. Bad.
@@ -117,6 +123,7 @@ Normal memory file grow, grow, grow. Every session pay for all of it. Bad.
 grug brain is **graph**: projects · sessions · files · topics · notes · digests.
 
 - **auto capture**: hooks log prompts, files touched, commands, final answer. You type `remember: we deploy with fly.io` → pinned note.
+- **private**: put `<private>...</private>` around anything grug must not keep (a key, a customer name). Claude still sees it; grug's memory, facts, handoff, archive and history search get `[private]` instead.
 - **auto notes**: grug pick sentences like "root cause was…", "decided…", "never…" from Claude's last answer.
 - **decay**: every node lose score over time (half-life 14 days) unless used again.
 - **fold**: sessions older than 21 days squash into one monthly **digest** per project. Old buffers deleted.
@@ -194,6 +201,47 @@ tip: ask Grep first, then Read with offset/limit · saved ~4%
 - **Always-on panel (2.14):** a second row with a moving pulse while Claude works, a **savings bar**, a **context bar** against the /clear limit, and the latest grug action. It redraws every 2 s (`statusLine.refreshSeconds`, Claude Code `refreshInterval`). Hide it: `statusLine.panel false`.
 - Toggle: `grug config set statusLine.enabled false`. Wrap your own: `statusLine.wrap "<command>"`. Tips off: `statusLine.tips false`. `grug doctor` shows whether it is installed.
 
+### grug above the prompt (desktop app)
+
+The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) with two parts:
+
+- **Above the input box: grug's stage.** A wide animated picture, no words: dusk sky, mountains, a cave and a campfire. grug walks out of his cave, does the job grugbrain is doing right now, and walks home (a 10 s loop the app animates itself, so it costs no tokens and no redraws). At night (idle 20+ min) he dozes by the fire under the moon; when the cache goes cold it snows and the fire goes out.
+- **Below the input box: the details.** One plain-text footer entry next to the model picker, e.g. `SMASH NOISE · 57% saved · $412/wk · ctx 160k`. The context size joins in once the chat passes 75% of grug's limit; the weekly dollars drop out first if the line would be cut. Cold cache and too-big chat notices come as a toast.
+
+| grugbrain just | grug on the stage | footer starts with |
+| --- | --- | --- |
+| trimmed noisy output | smashes rocks with his club | SMASH NOISE |
+| recalled memory / history | digs up a gem | DIG MEMORY |
+| held back a re-read | raises his shield | NO RE-READ |
+| used the code map | reads a map | DRAW MAP |
+| saved a handoff / moved the window | lifts a stone tablet overhead | CARRY NOTES |
+| ran the check | inspects a tablet with a magnifier | CHECK WORK |
+| shrank an image | smashes a picture smaller | SHRINK PIC |
+| sent a cheap subagent | sends a little helper off | SEND HELPER |
+| context too big | stares at a stone pile, alarmed | CHAT TOO BIG |
+| cache went cold | shivers in the snow, fire out | CACHE COLD |
+| nothing, Claude working | taps away at a stone tablet | WATCH CLAUDE |
+| nothing for 20+ min | sleeps by the fire at night | (nap) |
+| nothing, money saved | flexes with a coin | SAVE $N |
+
+Numbers refresh every 15 s while Claude works, every 2 min when idle. The terminal `claude` draws no pictures and already has grug's status line, so the stage shows only in the app. Turn the plugin off: `grug config set appPlugin.enabled false`. After `grug update`, open a new session to see it.
+
+--- | --- |
+| trimmed noisy output | `🧔🦴   ≋≋≋` → `🧔  💥 ≋` → `🧔🦴   ✓` SMASH NOISE |
+| recalled memory / history | `🧔⛏  ▄▂▁` → `🧔✨ 💎` DIG MEMORY |
+| held back a re-read | `🧔🛡  📄` → `🧔✋  📄` NO RE-READ |
+| used the code map | `🧔📜 ·─·─·` → `🧔📜 ✓` DRAW MAP |
+| saved a handoff / moved the window | `🧔📦···` → `···🧔📦` CARRY NOTES |
+| ran the check | `🧔🔍  ▢` → `🧔   ✅` CHECK WORK |
+| shrank an image | `🧔🦴 ⬛` → `🧔🦴 ·` SHRINK PIC |
+| sent a cheap subagent | `🧔👉🧒` → `🧔👋   💨` SEND HELPER |
+| context too big / cache went cold | `🧔‼ 📚📚📚` CHAT TOO BIG / `🧔💨🔥 ❄❄` CACHE COLD |
+| nothing, Claude working | `🧔🦴 ···` → `🧔👀 ···` WATCH CLAUDE |
+| nothing for 20+ min | `🛌 zZz` nap |
+| nothing, money saved | `🧔💰✨` SAVE $N |
+
+grug changes pose every 0.45 s; it is a text entry, so it costs no tokens and no process (numbers refresh every 15 s while Claude works, every 2 min when idle). Turn the plugin off: `grug config set appPlugin.enabled false`. After `grug update`, open a new session to see it.
+
 ---
 
 ## grug quiet noisy commands
@@ -238,8 +286,36 @@ Grug read it straight: big win where output is noisy (tests, builds, logs), no l
 | **Claude Desktop** chat | MCP tools (`outline`, `read_symbol`, `repo_map`, `search`, `recall`, `remember`, `project_brief`…) + shared memory. Desktop's own API calls are private, so no proxy, no measured stats. |
 | **claude.ai** in browser | nothing. grug cannot reach inside browser. grug honest. |
 | your own app on the Anthropic SDK | set `ANTHROPIC_BASE_URL=http://127.0.0.1:4747` → proxy + stats |
+| **Antigravity** (app, IDE, `agy` CLI) | one grug plugin in `~/.gemini/config/plugins/grugbrain`: hooks (start context + code map, prompt recall, re-read guard, edit/type guards, verify gate, handoff, facts, meter), MCP tools + shared memory, short rules, the workflow skills. Noisy commands (tests, builds, installs) run through `grug exec`, which shortens their output (errors kept); you still approve the command (`platforms.antigravity.rewrite ask`, or `allow` / `off`). Checked live in `agy` 1.0.12; measured with Gemini 3.8 Flash on a two-prompt task with noisy tests (3 runs each): −31% input tokens, same results |
+| **Codex** (OpenAI's coding agent) | `~/.codex`: hooks (same set as Antigravity), rules in `AGENTS.md` that name the shell commands `grug history` / `recall` / `outline` (no MCP server by default: Codex re-sends every tool schema each request, grug's cost 3.4k characters; `platforms.codex.mcpTools lean` or `full` brings it back), skills in `~/.agents/skills`. Codex asks you once to trust new hooks (`/hooks`). `grug exec` rewrite only when Codex would not ask anyway (`platforms.codex.rewrite auto`: full-access modes). Checked live in Codex 0.163 with a scripted stand-in model (start context, shorter test output, re-read and risky-command holds, proof gate). Same scripted task, grug on vs off: −13% characters sent in Codex, −13% in Claude Code |
+| **ChatGPT** app / web | nothing. OpenAI runs the chat on its servers: no hooks, no local transcript; only remote (HTTPS) MCP connectors |
+
+How it works in the other apps: their hooks call grug, which turns each event into the Claude Code one (tool names translated: `view_file` → Read, `run_command` / `exec_command` → Bash, `apply_patch` → Edit) and puts the app's own log into a Claude-format copy in `~/.grug/foreign/`, so memory, handoff, facts and the meter work unchanged. Neither app lets a hook change a tool's output after it ran, so the shortening happens before: the command itself is wrapped. Things only Claude Code has (auto-compact window, status line) stay off there.
 
 Pro/Max subscription or API key: both fine. Proxy pass auth headers through untouched. On a subscription you are limited by usage, not billed per token, so "$" in dashboard mean *API-equivalent value*. Fewer token still mean you hit limits later.
+
+---
+
+## grug ways (workflow skills)
+
+Plan, test first, debug to the root cause, prove before saying done. Same discipline as big skill packs, few words: 12 skills, ~13k characters in total (Superpowers' 15 skills ~128k). A skill costs only its one-line description each reply until used; then only that one file is read.
+
+| skill | use when |
+|---|---|
+| `grug-brainstorm` | idea open or vague: questions one at a time, 2-3 approaches, short agreed design |
+| `grug-plan` | multi-step change: small tasks with exact files and a check command each |
+| `grug-execute` | carrying out a plan: one task at a time, check after each, stop on blockers |
+| `grug-tdd` | feature or bug fix in a tested project: red, green, refactor |
+| `grug-debug` | bug or failing test: reproduce, one hypothesis at a time, root cause, then fix |
+| `grug-verify` | before saying done/fixed/passing: run the checks, report what they printed |
+| `grug-review` | asking for a review (short brief to a reviewer subagent) or answering one |
+| `grug-worktree` | work that should not touch the current checkout |
+| `grug-parallel` | 2+ independent tasks: short-brief subagents, check each result |
+| `grug-finish` | branch done: merge, PR, keep or discard, clean up |
+| `grug-explore` | learning an unfamiliar codebase: search first, read ranges, follow one thread, note what you found |
+| `grug-skill` | writing your own skill: real cases first, one-sentence trigger, short steps, test it was followed |
+
+`grug install` copies them to `~/.claude/skills/`, into the Antigravity plugin and to `~/.agents/skills` for Codex (same `SKILL.md` format). `grug platforms` shows what is installed where; `grug config set skills.enabled false` then `grug platforms --apply` takes them out. Only `grug-*` folders are ever touched.
 
 ---
 
@@ -264,6 +340,8 @@ grug install [--no-proxy] [--no-desktop] [--no-code] [--no-service]
 grug dash [--once]              TUI dashboard
 grug doctor [--fix]             check everything, say how to fix (--fix: put back lost slim settings, apply a raised window, remove broken leftovers)
 grug uninstall [--purge]        remove (keeps memory unless --purge)
+grug platforms [--apply]        grug on other AI apps (Antigravity, Codex) + workflow skills: what works where
+grug exec -- '<command>'        run a command, print its output shortened (errors kept), same exit code
 grug slim [--apply | --undo]    list unused plugin skills by name only (smaller context every reply)
 grug slim --plugins [--apply]   turn off plugins never used in 30 days (--undo puts them back; in the desktop app only once tool search is forced on)
 grug discover [--days 7]        which commands / MCP tools put most output in context, how much grug shortened
@@ -272,6 +350,7 @@ grug graph                      open memory graph
 grug vault                      rebuild Obsidian vault, print path
 grug brief [dir]                what grug would tell Claude about a project
 grug recall <query>             search memory
+grug history <words>            search this project's earlier conversations (Codex rules use it)
 grug remember <text>            pin note for current project
 grug maintain                   ingest + consolidate now (normally automatic)
 
@@ -370,6 +449,7 @@ grug config set taskBoundary.enabled false     # no new-task /clear suggestions
 | `routing.lightModel` | `sonnet` | `sonnet` / `haiku` |
 | `autoRecall.subagents` | `true` | add recall + code hints for the task to each subagent prompt (cap `autoRecall.subagentTokens`, 500) |
 | `quality.verify` | `true` | at Stop, when code files changed this turn, run the project's own check (typecheck + tests) once and send Claude back with only the failing lines; silent when it passes. Runs one at a time at low priority, the whole process tree is killed on timeout, a project that timed out once is skipped, monorepos only with `verifyCommand` |
+| `quality.proof` | `true` | at Stop, a reply that says "tests pass" / "fixed" / "works now" while nothing ran after the last code edit is sent back once: run the check and report it, or say it was not run. A reply that already says "not run" is never sent back. Once per prompt, at most twice per session |
 | `quality.verifyCommand` | `''` | the check to run instead of the auto-detected one |
 | `quality.verifyTimeoutSec` / `quality.verifyMaxRounds` | `90` / `2` | hard timeout (a timeout never blocks) and the most send-backs per prompt |
 | `quality.verifySlowSec` | `30` | a check that takes longer than this twice in a row is skipped in that project, because the turn waits for it (0 = never skip) |

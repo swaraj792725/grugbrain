@@ -108,7 +108,7 @@ function header(st: State, width: number): string[] {
   const status = problems.length ? red(`✗ needs attention: ${problems.join(', ')} (run: grug doctor --fix)`) : green('✓ grug is working');
   void proxy;
   void ok;
-  const line1 = `${orange(bold(' 🪨 grugbrain'))} ${dim('v' + VERSION)} ${live} ${synced}${upd?.newer ? ' ' + yellow(`⬆ ${upd.latest} available (grug update)`) : ''}   ${status}   ${dim('short answers:')} ${cyan(cfg.terse)}`;
+  const line1 = `${orange(bold(' ᕦ(ò_ó)ᕤ grugbrain'))} ${dim('v' + VERSION)} ${live} ${synced}${upd?.newer ? ' ' + yellow(`⬆ ${upd.latest} available (grug update)`) : ''}   ${status}   ${dim('short answers:')} ${cyan(cfg.terse)}`;
   const tabs = TABS.map((t, i) => (i === st.tab ? inverse(` ${i + 1} ${t} `) : dim(` ${i + 1} ${t} `))).join('');
   const clock = dim(new Date().toLocaleTimeString());
   return [line1, pad(tabs, width - visible(clock).length - 1) + clock, dim('─'.repeat(width))];

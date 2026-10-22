@@ -15,6 +15,7 @@ import { paths, userHome, writeJsonAtomic } from './config.js';
 import { estimateTokens } from './tokens.js';
 import { queryTerms, rankPrompt, Ranked } from './relevance.js';
 import { archiveOnlyFiles } from './archive.js';
+import { stripPrivate } from './privacy.js';
 
 export function projectTranscriptDir(cwd: string): string {
   const root = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(userHome(), '.claude'), 'projects');
@@ -53,7 +54,7 @@ function clip(s: string, n: number): string {
 function blocksText(content: any, who: string, out: Item[], ts: number) {
   const push = (w: string, t: string, max: number) => {
     if (!t || t.length < 12 || NOISE.test(t)) return;
-    out.push({ ts, who: w, text: clip(t, max) });
+    out.push({ ts, who: w, text: clip(stripPrivate(t), max) });
   };
   if (typeof content === 'string') return push(who, content, MAX_TEXT);
   if (!Array.isArray(content)) return;
@@ -151,26 +152,52 @@ export function projectTranscripts(cwd: string, max = MAX_FILES, deep = false): 
 
 function liveTranscripts(cwd: string, max: number): string[] {
   const dir = projectTranscriptDir(cwd);
+  const files: string[] = [];
   try {
-    return fs
-      .readdirSync(dir)
-      .filter((f) => f.endsWith('.jsonl'))
-      .map((f) => {
-        const p = path.join(dir, f);
-        let m = 0;
-        try {
-          m = fs.statSync(p).mtimeMs;
-        } catch {
-          /* vanished */
-        }
-        return { p, m };
-      })
-      .sort((a, b) => b.m - a.m)
-      .slice(0, max)
-      .map((x) => x.p);
+    for (const f of fs.readdirSync(dir)) if (f.endsWith('.jsonl')) files.push(path.join(dir, f));
   } catch {
-    return [];
+    /* no Claude Code transcripts here */
   }
+  files.push(...foreignTranscripts(cwd));
+  return files
+    .map((p) => {
+      let m = 0;
+      try {
+        m = fs.statSync(p).mtimeMs;
+      } catch {
+        /* vanished */
+      }
+      return { p, m };
+    })
+    .sort((a, b) => b.m - a.m)
+    .slice(0, max)
+    .map((x) => x.p);
+}
+
+/** Codex / Antigravity shadow transcripts (~/.grug/foreign) whose lines carry this cwd. */
+export function foreignTranscripts(cwd: string): string[] {
+  const dir = path.join(paths.home(), 'foreign');
+  const key = `"cwd":${JSON.stringify(path.resolve(cwd))},`;
+  const out: string[] = [];
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return out;
+  }
+  for (const f of names) {
+    const p = path.join(dir, f);
+    try {
+      const fd = fs.openSync(p, 'r');
+      const buf = Buffer.alloc(1024);
+      const n = fs.readSync(fd, buf, 0, buf.length, 0);
+      fs.closeSync(fd);
+      if (buf.toString('utf8', 0, n).split('\n')[0].includes(key)) out.push(p);
+    } catch {
+      /* unreadable */
+    }
+  }
+  return out;
 }
 
 /** Parse (or refresh) every recent transcript of a project into the cache. Used in the background. */
@@ -248,7 +275,8 @@ export function excerpt(h: HistoryHit, len = 600): string {
 }
 
 export function searchHistory(cwd: string, query: string, maxTokens = 2500, maxResults = 10): string {
-  if (!fs.existsSync(projectTranscriptDir(cwd)) && !archiveOnlyFiles(cwd, 1).length) return `No earlier Claude Code conversations found for ${cwd}.`;
+  if (!fs.existsSync(projectTranscriptDir(cwd)) && !archiveOnlyFiles(cwd, 1).length && !foreignTranscripts(cwd).length)
+    return `No earlier conversations found for ${cwd}.`;
   const { hits, terms } = historyHits(cwd, query, { deep: true });
   if (!terms.length) return 'Give a more specific query (a filename, error text, function name or topic).';
   if (!hits.length) return `Nothing in this project's earlier conversations matches "${query}".`;

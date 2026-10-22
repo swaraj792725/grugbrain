@@ -13,6 +13,7 @@ import { coldCacheCost, contextSize, costPerReply } from './handoff.js';
 import { computeSavings } from './savings.js';
 import { readActivity } from './stats.js';
 import { effectiveWindow } from './floor.js';
+import { GRUG_FACE, grugScene, type GrugScene } from './grugart.js';
 
 /** Context size at which the line turns to a /clear hint: 80% of the window grug applies. */
 const alertLimit = (cfg: ReturnType<typeof loadConfig>) => {
@@ -84,7 +85,7 @@ export function composeLine(o: {
     parts.push(dim(tips[Math.floor(o.now / 25000) % tips.length]));
   }
   if (!o.noSaved && o.savedPct !== undefined && o.savedPct > 0) parts.push(green(`saved ~${Math.round(o.savedPct * 100)}%`));
-  return `${orange('🪨')} ${parts.join(dim(' │ '))}`;
+  return `${orange(GRUG_FACE)} ${parts.join(dim(' │ '))}`;
 }
 
 export interface SavedNow {
@@ -114,10 +115,10 @@ export function cachedSaved(now: number): SavedNow | undefined {
 }
 
 /** Latest grug action in the last 45 s (cheap: tail of the activity log). */
-export function lastAction(now: number): { ts: number; msg: string } | undefined {
+export function lastAction(now: number): { ts: number; msg: string; kind: string } | undefined {
   try {
     const a = readActivity(20).filter((x) => now - x.ts < 45000).pop();
-    return a ? { ts: a.ts, msg: a.msg || a.kind } : undefined;
+    return a ? { ts: a.ts, msg: a.msg || a.kind, kind: a.kind } : undefined;
   } catch {
     return undefined;
   }
@@ -237,7 +238,7 @@ export function composeAppLine(o: {
   limit: number;
   recent?: string;
 }): string {
-  const parts = ['🪨 grug'];
+  const parts = [`${GRUG_FACE} grug`];
   if (o.savedPct !== undefined) {
     const pct = Math.round(o.savedPct * 100);
     parts.push(`saved ${plainBar(o.savedPct, 10)} ~${pct}% (7d overall${o.netUsd && o.netUsd >= 0.01 ? `, ${usd(o.netUsd)}` : ''})`);
@@ -259,7 +260,7 @@ export function appSummaryLine(transcriptPath: string | undefined, now = Date.no
     const cs = contextSize(transcriptPath);
     const limit = alertLimit(cfg);
     const recent = lastAction(now)?.msg;
-    if (!(saved && saved.pct > 0) && !cs.tokens) return '🪨 grug │ on and watching │ nothing saved yet this week, it fills in as you work';
+    if (!(saved && saved.pct > 0) && !cs.tokens) return `${GRUG_FACE} grug │ on and watching │ nothing saved yet this week, it fills in as you work`;
     return composeAppLine({ savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, recent });
   } catch {
     return undefined;
@@ -277,6 +278,8 @@ export interface AppStatus {
   alerts: string[];
   /** The terminal draws grug's status line already: the plugin shows nothing (no duplicate line). */
   quiet?: boolean;
+  /** grug the caveman doing what grug last did: scene name, his line, animated SVG, text frames. */
+  grug?: GrugScene;
 }
 
 /** Running in the terminal `claude` with grug's status line on: it already shows the numbers, so app-only notices are duplicates. */
@@ -285,15 +288,24 @@ export function statusLineShown(cfg: ReturnType<typeof loadConfig> = loadConfig(
 }
 
 /** Machine-readable status for the grug-live app plugin (same numbers as the status line). */
-export function appStatus(transcriptPath: string | undefined, now = Date.now()): AppStatus {
+/** `from`: the act the band showed last (the plugin passes it), so a change between awake and asleep plays once.
+ *  `start`: a new session; the latest transcript is the previous chat's, so no context or cache alerts, and grug sleeps
+ *  in his cave until the first prompt wakes him. */
+export function appStatus(transcriptPath: string | undefined, now = Date.now(), busy = false, from?: string, start = false): AppStatus {
   const cfg = loadConfig();
   if (statusLineShown(cfg)) return { tokens: 0, limit: 0, idleMs: 0, alerts: [], quiet: true };
   const saved = cachedSaved(now);
+  if (start) {
+    const grug = grugScene({ alerts: [], idleMs: Infinity, savedPct: saved?.pct, netUsd: saved?.netUsd, from: 'sleep' });
+    return { savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: 0, limit: alertLimit(cfg), idleMs: 0, alerts: [], grug };
+  }
   const cs = contextSize(transcriptPath);
   const limit = alertLimit(cfg);
   const idleMs = cs.lastReplyTs ? now - cs.lastReplyTs : 0;
   const alerts: string[] = [];
   if (cs.tokens >= limit) alerts.push(`context is ${k(cs.tokens)}: /clear soon (grug restores a handoff)`);
   if (idleMs > (cs.oneHourCache ? 3600000 : 300000) && cs.tokens > 0) alerts.push('cache expired while idle: next reply re-reads the context at full price');
-  return { savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, idleMs, recent: lastAction(now)?.msg, alerts };
+  const last = lastAction(now);
+  const grug = grugScene({ kind: last?.kind, alerts, busy, idleMs, savedPct: saved?.pct, netUsd: saved?.netUsd, from });
+  return { savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, idleMs, recent: last?.msg, alerts, grug };
 }

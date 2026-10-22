@@ -18,6 +18,8 @@ import { recordActivity } from './stats.js';
 import { stripSlimOverrides } from './slim.js';
 import { stripPluginSlim } from './pluginslim.js';
 import { effectiveWindow, updateFloor } from './floor.js';
+import { copySkills, installPlatforms, uninstallPlatforms } from './platforms.js';
+import { grugStage } from './grugart.js';
 
 export const MARK = '--from=grugbrain';
 const LEGACY_KEYS = ['token-diet', 'claude-token-saver'];
@@ -34,6 +36,8 @@ export interface InstallOptions {
   desktop?: boolean;
   proxy?: boolean;
   service?: boolean;
+  /** Workflow skills + other AI apps (Antigravity). */
+  platforms?: boolean;
 }
 
 interface InstallState {
@@ -93,12 +97,13 @@ export function copyApp(): Step {
   }
   fs.writeFileSync(path.join(dest, 'package.json'), JSON.stringify({ name: 'grugbrain-app', private: true, type: 'commonjs' }) + '\n');
   copyPlugin(src);
+  copySkills(src);
   return { target: 'app', ok: true, message: `Copied runtime to ${dest}` };
 }
 
 export const pluginDir = (): string => path.join(grugHome(), 'plugins', 'grug-live');
 
-/** Copy the grug-live app plugin (band above the prompt) next to the runtime and point it at the installed CLI. */
+/** Copy the grug-live app plugin (grug in the footer below the prompt) next to the runtime and point it at the installed CLI. */
 export function copyPlugin(builtDir: string): boolean {
   const from = [path.join(builtDir, '..', 'plugin', 'grug-live'), path.join(builtDir, 'plugin', 'grug-live')].find((d) => fs.existsSync(path.join(d, 'hooks', 'register.tsx')));
   if (!from) return false;
@@ -106,6 +111,8 @@ export function copyPlugin(builtDir: string): boolean {
   fs.rmSync(to, { recursive: true, force: true });
   fs.cpSync(from, to, { recursive: true });
   fs.writeFileSync(path.join(to, 'grug.json'), JSON.stringify({ argv: [process.execPath, installedCli(), 'app-status'] }) + '\n');
+  // grug asleep in his cave: the band draws it the moment a session opens, before the first status arrives
+  fs.writeFileSync(path.join(to, 'stage-sleep.svg'), grugStage('sleep'));
   return true;
 }
 
@@ -139,7 +146,7 @@ function ourHooks(): Record<string, any[]> {
   return {
     SessionStart: [{ hooks: [h('session-start', 10)] }],
     UserPromptSubmit: [{ hooks: [h('user-prompt', 10)] }],
-    PreToolUse: [{ matcher: 'Read|Grep|Edit|Write|MultiEdit|Agent|Task|mcp__.*', hooks: [h('pre-tool', 8)] }],
+    PreToolUse: [{ matcher: 'Read|Grep|Edit|Write|MultiEdit|Agent|Task|Bash|mcp__.*', hooks: [h('pre-tool', 8)] }],
     PostToolUse: [{ matcher: 'Read|Edit|Write|MultiEdit|NotebookEdit|Bash|Grep|Glob|mcp__.*', hooks: [h('post-tool', 10)] }],
     Stop: [{ hooks: [h('stop', 120)] }],
     SubagentStart: [{ hooks: [h('subagent-start', 5)] }],
@@ -467,7 +474,7 @@ export function commandStatus(): 'on-path' | 'rc' | 'missing' {
 }
 
 export function install(opts: InstallOptions = {}): Step[] {
-  const o = { code: true, desktop: true, proxy: true, service: true, ...opts };
+  const o = { code: true, desktop: true, proxy: true, service: true, platforms: true, ...opts };
   ensureDir(paths.home());
   const cfg = loadConfig();
   saveConfig(cfg); // materialize defaults so `grug config` shows them
@@ -476,6 +483,7 @@ export function install(opts: InstallOptions = {}): Step[] {
   if (o.code) steps.push(...installClaudeCode(o.proxy));
   if (o.desktop) steps.push(installDesktop());
   if (o.service) steps.push(installService());
+  if (o.platforms) steps.push(...installPlatforms());
   steps.push(installCommand());
   const state = loadState();
   state.installedAt = new Date().toISOString();
@@ -526,6 +534,7 @@ export function uninstall(purge = false): Step[] {
     }
   }
   steps.push({ target: 'claude-code-mcp', ok: true, message: 'MCP server removed' });
+  steps.push(...uninstallPlatforms());
   uninstallCommand();
   steps.push({ target: 'command', ok: true, message: '`grug` command removed' });
 

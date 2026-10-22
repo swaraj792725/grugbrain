@@ -1,1 +1,1 @@
-{ "name": "grug-live", "version": "1.0.0", "description": "grug's always-visible band above the prompt: working animation, savings bar, context bar, notices." }
+{ "name": "grug-live", "version": "1.5.1", "description": "grug the caveman above the prompt: an animated stage, always there: he sleeps in his cave when idle, wakes, walks out and acts out what grugbrain is doing; the numbers sit in a footer entry below the prompt.", "types": "./types/index.d.ts" }

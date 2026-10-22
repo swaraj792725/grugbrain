@@ -14,6 +14,7 @@ import { paths, readJson, writeJsonAtomic } from './config.js';
 import { projectKey, readBuffer, similarity } from './memory/store.js';
 import { isTrivialPrompt } from './relevance.js';
 import { estimateTokens, priceFor, CACHE_READ_MULT, CACHE_WRITE_MULT, CACHE_WRITE_1H_MULT } from './tokens.js';
+import { parseEntry } from './privacy.js';
 
 export interface Handoff {
   ts: number;
@@ -48,7 +49,7 @@ export function transcriptEntries(p: string | undefined, bytes = 1024 * 1024): a
   for (const l of readTail(p, bytes).split('\n')) {
     if (!l) continue;
     try {
-      out.push(JSON.parse(l));
+      out.push(parseEntry(l));
     } catch {
       /* torn */
     }
@@ -86,7 +87,7 @@ export function transcriptEntriesFrom(p: string | undefined, offset: number, max
       for (const l of buf.subarray(0, lastNl + 1).toString('utf8').split('\n')) {
         if (!l) continue;
         try {
-          out.push(JSON.parse(l));
+          out.push(parseEntry(l));
         } catch {
           /* torn */
         }

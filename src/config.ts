@@ -187,6 +187,8 @@ export interface GrugConfig {
     typeCheck: boolean;
     /** Before an edit: the stored project rules that concern the file (once per session each). */
     conventions: boolean;
+    /** Stop hook: a reply that says "tests pass"/"fixed" with nothing run after the last edit is sent back once for the evidence. */
+    proof: boolean;
   };
   /** Tell the user (not the model) when a prompt looks like a new task while the context is big: /clear is cheaper than dragging it along. */
   taskBoundary: {
@@ -194,6 +196,27 @@ export interface GrugConfig {
     minTokens: number;
   };
   /** Fewer replies: ask Claude to batch independent lookups (each reply re-sends the whole context). */
+  /** grug's lean workflow skills (grug-plan, grug-debug, ...) copied into Claude Code and other apps. */
+  skills: { enabled: boolean };
+  /** Other AI apps: what each supports (MCP server, rules file, skills). */
+  platforms: {
+    /**
+     * hooks: grug's hooks in that app (recall, read guard, verify, meter).
+     * rewrite: run noisy commands (tests, builds, installs) through `grug exec` so their output is shortened.
+     * The rewrite needs a permission decision in both apps: `ask` keeps the user's approval, `allow` approves
+     * the rewritten command, `auto` (Codex) rewrites only where commands run without approval anyway, `off` never.
+     * mcpTools: `lean` lists only history, recall and outline (every listed schema is re-sent on each request
+     * there, and the others went unused), `full` lists all of them. `shell` (Codex): no MCP server at all; the
+     * rules name `grug history|recall|outline` as shell commands instead. Codex adds its own MCP resource tools
+     * whenever any server exists, so grug's server cost 3.4k chars on every request.
+     */
+    antigravity: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'ask' | 'allow' | 'off'; mcpTools: 'lean' | 'full' };
+    codex: { enabled: boolean; mcp: boolean; hooks: boolean; rewrite: 'auto' | 'allow' | 'off'; mcpTools: 'shell' | 'lean' | 'full' };
+  };
+  /** Ask the user before a shell command that throws away work or data in one go (rm -rf ~, force push, reset --hard, DROP TABLE). */
+  safety: {
+    riskyCommands: boolean;
+  };
   batching: {
     /** One sentence at session/subagent start. */
     rule: boolean;
@@ -313,11 +336,20 @@ export function defaultConfig(): GrugConfig {
       verifyMaxRounds: 2,
       editGuard: true,
       typeCheck: true,
-      conventions: true
+      conventions: true,
+      proof: true
     },
     taskBoundary: {
       enabled: true,
       minTokens: 60000
+    },
+    skills: { enabled: true },
+    platforms: {
+      antigravity: { enabled: true, mcp: true, hooks: true, rewrite: 'ask', mcpTools: 'lean' },
+      codex: { enabled: true, mcp: true, hooks: true, rewrite: 'auto', mcpTools: 'shell' }
+    },
+    safety: {
+      riskyCommands: true
     },
     batching: {
       rule: true,
@@ -347,7 +379,12 @@ function deepMerge<T>(base: T, over: any): T {
   return out;
 }
 
-const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'], 'routing.lightModel': ['', 'sonnet', 'haiku'] };
+const ENUMS: Record<string, string[]> = { terse: ['off', 'lite', 'full'], 'routing.subagentModel': ['', 'sonnet', 'haiku', 'opus', 'inherit'], 'routing.lightModel': ['', 'sonnet', 'haiku'],
+  'platforms.antigravity.rewrite': ['ask', 'allow', 'off'],
+  'platforms.codex.rewrite': ['auto', 'allow', 'off'],
+  'platforms.antigravity.mcpTools': ['lean', 'full'],
+  'platforms.codex.mcpTools': ['shell', 'lean', 'full']
+};
 
 const RANGES: Record<string, [number, number]> = {
   'autoRecall.maxTokens': [100, 4000],
