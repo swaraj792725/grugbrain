@@ -138,7 +138,7 @@ async function main() {
         const ago = (t?: number) => (t ? `${Math.max(1, Math.round((Date.now() - t) / 60000))} min ago` : 'never');
         console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}; stage above the prompt: ${hb.bandAt ? ago(hb.bandAt) : 'never'}${hb.bandCols ? ` (${hb.bandCols[0]} cells wide)` : ''}`);
         for (const [dir, c] of Object.entries<any>(hb.cwds || {}).slice(0, 6))
-          console.log(`   ${path.basename(dir)}: loaded ${ago(c.sessionAt)}, stage ${c.bandAt ? ago(c.bandAt) : 'never'}${c.skipAt ? `, skipped ${ago(c.skipAt)} (${c.skip})` : ''}`);
+          console.log(`   ${path.basename(dir)}: loaded ${c.sessionAt ? ago(c.sessionAt) : 'earlier'}, stage ${c.bandAt ? ago(c.bandAt) : 'never'}${c.skipAt ? `, skipped ${ago(c.skipAt)} (${c.skip})` : ''}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
         else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not draw plugin status entries; use `grug dash` or the terminal `claude` to see it');
       }
