@@ -214,13 +214,13 @@ The desktop Code tab draws no status line, so grug ships a small Claude Code plu
 | recalled memory / history | digs up a gem | DIG MEMORY |
 | held back a re-read | raises his shield | NO RE-READ |
 | used the code map | reads a map | DRAW MAP |
-| saved a handoff / moved the window | carries a box | CARRY NOTES |
-| ran the check | checks his work | CHECK WORK |
+| saved a handoff / moved the window | lifts a stone tablet overhead | CARRY NOTES |
+| ran the check | inspects a tablet with a magnifier | CHECK WORK |
 | shrank an image | smashes a picture smaller | SHRINK PIC |
 | sent a cheap subagent | sends a little helper off | SEND HELPER |
 | context too big | stares at a stone pile, alarmed | CHAT TOO BIG |
 | cache went cold | shivers in the snow, fire out | CACHE COLD |
-| nothing, Claude working | watches | WATCH CLAUDE |
+| nothing, Claude working | taps away at a stone tablet | WATCH CLAUDE |
 | nothing for 20+ min | sleeps by the fire at night | (nap) |
 | nothing, money saved | flexes with a coin | SAVE $N |
 
