@@ -201,12 +201,32 @@ tip: ask Grep first, then Read with offset/limit · saved ~4%
 - **Always-on panel (2.14):** a second row with a moving pulse while Claude works, a **savings bar**, a **context bar** against the /clear limit, and the latest grug action. It redraws every 2 s (`statusLine.refreshSeconds`, Claude Code `refreshInterval`). Hide it: `statusLine.panel false`.
 - Toggle: `grug config set statusLine.enabled false`. Wrap your own: `statusLine.wrap "<command>"`. Tips off: `statusLine.tips false`. `grug doctor` shows whether it is installed.
 
-### grug below the prompt (desktop app)
+### grug above the prompt (desktop app)
 
-The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) that puts one entry in the footer right below the input box, next to the model picker: **grug the caveman, animated, acting out what grugbrain is doing right now**, plus what grug saved, e.g. `🧔🦴   ≋≋≋ SMASH NOISE · 57% saved`. The footer is one line of text, so grug is 🧔 with emoji tools; grug also offers a drawn caveman picture to the hint line under the input, for apps that show it. Nothing above the input box. The context size joins in once the chat passes 75% of grug's limit; cold cache and too-big chat notices come as a toast.
+The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) with two parts:
 
-| grugbrain just | grug in the footer |
-| --- | --- |
+- **Above the input box: grug's stage.** A wide animated picture, no words: dusk sky, mountains, a cave and a campfire. grug walks out of his cave, does the job grugbrain is doing right now, and walks home (a 10 s loop the app animates itself, so it costs no tokens and no redraws). At night (idle 20+ min) he dozes by the fire under the moon; when the cache goes cold it snows and the fire goes out.
+- **Below the input box: the details.** One plain-text footer entry next to the model picker, e.g. `SMASH NOISE · 57% saved · $412/wk · ctx 160k`. The context size joins in once the chat passes 75% of grug's limit; the weekly dollars drop out first if the line would be cut. Cold cache and too-big chat notices come as a toast.
+
+| grugbrain just | grug on the stage | footer starts with |
+| --- | --- | --- |
+| trimmed noisy output | smashes rocks with his club | SMASH NOISE |
+| recalled memory / history | digs up a gem | DIG MEMORY |
+| held back a re-read | raises his shield | NO RE-READ |
+| used the code map | reads a map | DRAW MAP |
+| saved a handoff / moved the window | carries a box | CARRY NOTES |
+| ran the check | checks his work | CHECK WORK |
+| shrank an image | smashes a picture smaller | SHRINK PIC |
+| sent a cheap subagent | sends a little helper off | SEND HELPER |
+| context too big | stares at a stone pile, alarmed | CHAT TOO BIG |
+| cache went cold | shivers in the snow, fire out | CACHE COLD |
+| nothing, Claude working | watches | WATCH CLAUDE |
+| nothing for 20+ min | sleeps by the fire at night | (nap) |
+| nothing, money saved | flexes with a coin | SAVE $N |
+
+Numbers refresh every 15 s while Claude works, every 2 min when idle. The terminal `claude` draws no pictures and already has grug's status line, so the stage shows only in the app. Turn the plugin off: `grug config set appPlugin.enabled false`. After `grug update`, open a new session to see it.
+
+--- | --- |
 | trimmed noisy output | `🧔🦴   ≋≋≋` → `🧔  💥 ≋` → `🧔🦴   ✓` SMASH NOISE |
 | recalled memory / history | `🧔⛏  ▄▂▁` → `🧔✨ 💎` DIG MEMORY |
 | held back a re-read | `🧔🛡  📄` → `🧔✋  📄` NO RE-READ |

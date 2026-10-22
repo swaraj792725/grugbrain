@@ -1,1 +1,1 @@
-{ "name": "grug-live", "version": "1.3.0", "description": "grug the caveman below the prompt (drawn where the app allows, else a footer entry): animated, acting out what grugbrain is doing, with the saving.", "types": "./types/index.d.ts" }
+{ "name": "grug-live", "version": "1.4.0", "description": "grug the caveman above the prompt: an animated stage where he walks out of his cave and acts out what grugbrain is doing; the numbers sit in a footer entry below the prompt.", "types": "./types/index.d.ts" }

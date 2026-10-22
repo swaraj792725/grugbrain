@@ -3,34 +3,52 @@ import type { Register } from 'claude-code'
 
 import type { Status } from '../types'
 
-const IDLE_FRAMES = ['🧔🦴', '🧔🦴', '🧔 🦴', '🧔🦴']
-/** Matches grugart.ts FRAME_MS: grug's next pose every 450 ms. */
-const FRAME_MS = 450
-
-/** The numbers and grug's scene; the hint below the prompt reads it, so a write redraws grug. */
+/** The numbers and grug's scene; the band above the prompt reads it, so a write redraws grug's stage. */
 const statusAtom = atom({ plugin: 'grug-live', key: 'status' } as const, {})
-/** True once the app asked for grug's picture in the hint below the prompt. The text entry stays: the desktop Code tab
- *  ran this hook but showed nothing (2026-10-22), so the picture is extra until a screenshot proves it is seen. */
-let pictured = false
 
 let argv: string[] | null = null
 let status: Status = {}
 let busy = false
-let frame = 0
 let notified = ''
 let lastRefresh = 0
 let shown = ''
 /** While idle the numbers barely move: refresh every 2 min instead of every 15 s (each refresh starts a node process). */
 const IDLE_REFRESH_MS = 120000
+/** The desktop footer cuts an entry at about 45 chars after the `grug-live` label. */
+const FOOTER_MAX = 45
 
 /** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Once per session each; failures ignored. */
 let drew = false
+let staged = false
 async function ping($: any, kind: string) {
   try {
     if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
     await $.process.run([...argv!.slice(0, -1), 'live-ping', kind], { timeoutMs: 4000 })
   } catch {
     /* grug missing: nothing to report */
+  }
+}
+
+/** The footer entry below the prompt: what grug is doing and the numbers, plain text (the picture is the band above).
+ *  Weekly dollars go first when it would not fit; the full alert goes to a toast. */
+export function line(s: Status): string {
+  const parts = [s.grug?.short ?? (busy ? 'WATCH CLAUDE' : 'grug on')]
+  if (s.savedPct !== undefined && s.savedPct > 0) parts.push(`${Math.round(s.savedPct * 100)}% saved`)
+  const usd = s.netUsd !== undefined && s.netUsd >= 1 ? `$${Math.round(s.netUsd)}/wk` : ''
+  if (usd) parts.push(usd)
+  if (s.tokens && s.limit && s.tokens / s.limit >= 0.75) parts.push(`ctx ${Math.round(s.tokens / 1000)}k`)
+  const l = parts.join(' · ')
+  return l.length > FOOTER_MAX && usd ? parts.filter(p => p !== usd).join(' · ') : l
+}
+
+function show($: any) {
+  const l = status.quiet ? '' : line(status)
+  if (l === shown) return
+  shown = l
+  $.ui.status(l || undefined)
+  if (l && !drew) {
+    drew = true
+    void ping($, 'render')
   }
 }
 
@@ -43,37 +61,17 @@ async function refresh($: any) {
     const alert = (status.alerts ?? [])[0]
     if (alert && alert !== notified && !status.quiet) $.ui.toast(`grug: ${alert}`)
     notified = alert ?? ''
+    show($)
     await update($, statusAtom, () => status)
   } catch {
     /* grug missing or busy: keep the last numbers */
   }
 }
 
-/** The one footer entry below the prompt: grug acting out his job, a short caveman line, the saving. Kept short so the
- *  footer does not cut it; the full alert goes to a toast. */
-export function line(s: Status, f: number): string {
-  const frames = s.grug?.frames?.length ? s.grug.frames : IDLE_FRAMES
-  const parts = [`${frames[f % frames.length]} ${s.grug?.short ?? (busy ? 'WATCH CLAUDE' : 'grug on')}`]
-  if (s.savedPct !== undefined && s.savedPct > 0) parts.push(`${Math.round(s.savedPct * 100)}% saved`)
-  if (s.tokens && s.limit && s.tokens / s.limit >= 0.75) parts.push(`ctx ${Math.round(s.tokens / 1000)}k`)
-  return parts.join(' · ')
-}
-
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     void ping($, 'session')
     await refresh($)
-    $.clock.every(FRAME_MS, () => {
-      frame += 1
-      const l = status.quiet ? '' : line(status, frame)
-      if (l === shown) return
-      shown = l
-      $.ui.status(l || undefined)
-      if (l && !drew) {
-        drew = true
-        void ping($, 'render')
-      }
-    })
     $.clock.every(15000, () => {
       if (busy || Date.now() - lastRefresh >= IDLE_REFRESH_MS) void refresh($)
     })
@@ -92,24 +90,18 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
-    if (e.surface === 'terminal') return next(e)
+  /** The band above the prompt: only grug's stage, animated by SMIL in the app's sandboxed frame; no words. The
+   *  terminal draws no SVG, and a survey or the terminal's own grug status line come first. */
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.surface === 'terminal' || e.props.hasSurvey) return next(e)
     const s = await read($, statusAtom)
     const g = s.grug
     if (s.quiet || !g?.svg) return next(e)
-    if (!pictured) {
-      pictured = true
-      void ping($, 'picture')
+    if (!staged) {
+      staged = true
+      void ping($, 'band')
     }
-    const { Box, Text, Svg } = $.ui.resolve(e)
-    const words = [g.short]
-    if (s.savedPct !== undefined && s.savedPct > 0) words.push(`${Math.round(s.savedPct * 100)}% saved`)
-    if (s.tokens && s.limit && s.tokens / s.limit >= 0.75) words.push(`ctx ${Math.round(s.tokens / 1000)}k`)
-    return (
-      <Box flexDirection="row" alignItems="center" gap="sm">
-        <Svg source={g.svg} alt={g.say} width={84} height={40} isInteractive />
-        <Text dimColor>{words.join(' · ')}</Text>
-      </Box>
-    )
+    const { Svg } = $.ui.resolve(e)
+    return <Svg source={g.svg} alt={g.say} isInteractive />
   })
 }

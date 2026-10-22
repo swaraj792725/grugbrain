@@ -1,6 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
+import { line } from '../hooks/register.tsx'
+
 const status = {
   savedPct: 0.56,
   netUsd: 412,
@@ -31,41 +33,34 @@ function world(on: On, lines: (string | undefined)[], toasts: string[]) {
   return clock
 }
 
-test('grug lives in the footer entry only: animated frames, short line, saving; no band above the prompt', async ($, on) => {
+test('desktop: the band above the prompt is only grug\'s stage; the footer holds the details as plain text', async ($, on) => {
   const lines: (string | undefined)[] = []
   const toasts: string[] = []
   const clock = world(on, lines, toasts)
   await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true } as any)
   await clock.advance(1000)
-  expect(lines.length).toBeGreaterThan(1)
-  expect(lines.some(l => l?.startsWith('🧔🦴   ≋≋≋ SMASH NOISE'))).toBe(true)
-  expect(lines.some(l => l?.startsWith('🧔  💥 ≋ SMASH NOISE'))).toBe(true)
-  expect(lines.every(l => (l ?? '').length <= 48)).toBe(true)
-  expect(lines[0]).toContain('56% saved')
-  expect(lines[0]).toContain('ctx 160k')
+  expect(lines).toEqual(['SMASH NOISE · 56% saved · $412/wk · ctx 160k'])
   expect(toasts).toEqual(['grug: cache expired while idle'])
   const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as any })
-  expect(await ui.find({ text: /SMASH/ })).toBeUndefined()
-  expect(await ui.find({ text: 'engine' })).toBeDefined()
+  const svg = await ui.find({ type: 'Svg' })
+  expect(svg?.props.alt).toBe('GRUG SMASH NOISY OUTPUT')
+  expect(svg?.props.isInteractive).toBe(true)
+  expect(await ui.find({ text: /SMASH|saved|engine/ })).toBeUndefined()
 })
 
-test('where the app draws the hint below the prompt, grug is also drawn there; the text entry stays (desktop showed nothing)', async ($, on) => {
+test('a survey keeps the band; the terminal draws no stage', async ($, on) => {
   const lines: (string | undefined)[] = []
-  const clock = world(on, lines, [])
-  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true } as any)
-  const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '' } as any })
-  expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe('GRUG SMASH NOISY OUTPUT')
-  expect(await ui.find({ text: /SMASH NOISE · 56% saved · ctx 160k/ })).toBeDefined()
-  await clock.advance(2000)
+  world(on, lines, [])
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as any)
+  const survey = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: true, isWorking: false, maxRows: 10, bodyColumns: 120 } as any })
+  expect(await survey.find({ type: 'Svg' })).toBeUndefined()
+  expect(await survey.find({ text: 'engine' })).toBeDefined()
+  const term = await $.ui.mount({ plugin: 'grug-live', surface: 'terminal', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as any })
+  expect(await term.find({ text: 'engine' })).toBeDefined()
   expect(lines.at(-1)).toContain('SMASH NOISE')
 })
 
-test('the terminal keeps its own hint line; grug stays a text entry there', async ($, on) => {
-  const lines: (string | undefined)[] = []
-  const clock = world(on, lines, [])
-  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as any)
-  const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'terminal', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } as any })
-  expect(await ui.find({ text: /SMASH/ })).toBeUndefined()
-  await clock.advance(1000)
-  expect(lines.some(l => l?.includes('SMASH NOISE'))).toBe(true)
+test('a long footer line drops the weekly dollars first', async ($, on) => {
+  expect(line({ savedPct: 0.5, netUsd: 1234, tokens: 900000, limit: 1000000, grug: { act: 'map', say: '', short: 'GRUG DRAW CAVE MAP', frames: [] } })).toBe('GRUG DRAW CAVE MAP · 50% saved · ctx 900k')
+  expect(line({ savedPct: 0.5, netUsd: 0.4 })).toBe('grug on · 50% saved')
 })

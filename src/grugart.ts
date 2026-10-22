@@ -1,5 +1,5 @@
-/** grug the caveman for the grug-live footer entry: per thing grug is doing, text frames, a short and a long caveman
- *  line. grugSvg (an animated SMIL scene) is kept for a surface that draws one; the footer cannot. */
+/** grug the caveman for grug-live: per thing grug is doing, an animated stage (SVG) for the band above the prompt, a
+ *  short and a long caveman line, and text frames for the terminal, which draws no SVG. */
 import type { ActivityKind } from './stats.js';
 
 /** grug's face where only text fits (status line, app summary). */
@@ -315,16 +315,133 @@ export function grugSvg(act: GrugAct): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -9 120 57" width="120" height="57"><title>grug: ${grugSay(act).toLowerCase()}</title>${scene(act)}</svg>`;
 }
 
+// ---- stage: the wide band above the prompt --------------------------------------------------------------
+
+const STAGE_W = 560;
+const STAGE_H = 72;
+/** Where grug's feet stand (stage units); his figure is drawn with feet at y 46.6. */
+const FLOOR = 62;
+const LIFT = FLOOR - 46.6;
+/** One loop: out of the cave, the job, back into the cave. */
+const LOOP_S = 10;
+/** grug's x offset at the cave mouth and at the work spot (figure centre is offset + 30). */
+const CAVE_X = -2;
+const WORK_X = 214;
+
+type Sky = 'dusk' | 'night' | 'ice';
+
+const SKIES: Record<Sky, [string, string][]> = {
+  dusk: [['0', '#1c1836'], ['.3', '#3f2758'], ['.55', '#a4506a'], ['.75', '#f08a4b'], ['1', '#ffc06a']],
+  night: [['0', '#070b1f'], ['.6', '#151d45'], ['1', '#2b3a6e']],
+  ice: [['0', '#0f1d33'], ['.6', '#284865'], ['1', '#7fb0cf']],
+};
+
+const discrete = (vals: number[], keyTimes: number[]) =>
+  `<animate attributeName="opacity" values="${vals.join(';')}" keyTimes="${keyTimes.join(';')}" calcMode="discrete" dur="${LOOP_S}s" repeatCount="indefinite"/>`;
+
+function backdrop(sky: Sky): string {
+  const stops = SKIES[sky].map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('');
+  const star = (x: number, y: number, r: number, b: number) =>
+    `<circle cx="${x}" cy="${y}" r="${r}" fill="#fff6dd" opacity=".2">${anim('opacity', [0.15, 0.9, 0.15], 3.4, b)}</circle>`;
+  const stars = [[150, 9, 0.7, 0], [196, 20, 0.5, 1.1], [262, 7, 0.6, 2.2], [318, 15, 0.5, 0.6], [372, 6, 0.8, 1.7], [420, 22, 0.5, 2.8], [520, 10, 0.6, 0.3], [88, 14, 0.5, 2.5], [238, 28, 0.4, 1.4]]
+    .map(([x, y, r, b]) => star(x, y, sky === 'night' ? r * 1.4 : r, b)).join('');
+  const sun = sky === 'night'
+    ? `<circle cx="486" cy="20" r="11" fill="#fff3c4" opacity=".14"/><circle cx="486" cy="20" r="7.5" fill="#fff1c2"/><circle cx="489.5" cy="17.5" r="6.6" fill="#151d45" opacity=".92"/>`
+    : sky === 'ice'
+      ? `<circle cx="480" cy="30" r="9" fill="#e9f6ff" opacity=".55"/>`
+      : `<circle cx="474" cy="31" r="30" fill="#ff9a4a" opacity=".22">${anim('r', [26, 32, 26], 6)}</circle><circle cx="474" cy="31" r="13" fill="#ffb347"/><circle cx="474" cy="31" r="9.5" fill="#ffd27a" opacity=".8"/>`;
+  const cloud = (y: number, dur: number, begin: number, o: number) =>
+    `<g opacity="${o}">${move([[-120, 0], [STAGE_W + 40, 0]], dur, begin)}<ellipse cx="0" cy="${y}" rx="22" ry="4.2" fill="#f6d1c0"/><ellipse cx="12" cy="${y - 3}" rx="12" ry="4" fill="#f6d1c0"/></g>`;
+  const far = sky === 'ice' ? '#3b5d7e' : sky === 'night' ? '#1c2454' : '#4b2c56';
+  const near = sky === 'ice' ? '#2a445f' : sky === 'night' ? '#121838' : '#2d1b36';
+  return (
+    `<defs><linearGradient id="gsky" x1="0" y1="0" x2="0" y2="1">${stops}</linearGradient>` +
+    `<radialGradient id="gfire"><stop offset="0" stop-color="#ffb347" stop-opacity=".55"/><stop offset="1" stop-color="#ffb347" stop-opacity="0"/></radialGradient>` +
+    `<clipPath id="gclip"><rect width="${STAGE_W}" height="${STAGE_H}" rx="12"/></clipPath></defs>` +
+    `<rect width="${STAGE_W}" height="${STAGE_H}" fill="url(#gsky)"/>` +
+    stars + sun +
+    (sky === 'dusk' ? cloud(16, 70, -20, 0.22) + cloud(26, 95, -70, 0.15) : '') +
+    `<path d="M0 ${FLOOR} L0 44 L40 30 L70 40 L118 22 L160 38 L205 26 L262 42 L300 30 L350 40 L396 24 L440 38 L500 28 L560 40 L560 ${FLOOR} Z" fill="${far}" opacity=".9"/>` +
+    `<path d="M0 ${FLOOR} L0 52 Q70 42 140 52 T290 50 T430 52 T560 48 L560 ${FLOOR} Z" fill="${near}"/>` +
+    `<rect y="${FLOOR}" width="${STAGE_W}" height="${STAGE_H - FLOOR}" fill="#150d18"/>` +
+    `<path d="M0 ${FLOOR} L${STAGE_W} ${FLOOR}" stroke="${sky === 'ice' ? '#dbeefa' : '#5a3b4a'}" stroke-width="${sky === 'ice' ? 1.6 : 0.9}"/>` +
+    [36, 132, 188, 330, 392, 446, 530].map((x) => `<path d="M${x} ${FLOOR} l1.4 -3.4 l1 3 l1.2 -2.6 l.8 3" stroke="#3f2b38" stroke-width=".8" fill="none"/>`).join('') +
+    [[150, 0.9], [366, 1.3], [508, 1]].map(([x, r]) => `<ellipse cx="${x}" cy="${FLOOR + 3}" rx="${r * 3}" ry="${r * 1.3}" fill="#2b1f2b"/>`).join('')
+  );
+}
+
+/** The cave grug lives in, at the left edge; the mouth is drawn before grug, the rim after, so he steps out of it. */
+const CAVE_BACK = `<path d="M0 ${FLOOR} L0 18 Q14 8 36 12 Q58 16 64 34 Q70 48 66 ${FLOOR} Z" fill="#2c2233" stroke="#45364a" stroke-width="1"/><path d="M12 ${FLOOR} Q12 30 30 28 Q48 30 48 ${FLOOR} Z" fill="#06040a"/>`;
+const CAVE_RIM = `<path d="M8 ${FLOOR} Q8 26 30 24 Q52 26 52 ${FLOOR} L48 ${FLOOR} Q48 30 30 28 Q12 30 12 ${FLOOR} Z" fill="#3b2e42"/><path d="M20 20 l4 -2 M44 22 l3 2 M56 40 l3 1" stroke="#5a4860" stroke-width="1" stroke-linecap="round"/>`;
+
+function campfire(lit: boolean): string {
+  const x = 96;
+  const logs = `<path d="M${x - 10} ${FLOOR} L${x + 10} ${FLOOR - 5}" stroke="#6e4220" stroke-width="3.4" stroke-linecap="round"/><path d="M${x - 10} ${FLOOR - 5} L${x + 10} ${FLOOR}" stroke="#8a5428" stroke-width="3.4" stroke-linecap="round"/>`;
+  const stones = [-13, -6, 6, 13].map((d) => `<ellipse cx="${x + d}" cy="${FLOOR + 0.6}" rx="3" ry="1.8" fill="#4a4048"/>`).join('');
+  if (!lit) {
+    const puff = (b: number) => `<circle cx="${x}" cy="${FLOOR - 6}" r="2.4" fill="#c9d6e2" opacity="0">${move([[0, 0], [4, -26]], 3.6, b)}${anim('opacity', [0, 0.55, 0], 3.6, b)}${anim('r', [2, 6, 9], 3.6, b)}</circle>`;
+    return logs + stones + puff(0) + puff(1.2) + puff(2.4);
+  }
+  const flame = (d: string, fill: string, dur: number) =>
+    `<g transform="translate(${x} ${FLOOR - 3})"><path d="${d}" fill="${fill}"><animateTransform attributeName="transform" type="scale" values="1 1;.9 1.12;1.06 .92;1 1" dur="${dur}s" repeatCount="indefinite"/></path></g>`;
+  const ember = (dx: number, b: number) => `<circle cx="${x + dx}" cy="${FLOOR - 10}" r=".9" fill="#ffd27a" opacity="0">${move([[0, 0], [dx * 0.6, -28]], 2.2, b)}${anim('opacity', [0, 1, 0], 2.2, b)}</circle>`;
+  return (
+    `<circle cx="${x}" cy="${FLOOR - 8}" r="34" fill="url(#gfire)">${anim('opacity', [0.75, 1, 0.8, 0.95, 0.75], 1.6)}</circle>` +
+    logs + stones +
+    flame('M-7 0 Q-8 -9 -2 -14 Q-1 -8 2 -10 Q1 -17 5 -21 Q9 -12 7 0 Z', '#ff6a2b', 0.7) +
+    flame('M-4.6 0 Q-5 -7 -.6 -11 Q.6 -6 3 -8 Q4.6 -4 4.4 0 Z', '#ffb02e', 0.55) +
+    flame('M-2.2 0 Q-2.6 -4 0 -6.4 Q2.6 -4 2.2 0 Z', '#fff0a8', 0.45) +
+    ember(-3, 0) + ember(2, 0.7) + ember(5, 1.5)
+  );
+}
+
+const snow = () =>
+  Array.from({ length: 16 }, (_, i) => {
+    const x = 20 + ((i * 37) % 530);
+    const dur = 4 + (i % 4);
+    return `<circle cx="${x}" cy="-4" r="${0.8 + (i % 3) * 0.4}" fill="#f3fbff" opacity=".85">${move([[0, 0], [((i % 5) - 2) * 6, STAGE_H + 6]], dur, -(i * 0.6) % dur)}</circle>`;
+  }).join('');
+
+/** grug walking with his club on his shoulder; `left` mirrors him (walking back into the cave). */
+function walker(left: boolean): string {
+  const g = `<g>${move([[0, 0], [0, -1.2], [0, 0]], 0.25)}${grug({ eyes: 'open', walk: true, workArm: arm(CLUB, rot([-48, -36, -48], 38, 27, 0.5)) })}</g>`;
+  return left ? `<g transform="translate(60 0) scale(-1 1)">${g}</g>` : g;
+}
+
+/** The band above the prompt: grug comes out of his cave, walks past the fire, does the job grugbrain is doing right
+ *  now, and walks home; a nap, a cold cache and a too-big chat change the sky. SMIL only (the app's sandboxed frame). */
+export function grugStage(act: GrugAct): string {
+  const sky: Sky = act === 'sleep' ? 'night' : act === 'cold' ? 'ice' : 'dusk';
+  let cast: string;
+  if (act === 'sleep' || act === 'cold') {
+    cast = `<g transform="translate(118 ${LIFT})">${scene(act).replace(ground(), '')}</g>`;
+  } else {
+    const kt = [0, 0.04, 0.24, 0.7, 0.9, 1];
+    const path = move([[CAVE_X, LIFT], [CAVE_X, LIFT], [WORK_X, LIFT], [WORK_X, LIFT], [CAVE_X, LIFT], [CAVE_X, LIFT]], LOOP_S, 0, kt);
+    const puff = (dx: number) =>
+      `<circle cx="${WORK_X + 30 + dx}" cy="${FLOOR - 1}" r="2" fill="#d9c3b0" opacity="0">${anim('opacity', [0, 0, 0.6, 0, 0], LOOP_S, 0, [0, 0.235, 0.25, 0.32, 1])}${anim('r', [1, 1, 2, 5, 5], LOOP_S, 0, [0, 0.235, 0.25, 0.32, 1])}</circle>`;
+    cast =
+      `<g>${path}<g opacity="0">${discrete([0, 1, 0], [0, 0.04, 0.24])}${walker(false)}</g><g opacity="0">${discrete([0, 1, 0], [0, 0.7, 0.9])}${walker(true)}</g></g>` +
+      `<g transform="translate(${WORK_X} ${LIFT})" opacity="0">${anim('opacity', [0, 0, 1, 1, 0, 0], LOOP_S, 0, [0, 0.235, 0.245, 0.695, 0.705, 1])}${scene(act).replace(ground(), '')}</g>` +
+      puff(-8) + puff(8);
+  }
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${STAGE_W} ${STAGE_H}" width="${STAGE_W}" height="${STAGE_H}"><title>grug: ${grugSay(act).toLowerCase()}</title>` +
+    `<g clip-path="url(#gclip)">${backdrop(sky)}${CAVE_BACK}${campfire(act !== 'cold')}${cast}${CAVE_RIM}${act === 'cold' ? snow() : ''}</g>` +
+    `<rect x=".5" y=".5" width="${STAGE_W - 1}" height="${STAGE_H - 1}" rx="12" fill="none" stroke="#ffffff" stroke-opacity=".08"/></svg>`
+  );
+}
+
 export interface GrugScene {
   act: GrugAct;
   say: string;
   short: string;
   frames: string[];
-  /** grug drawn (SMIL-animated SVG): the app draws it below the prompt where it can, else the text frames show. */
+  /** grug's stage (SMIL-animated SVG) for the band above the prompt. */
   svg: string;
 }
 
 export function grugScene(s: SceneInput): GrugScene {
   const act = pickAct(s);
-  return { act, say: grugSay(act, s), short: grugShort(act, s), frames: grugFrames(act), svg: grugSvg(act) };
+  return { act, say: grugSay(act, s), short: grugShort(act, s), frames: grugFrames(act), svg: grugStage(act) };
 }

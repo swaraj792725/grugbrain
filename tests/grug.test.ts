@@ -949,7 +949,7 @@ describe('auto-compaction + restore', () => {
   });
 
   it('grug art: the scene follows what grug did, every act draws a valid animated SVG', async () => {
-    const { GRUG_ACTS, actFor, pickAct, grugSay, grugShort, grugSvg, grugFrames, grugScene } = await import('../src/grugart.js');
+    const { GRUG_ACTS, actFor, pickAct, grugSay, grugShort, grugSvg, grugStage, grugFrames, grugScene } = await import('../src/grugart.js');
     expect(actFor('trim')).toBe('smash');
     expect(actFor('auto-recall')).toBe('dig');
     expect(actFor('reread')).toBe('guard');
@@ -963,8 +963,7 @@ describe('auto-compaction + restore', () => {
     expect(pickAct({ savedPct: 0.5 })).toBe('proud');
     expect(pickAct({})).toBe('watch');
     expect(grugSay('proud', { netUsd: 412 })).toContain('$412');
-    for (const act of GRUG_ACTS) {
-      const svg = grugSvg(act);
+    for (const act of GRUG_ACTS) for (const svg of [grugSvg(act), grugStage(act)]) {
       expect(svg.startsWith('<svg') && svg.endsWith('</svg>')).toBe(true);
       expect(svg.length).toBeLessThan(131072);
       expect(svg).toContain('<animate');
@@ -973,12 +972,17 @@ describe('auto-compaction + restore', () => {
       const opens = (tags.match(/<[a-zA-Z][^>]*>/g) ?? []).map((t) => t.match(/^<([a-zA-Z]+)/)![1]);
       const closes = (tags.match(/<\/[a-zA-Z]+>/g) ?? []).map((t) => t.slice(2, -1));
       expect(opens.sort()).toEqual(closes.sort());
+    }
+    for (const act of GRUG_ACTS) {
+      // the stage: grug walks out of the cave and home again, except asleep or frozen by the fire
+      expect(grugStage(act).includes('scale(-1 1)')).toBe(act !== 'sleep' && act !== 'cold');
+      expect(grugStage(act)).toContain('viewBox="0 0 560 72"');
       expect(grugFrames(act).length).toBeGreaterThan(2);
       expect(grugFrames(act).every((f) => f.length <= 18)).toBe(true);
       expect(grugShort(act, { netUsd: 412 }).length).toBeLessThanOrEqual(12);
       expect(grugSay(act).length).toBeGreaterThan(0);
     }
-    expect(grugScene({ kind: 'graph' })).toMatchObject({ act: 'map' });
+    expect(grugScene({ kind: 'graph' })).toMatchObject({ act: 'map', svg: grugStage('map') });
   });
 
   it('after auto-compaction the same session gets its own handoff back', async () => {
