@@ -137,6 +137,8 @@ async function main() {
         }
         const ago = (t?: number) => (t ? `${Math.max(1, Math.round((Date.now() - t) / 60000))} min ago` : 'never');
         console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}; stage above the prompt: ${hb.bandAt ? ago(hb.bandAt) : 'never'}${hb.bandCols ? ` (${hb.bandCols[0]} cells wide)` : ''}`);
+        for (const [dir, c] of Object.entries<any>(hb.cwds || {}).slice(0, 6))
+          console.log(`   ${path.basename(dir)}: loaded ${ago(c.sessionAt)}, stage ${c.bandAt ? ago(c.bandAt) : 'never'}${c.skipAt ? `, skipped ${ago(c.skipAt)} (${c.skip})` : ''}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
         else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not draw plugin status entries; use `grug dash` or the terminal `claude` to see it');
       }
@@ -395,7 +397,7 @@ async function main() {
 
     case 'live-ping': {
       try {
-        const kind = ['render', 'band'].includes(process.argv[3]) ? process.argv[3] : 'session';
+        const kind = ['render', 'band', 'skip'].includes(process.argv[3]) ? process.argv[3] : 'session';
         const f = path.join(paths.home(), 'live-heartbeat.json');
         let j: any = {};
         try {
@@ -406,6 +408,13 @@ async function main() {
         j[`${kind}At`] = Date.now();
         if (kind === 'render') j.renders = (j.renders || 0) + 1;
         if (kind === 'band' && Number(process.argv[4]) > 0) j.bandCols = [Number(process.argv[4]), Number(process.argv[5]) || 0];
+        // per folder (the plugin runs grug in the session's cwd): which sessions drew the stage, which skipped it and why
+        const cwds: Record<string, any> = (j.cwds = j.cwds || {});
+        const c = (cwds[process.cwd()] = cwds[process.cwd()] || {});
+        c[`${kind}At`] = Date.now();
+        if (kind === 'skip') c.skip = process.argv[4] || '?';
+        const last = (v: any) => Math.max(0, ...Object.values(v).filter((x): x is number => typeof x === 'number'));
+        for (const k of Object.keys(cwds).sort((a, b) => last(cwds[b]) - last(cwds[a])).slice(12)) delete cwds[k];
         fs.writeFileSync(f, JSON.stringify(j));
       } catch {
         /* best effort */

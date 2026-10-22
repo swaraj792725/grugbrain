@@ -31,6 +31,15 @@ const BLEED_Y = -2.5
 /** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Once per session each; failures ignored. */
 let drew = false
 let staged = false
+/** Why the band passed (survey / quiet / no picture), told once per reason: doctor shows it per folder. */
+const skipped = new Set<string>()
+function skip($: any, e: any, next: any, why: string) {
+  if (!skipped.has(why)) {
+    skipped.add(why)
+    void ping($, `skip ${why}`)
+  }
+  return next(e)
+}
 async function ping($: any, kind: string) {
   try {
     if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
@@ -67,7 +76,9 @@ function show($: any) {
  *  when a refresh fails. */
 const SLEEP_SCENE = { act: 'sleep', say: 'GRUG SLEEP IN CAVE', short: 'grug sleep', frames: [] as string[] }
 let sleepSvg = ''
+let sleepTried = false
 async function loadSleep($: any) {
+  sleepTried = true
   try {
     const svg = await $.fs.read(`${$.plugin.root}/stage-sleep.svg`)
     if (typeof svg === 'string' && svg.startsWith('<svg')) sleepSvg = svg
@@ -128,10 +139,14 @@ export const register: Register = on => {
    *  drawn on the desktop (grug asleep until the first status); the terminal draws no SVG, and a survey or the
    *  terminal's own grug status line come first. */
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.surface === 'terminal' || e.props.hasSurvey) return next(e)
+    if (e.surface === 'terminal') return next(e)
+    if (e.props.hasSurvey) return skip($, e, next, 'survey')
     const s = await read($, statusAtom)
+    // the band can be asked for before session.start has read the picture
+    if (!s.grug?.svg && !sleepTried) await loadSleep($)
     const g = s.grug?.svg ? s.grug : sleepSvg ? { ...SLEEP_SCENE, svg: sleepSvg } : undefined
-    if (s.quiet || !g?.svg) return next(e)
+    if (s.quiet) return skip($, e, next, 'quiet')
+    if (!g?.svg) return skip($, e, next, 'nopicture')
     const cols = e.viewport?.columns ?? e.props.bodyColumns + 5
     if (!staged) {
       staged = true

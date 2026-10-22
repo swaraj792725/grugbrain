@@ -91,3 +91,24 @@ test('the band is there from the first frame: grug asleep in his cave until a st
   expect(svg?.props.source).toBe(sleep)
   expect(svg?.props.alt).toBe('GRUG SLEEP IN CAVE')
 })
+
+test('the band asked for before session.start still draws grug asleep; a survey is told to doctor', async ($, on) => {
+  const pings: string[] = []
+  const sleep = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle r="4"/></svg>'
+  on('fs.read', async ($, e) => ({ value: e.path.endsWith('stage-sleep.svg') ? sleep : JSON.stringify({ argv: ['node', 'cli.js', 'app-status'] }) }) as any)
+  on('process.run', async ($, e) => {
+    if (e.argv.includes('live-ping')) pings.push(e.argv.slice(e.argv.indexOf('live-ping') + 1).join(' '))
+    return { value: { exitCode: 0, stdout: '', stderr: '' } } as any
+  })
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  const props = { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as any
+  const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'AbovePrompt', props })
+  expect((await ui.find({ type: 'Svg' }))?.props.source).toBe(sleep)
+  const survey = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'AbovePrompt', props: { ...props, hasSurvey: true } })
+  expect(await survey.find({ type: 'Svg' })).toBeUndefined()
+  await new Promise(r => setTimeout(r, 20))
+  expect(pings).toContain('skip survey')
+})
