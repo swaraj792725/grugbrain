@@ -69,3 +69,25 @@ test('a long footer line drops the weekly dollars first', async ($, on) => {
   expect(line({ savedPct: 0.5, netUsd: 1234, tokens: 900000, limit: 1000000, grug: { act: 'map', say: '', short: 'GRUG DRAW CAVE MAP', frames: [] } })).toBe('GRUG DRAW CAVE MAP · 50% saved · ctx 900k')
   expect(line({ savedPct: 0.5, netUsd: 0.4 })).toBe('grug on · 50% saved')
 })
+
+test('the band is there from the first frame: grug asleep in his cave until a status arrives', async ($, on) => {
+  const runs: string[][] = []
+  const sleep = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10"/></svg>'
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('fs.read', async ($, e) => ({ value: e.path.endsWith('stage-sleep.svg') ? sleep : JSON.stringify({ argv: ['node', 'cli.js', 'app-status'] }) }) as any)
+  on('process.run', async ($, e) => {
+    if (!e.argv.includes('live-ping')) runs.push([...e.argv])
+    return { value: { exitCode: 1, stdout: '', stderr: 'grug busy' } } as any
+  })
+  on('ui.status', () => ({ value: undefined }) as any)
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+    return <Text>engine</Text>
+  })
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true } as any)
+  expect(runs[0]).toContain('--start')
+  const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as any })
+  const svg = await ui.find({ type: 'Svg' })
+  expect(svg?.props.source).toBe(sleep)
+  expect(svg?.props.alt).toBe('GRUG SLEEP IN CAVE')
+})

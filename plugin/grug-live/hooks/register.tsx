@@ -12,8 +12,10 @@ let busy = false
 let notified = ''
 let lastRefresh = 0
 let shown = ''
-/** While idle the numbers barely move: refresh every 2 min instead of every 15 s (each refresh starts a node process). */
-const IDLE_REFRESH_MS = 120000
+/** While idle the numbers barely move: refresh every minute instead of every 15 s (each refresh starts a node process),
+ *  every 2 min once grug sleeps; he goes to sleep 90 s after the last reply, so the cave walk shows 1.5-2.5 min after a turn. */
+const IDLE_REFRESH_MS = 60000
+const ASLEEP_REFRESH_MS = 120000
 /** The desktop footer cuts an entry at about 45 chars after the `grug-live` label. */
 const FOOTER_MAX = 45
 
@@ -61,11 +63,29 @@ function show($: any) {
   }
 }
 
+/** grug asleep in his cave (written by `grug install`): the band is there from the first frame of a session, and stays
+ *  when a refresh fails. */
+const SLEEP_SCENE = { act: 'sleep', say: 'GRUG SLEEP IN CAVE', short: 'grug sleep', frames: [] as string[] }
+let sleepSvg = ''
+async function loadSleep($: any) {
+  try {
+    const svg = await $.fs.read(`${$.plugin.root}/stage-sleep.svg`)
+    if (typeof svg === 'string' && svg.startsWith('<svg')) sleepSvg = svg
+  } catch {
+    /* older install: the band waits for the first status */
+  }
+}
+
+/** No prompt yet this session: the latest transcript is the previous chat's, so grug sleeps until the first prompt. */
+let fresh = true
+
 async function refresh($: any) {
   lastRefresh = Date.now()
   try {
     if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
-    const r = await $.process.run(busy ? [...argv!, '--busy'] : argv, { timeoutMs: 8000 })
+    // the act on show now, so grug walks into the cave (or out of it) once, not on every refresh
+    const from = status.grug?.act ? ['--from', status.grug.act] : []
+    const r = await $.process.run([...argv!, ...(busy ? ['--busy'] : []), ...(fresh ? ['--start'] : []), ...from], { timeoutMs: 8000 })
     if (r.exitCode === 0) status = JSON.parse(r.stdout || '{}')
     const alert = (status.alerts ?? [])[0]
     if (alert && alert !== notified && !status.quiet) $.ui.toast(`grug: ${alert}`)
@@ -80,15 +100,20 @@ async function refresh($: any) {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     void ping($, 'session')
+    await loadSleep($)
+    if (sleepSvg && !status.grug) await update($, statusAtom, () => ({ ...status, grug: { ...SLEEP_SCENE, svg: sleepSvg } }))
     await refresh($)
     $.clock.every(15000, () => {
-      if (busy || Date.now() - lastRefresh >= IDLE_REFRESH_MS) void refresh($)
+      const act = status.grug?.act
+      const every = act === 'sleep' || act === 'cold' ? ASLEEP_REFRESH_MS : IDLE_REFRESH_MS
+      if (busy || Date.now() - lastRefresh >= every) void refresh($)
     })
     return next(e)
   })
 
   on('prompt.submit', ($, e, next) => {
     busy = true
+    fresh = false
     refresh($).catch(() => {})
     return next(e)
   })
@@ -99,12 +124,13 @@ export const register: Register = on => {
     return next(e)
   })
 
-  /** The band above the prompt: only grug's stage, animated by SMIL in the app's sandboxed frame; no words. The
-   *  terminal draws no SVG, and a survey or the terminal's own grug status line come first. */
+  /** The band above the prompt: only grug's stage, animated by SMIL in the app's sandboxed frame; no words. Always
+   *  drawn on the desktop (grug asleep until the first status); the terminal draws no SVG, and a survey or the
+   *  terminal's own grug status line come first. */
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (e.surface === 'terminal' || e.props.hasSurvey) return next(e)
     const s = await read($, statusAtom)
-    const g = s.grug
+    const g = s.grug?.svg ? s.grug : sleepSvg ? { ...SLEEP_SCENE, svg: sleepSvg } : undefined
     if (s.quiet || !g?.svg) return next(e)
     const cols = e.viewport?.columns ?? e.props.bodyColumns + 5
     if (!staged) {

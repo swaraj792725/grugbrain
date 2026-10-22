@@ -923,6 +923,7 @@ describe('auto-compaction + restore', () => {
     expect(copyPlugin(path.join(process.cwd(), 'dist'))).toBe(true);
     expect(fs.existsSync(path.join(pluginDir(), 'hooks', 'register.tsx'))).toBe(true);
     expect(JSON.parse(fs.readFileSync(path.join(pluginDir(), 'grug.json'), 'utf8')).argv.slice(1)).toEqual([installedCli(), 'app-status']);
+    expect(fs.readFileSync(path.join(pluginDir(), 'stage-sleep.svg'), 'utf8')).toContain('rotate(-90 30 26)');
     applyTuningNow();
     let s = JSON.parse(fs.readFileSync(settings, 'utf8'));
     expect(s.env.CLAUDE_CODE_PLUGIN_DIRS.split(path.delimiter)).toEqual(['/mine', pluginDir()]);
@@ -946,6 +947,10 @@ describe('auto-compaction + restore', () => {
     expect(appStatus(undefined).alerts).toEqual([]);
     expect(st.grug?.act).toBe('cold');
     expect(appStatus(undefined, Date.now(), true).grug?.act).toBe('work');
+    // a new session: the previous chat's transcript gives no alerts, and grug sleeps until the first prompt
+    const fresh = appStatus(t, Date.now(), false, undefined, true);
+    expect(fresh).toMatchObject({ tokens: 0, alerts: [], grug: { act: 'sleep' } });
+    expect(fresh.grug?.svg).not.toContain('fill="freeze"');
   });
 
   it('grug art: the scene follows what grug did, every act draws a valid animated SVG', async () => {
@@ -960,10 +965,13 @@ describe('auto-compaction + restore', () => {
     expect(pickAct({ kind: 'trim', busy: true })).toBe('smash');
     expect(pickAct({ busy: true })).toBe('work');
     expect(pickAct({ idleMs: 30 * 60000, savedPct: 0.5 })).toBe('sleep');
+    expect(pickAct({ idleMs: 2 * 60000, alerts: ['context 400k'] })).toBe('sleep');
+    expect(pickAct({ idleMs: 2 * 60000, busy: true })).toBe('work');
+    expect(pickAct({ idleMs: 30000, savedPct: 0.5 })).toBe('proud');
     expect(pickAct({ savedPct: 0.5 })).toBe('proud');
     expect(pickAct({})).toBe('watch');
     expect(grugSay('proud', { netUsd: 412 })).toContain('$412');
-    for (const act of GRUG_ACTS) for (const svg of [grugSvg(act), grugStage(act)]) {
+    for (const act of GRUG_ACTS) for (const svg of [grugSvg(act), grugStage(act), grugStage(act, 'sleep'), grugStage(act, 'smash'), grugStage(act, act)]) {
       expect(svg.startsWith('<svg') && svg.endsWith('</svg>')).toBe(true);
       expect(svg.length).toBeLessThan(131072);
       expect(svg).toContain('<animate');
@@ -974,8 +982,12 @@ describe('auto-compaction + restore', () => {
       expect(opens.sort()).toEqual(closes.sort());
     }
     for (const act of GRUG_ACTS) {
-      // the stage: grug walks out of the cave and home again, except asleep or frozen by the fire
-      expect(grugStage(act).includes('scale(-1 1)')).toBe(act !== 'sleep' && act !== 'cold');
+      // the stage: awake grug stays out by the fire; he walks only on a change between awake and asleep, once
+      const down = act === 'sleep' || act === 'cold';
+      expect(grugStage(act, act)).not.toContain('fill="freeze"');
+      expect(grugStage(act, down ? 'smash' : 'sleep')).toContain('fill="freeze"');
+      expect(grugStage(act, 'smash').includes('scale(-1 1)')).toBe(down);
+      expect(grugStage(act, act).includes('rotate(-90 30 26)')).toBe(down);
       expect(grugStage(act)).toContain('viewBox="0 14 2400 54"');
       expect(grugStage(act)).toContain('preserveAspectRatio="xMinYMid slice"');
       expect(grugStage(act)).not.toContain('clip-path');
@@ -985,6 +997,7 @@ describe('auto-compaction + restore', () => {
       expect(grugSay(act).length).toBeGreaterThan(0);
     }
     expect(grugScene({ kind: 'graph' })).toMatchObject({ act: 'map', svg: grugStage('map') });
+    expect(grugScene({ kind: 'graph', from: 'map' }).svg).toBe(grugStage('map', 'map'));
   });
 
   it('after auto-compaction the same session gets its own handoff back', async () => {

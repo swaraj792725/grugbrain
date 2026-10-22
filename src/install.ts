@@ -19,6 +19,7 @@ import { stripSlimOverrides } from './slim.js';
 import { stripPluginSlim } from './pluginslim.js';
 import { effectiveWindow, updateFloor } from './floor.js';
 import { copySkills, installPlatforms, uninstallPlatforms } from './platforms.js';
+import { grugStage } from './grugart.js';
 
 export const MARK = '--from=grugbrain';
 const LEGACY_KEYS = ['token-diet', 'claude-token-saver'];
@@ -110,6 +111,8 @@ export function copyPlugin(builtDir: string): boolean {
   fs.rmSync(to, { recursive: true, force: true });
   fs.cpSync(from, to, { recursive: true });
   fs.writeFileSync(path.join(to, 'grug.json'), JSON.stringify({ argv: [process.execPath, installedCli(), 'app-status'] }) + '\n');
+  // grug asleep in his cave: the band draws it the moment a session opens, before the first status arrives
+  fs.writeFileSync(path.join(to, 'stage-sleep.svg'), grugStage('sleep'));
   return true;
 }
 

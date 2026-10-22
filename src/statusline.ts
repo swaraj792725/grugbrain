@@ -288,10 +288,17 @@ export function statusLineShown(cfg: ReturnType<typeof loadConfig> = loadConfig(
 }
 
 /** Machine-readable status for the grug-live app plugin (same numbers as the status line). */
-export function appStatus(transcriptPath: string | undefined, now = Date.now(), busy = false): AppStatus {
+/** `from`: the act the band showed last (the plugin passes it), so a change between awake and asleep plays once.
+ *  `start`: a new session; the latest transcript is the previous chat's, so no context or cache alerts, and grug sleeps
+ *  in his cave until the first prompt wakes him. */
+export function appStatus(transcriptPath: string | undefined, now = Date.now(), busy = false, from?: string, start = false): AppStatus {
   const cfg = loadConfig();
   if (statusLineShown(cfg)) return { tokens: 0, limit: 0, idleMs: 0, alerts: [], quiet: true };
   const saved = cachedSaved(now);
+  if (start) {
+    const grug = grugScene({ alerts: [], idleMs: Infinity, savedPct: saved?.pct, netUsd: saved?.netUsd, from: 'sleep' });
+    return { savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: 0, limit: alertLimit(cfg), idleMs: 0, alerts: [], grug };
+  }
   const cs = contextSize(transcriptPath);
   const limit = alertLimit(cfg);
   const idleMs = cs.lastReplyTs ? now - cs.lastReplyTs : 0;
@@ -299,6 +306,6 @@ export function appStatus(transcriptPath: string | undefined, now = Date.now(), 
   if (cs.tokens >= limit) alerts.push(`context is ${k(cs.tokens)}: /clear soon (grug restores a handoff)`);
   if (idleMs > (cs.oneHourCache ? 3600000 : 300000) && cs.tokens > 0) alerts.push('cache expired while idle: next reply re-reads the context at full price');
   const last = lastAction(now);
-  const grug = grugScene({ kind: last?.kind, alerts, busy, idleMs, savedPct: saved?.pct, netUsd: saved?.netUsd });
+  const grug = grugScene({ kind: last?.kind, alerts, busy, idleMs, savedPct: saved?.pct, netUsd: saved?.netUsd, from });
   return { savedPct: saved?.pct, netUsd: saved?.netUsd, tokens: cs.tokens, limit, idleMs, recent: last?.msg, alerts, grug };
 }
