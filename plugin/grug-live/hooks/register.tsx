@@ -9,7 +9,8 @@ const FRAME_MS = 450
 
 /** The numbers and grug's scene; the hint below the prompt reads it, so a write redraws grug. */
 const statusAtom = atom({ plugin: 'grug-live', key: 'status' } as const, {})
-/** True once the app draws grug as a picture in the hint below the prompt: the text entry then steps aside (one grug). */
+/** True once the app asked for grug's picture in the hint below the prompt. The text entry stays: the desktop Code tab
+ *  ran this hook but showed nothing (2026-10-22), so the picture is extra until a screenshot proves it is seen. */
 let pictured = false
 
 let argv: string[] | null = null
@@ -64,7 +65,7 @@ export const register: Register = on => {
     await refresh($)
     $.clock.every(FRAME_MS, () => {
       frame += 1
-      const l = status.quiet || pictured ? '' : line(status, frame)
+      const l = status.quiet ? '' : line(status, frame)
       if (l === shown) return
       shown = l
       $.ui.status(l || undefined)
@@ -98,12 +99,7 @@ export const register: Register = on => {
     if (s.quiet || !g?.svg) return next(e)
     if (!pictured) {
       pictured = true
-      shown = ''
-      $.ui.status(undefined)
-      if (!drew) {
-        drew = true
-        void ping($, 'render')
-      }
+      void ping($, 'picture')
     }
     const { Box, Text, Svg } = $.ui.resolve(e)
     const words = [g.short]

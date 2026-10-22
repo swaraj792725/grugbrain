@@ -49,17 +49,15 @@ test('grug lives in the footer entry only: animated frames, short line, saving; 
   expect(await ui.find({ text: 'engine' })).toBeDefined()
 })
 
-test('where the app draws the hint below the prompt, grug is a drawn caveman there and the text entry clears', async ($, on) => {
+test('where the app draws the hint below the prompt, grug is also drawn there; the text entry stays (desktop showed nothing)', async ($, on) => {
   const lines: (string | undefined)[] = []
   const clock = world(on, lines, [])
   await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true } as any)
   const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '' } as any })
   expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe('GRUG SMASH NOISY OUTPUT')
   expect(await ui.find({ text: /SMASH NOISE · 56% saved · ctx 160k/ })).toBeDefined()
-  expect(lines.at(-1)).toBeUndefined()
-  const n = lines.length
   await clock.advance(2000)
-  expect(lines.length).toBe(n)
+  expect(lines.at(-1)).toContain('SMASH NOISE')
 })
 
 test('the terminal keeps its own hint line; grug stays a text entry there', async ($, on) => {

@@ -136,7 +136,7 @@ async function main() {
           /* never loaded */
         }
         const ago = (t?: number) => (t ? `${Math.max(1, Math.round((Date.now() - t) / 60000))} min ago` : 'never');
-        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}`);
+        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}; picture hook below the prompt: ${hb.pictureAt ? ago(hb.pictureAt) : 'never'}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
         else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not draw plugin status entries; use `grug dash` or the terminal `claude` to see it');
       }
@@ -395,7 +395,7 @@ async function main() {
 
     case 'live-ping': {
       try {
-        const kind = process.argv[3] === 'render' ? 'render' : 'session';
+        const kind = ['render', 'picture'].includes(process.argv[3]) ? process.argv[3] : 'session';
         const f = path.join(paths.home(), 'live-heartbeat.json');
         let j: any = {};
         try {
@@ -403,7 +403,7 @@ async function main() {
         } catch {
           /* first ping */
         }
-        j[kind === 'render' ? 'renderAt' : 'sessionAt'] = Date.now();
+        j[`${kind}At`] = Date.now();
         if (kind === 'render') j.renders = (j.renders || 0) + 1;
         fs.writeFileSync(f, JSON.stringify(j));
       } catch {
