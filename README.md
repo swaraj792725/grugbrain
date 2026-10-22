@@ -203,7 +203,7 @@ tip: ask Grep first, then Read with offset/limit · saved ~4%
 
 ### grug below the prompt (desktop app)
 
-The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) that puts one entry in the footer right below the input box, next to the model picker: **grug the caveman, animated, acting out what grugbrain is doing right now**, plus what grug saved, e.g. `🧔🦴   ≋≋≋ SMASH NOISE · 57% saved`. Grug is 🧔, a whole caveman, not just a face; the footer is one line of text, so his tools are emoji. Nothing above the input box. The context size joins in once the chat passes 75% of grug's limit; cold cache and too-big chat notices come as a toast.
+The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) that puts one entry in the footer right below the input box, next to the model picker: **grug the caveman, animated, acting out what grugbrain is doing right now**, plus what grug saved, e.g. `🧔🦴   ≋≋≋ SMASH NOISE · 57% saved`. Where the app draws the hint slot under the input, grug is a drawn, animated caveman picture (no emoji) and the footer entry clears; elsewhere the footer is one line of text, so grug is 🧔 with emoji tools. Nothing above the input box. The context size joins in once the chat passes 75% of grug's limit; cold cache and too-big chat notices come as a toast.
 
 | grugbrain just | grug in the footer |
 | --- | --- |

@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Status } from '../types'
@@ -5,6 +6,11 @@ import type { Status } from '../types'
 const IDLE_FRAMES = ['🧔🦴', '🧔🦴', '🧔 🦴', '🧔🦴']
 /** Matches grugart.ts FRAME_MS: grug's next pose every 450 ms. */
 const FRAME_MS = 450
+
+/** The numbers and grug's scene; the hint below the prompt reads it, so a write redraws grug. */
+const statusAtom = atom({ plugin: 'grug-live', key: 'status' } as const, {})
+/** True once the app draws grug as a picture in the hint below the prompt: the text entry then steps aside (one grug). */
+let pictured = false
 
 let argv: string[] | null = null
 let status: Status = {}
@@ -36,6 +42,7 @@ async function refresh($: any) {
     const alert = (status.alerts ?? [])[0]
     if (alert && alert !== notified && !status.quiet) $.ui.toast(`grug: ${alert}`)
     notified = alert ?? ''
+    await update($, statusAtom, () => status)
   } catch {
     /* grug missing or busy: keep the last numbers */
   }
@@ -57,7 +64,7 @@ export const register: Register = on => {
     await refresh($)
     $.clock.every(FRAME_MS, () => {
       frame += 1
-      const l = status.quiet ? '' : line(status, frame)
+      const l = status.quiet || pictured ? '' : line(status, frame)
       if (l === shown) return
       shown = l
       $.ui.status(l || undefined)
@@ -82,5 +89,31 @@ export const register: Register = on => {
     busy = false
     await refresh($)
     return next(e)
+  })
+
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    if (e.surface === 'terminal') return next(e)
+    const s = await read($, statusAtom)
+    const g = s.grug
+    if (s.quiet || !g?.svg) return next(e)
+    if (!pictured) {
+      pictured = true
+      shown = ''
+      $.ui.status(undefined)
+      if (!drew) {
+        drew = true
+        void ping($, 'render')
+      }
+    }
+    const { Box, Text, Svg } = $.ui.resolve(e)
+    const words = [g.short]
+    if (s.savedPct !== undefined && s.savedPct > 0) words.push(`${Math.round(s.savedPct * 100)}% saved`)
+    if (s.tokens && s.limit && s.tokens / s.limit >= 0.75) words.push(`ctx ${Math.round(s.tokens / 1000)}k`)
+    return (
+      <Box flexDirection="row" alignItems="center" gap="sm">
+        <Svg source={g.svg} alt={g.say} width={84} height={40} isInteractive />
+        <Text dimColor>{words.join(' · ')}</Text>
+      </Box>
+    )
   })
 }

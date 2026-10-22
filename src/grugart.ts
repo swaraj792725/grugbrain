@@ -320,9 +320,11 @@ export interface GrugScene {
   say: string;
   short: string;
   frames: string[];
+  /** grug drawn (SMIL-animated SVG): the app draws it below the prompt where it can, else the text frames show. */
+  svg: string;
 }
 
 export function grugScene(s: SceneInput): GrugScene {
   const act = pickAct(s);
-  return { act, say: grugSay(act, s), short: grugShort(act, s), frames: grugFrames(act) };
+  return { act, say: grugSay(act, s), short: grugShort(act, s), frames: grugFrames(act), svg: grugSvg(act) };
 }

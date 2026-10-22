@@ -1,4 +1,4 @@
-export type GrugScene = { act: string; say: string; short: string; frames: string[] }
+export type GrugScene = { act: string; say: string; short: string; frames: string[]; svg?: string }
 
 export type Status = {
   savedPct?: number
@@ -10,4 +10,10 @@ export type Status = {
   alerts?: string[]
   quiet?: boolean
   grug?: GrugScene
+}
+
+declare module 'claude-code' {
+  interface PluginState {
+    'grug-live': { status: Status }
+  }
 }

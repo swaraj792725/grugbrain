@@ -8,7 +8,7 @@ const status = {
   limit: 200000,
   alerts: ['cache expired while idle'],
   recent: 'Trimmed npm test output',
-  grug: { act: 'smash', say: 'GRUG SMASH NOISY OUTPUT', short: 'SMASH NOISE', frames: ['🧔🦴   ≋≋≋', '🧔  💥 ≋'] }
+  grug: { act: 'smash', say: 'GRUG SMASH NOISY OUTPUT', short: 'SMASH NOISE', frames: ['🧔🦴   ≋≋≋', '🧔  💥 ≋'], svg: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>' }
 }
 
 function world(on: On, lines: (string | undefined)[], toasts: string[]) {
@@ -47,4 +47,27 @@ test('grug lives in the footer entry only: animated frames, short line, saving; 
   const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120 } as any })
   expect(await ui.find({ text: /SMASH/ })).toBeUndefined()
   expect(await ui.find({ text: 'engine' })).toBeDefined()
+})
+
+test('where the app draws the hint below the prompt, grug is a drawn caveman there and the text entry clears', async ($, on) => {
+  const lines: (string | undefined)[] = []
+  const clock = world(on, lines, [])
+  await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true } as any)
+  const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'desktop', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '' } as any })
+  expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe('GRUG SMASH NOISY OUTPUT')
+  expect(await ui.find({ text: /SMASH NOISE · 56% saved · ctx 160k/ })).toBeDefined()
+  expect(lines.at(-1)).toBeUndefined()
+  const n = lines.length
+  await clock.advance(2000)
+  expect(lines.length).toBe(n)
+})
+
+test('the terminal keeps its own hint line; grug stays a text entry there', async ($, on) => {
+  const lines: (string | undefined)[] = []
+  const clock = world(on, lines, [])
+  await $.session.start({ cwd: '/tmp', surface: 'terminal', isInteractive: true } as any)
+  const ui = await $.ui.mount({ plugin: 'grug-live', surface: 'terminal', component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } as any })
+  expect(await ui.find({ text: /SMASH/ })).toBeUndefined()
+  await clock.advance(1000)
+  expect(lines.some(l => l?.includes('SMASH NOISE'))).toBe(true)
 })
