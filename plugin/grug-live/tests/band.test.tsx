@@ -8,7 +8,7 @@ const status = {
   limit: 200000,
   alerts: ['cache expired while idle'],
   recent: 'Trimmed npm test output',
-  grug: { act: 'smash', say: 'GRUG SMASH NOISY OUTPUT', short: 'SMASH NOISE', frames: ['ᕦ(ò_ó)ᕤ🦴 ≋≋≋', '(ง ò_ó)ง💥 ≋'] }
+  grug: { act: 'smash', say: 'GRUG SMASH NOISY OUTPUT', short: 'SMASH NOISE', frames: ['🧔🦴   ≋≋≋', '🧔  💥 ≋'] }
 }
 
 function world(on: On, lines: (string | undefined)[], toasts: string[]) {
@@ -38,8 +38,8 @@ test('grug lives in the footer entry only: animated frames, short line, saving; 
   await $.session.start({ cwd: '/tmp', surface: 'desktop', isInteractive: true } as any)
   await clock.advance(1000)
   expect(lines.length).toBeGreaterThan(1)
-  expect(lines.some(l => l?.startsWith('ᕦ(ò_ó)ᕤ🦴 ≋≋≋ SMASH NOISE'))).toBe(true)
-  expect(lines.some(l => l?.startsWith('(ง ò_ó)ง💥 ≋ SMASH NOISE'))).toBe(true)
+  expect(lines.some(l => l?.startsWith('🧔🦴   ≋≋≋ SMASH NOISE'))).toBe(true)
+  expect(lines.some(l => l?.startsWith('🧔  💥 ≋ SMASH NOISE'))).toBe(true)
   expect(lines.every(l => (l ?? '').length <= 48)).toBe(true)
   expect(lines[0]).toContain('56% saved')
   expect(lines[0]).toContain('ctx 160k')

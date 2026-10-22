@@ -108,21 +108,22 @@ export function grugShort(act: GrugAct, s: SceneInput = {}): string {
 /** Text frames for the footer entry, cycled every FRAME_MS: grug acts out the scene, a small loop per act. */
 export const FRAME_MS = 450;
 export function grugFrames(act: GrugAct): string[] {
+  // 🧔 is grug (a whole man with a beard, not a face); the footer is one text line, so props are emoji.
   switch (act) {
-    case 'smash': return ['ᕦ(ò_ó)ᕤ🦴 ≋≋≋', '(ง ò_ó)ง 🦴≋≋≋', '(ง ò_ó)ง💥 ≋≋', 'ᕦ(ò_ó)ᕤ🦴 ≋≋', '(ง ò_ó)ง💥 ≋', 'ᕦ(ò_ó)ᕤ🦴 ✓'];
-    case 'dig': return ['(ò_ó)⛏ ▁▁▁', '(ò_ó)⛏ ▁▂▁', '(ò_ó)⛏ ▂▄▂', '(ò_ó)⛏ ▃▆▃', '(ò‿ó)⛏ 💎'];
-    case 'guard': return ['(ò_ó)🛡   📄', '(ò_ó)🛡  📄', '(ò_ó)🛡 📄', '(ò_ó)🛡📄', '(ò_ó)🛡 ✋'];
-    case 'map': return ['(ò_ó)📜 ·', '(ò_ó)📜 ·─·', '(ò_ó)📜 ·─·─·', '(ò_ó)📜 ·─·─·─·', '(ò‿ó)📜 ✓'];
-    case 'carry': return ['ᕕ(ò_ó)ᕗ📦  ', ' ᕕ(ò_ó)ᕗ📦 ', '  ᕕ(ò_ó)ᕗ📦', ' ᕕ(ò_ó)ᕗ📦 '];
-    case 'check': return ['(ò_ó)🔍  ▢', '(ò_ó) 🔍 ▢', '(ò_ó)  🔍▢', '(ò‿ó)   ✅'];
-    case 'shrink': return ['(ò_ó)🦴 ⬛', '(ò_ó)🦴 ◼', '(ò_ó)🦴 ▪', '(ò‿ó)🦴 ·'];
-    case 'send': return ['(ò_ó)/ ᕕ(•_•)', '(ò_ó)/  ᕕ(•_•)', '(ò_ó)/   ᕕ(•_•)', '(ò_ó)/    ᕕ(•_•)💨'];
-    case 'alarm': return ['(⊙_⊙)!', '\\(⊙o⊙)/!!', '(⊙_⊙)!', '\\(⊙o⊙)/!!'];
-    case 'cold': return ['(⊙_⊙)❄', '(⊙o⊙)❄❄', '(⊙_⊙)❄', '(⊙o⊙)❄❄❄'];
-    case 'sleep': return ['(-_-) z', '(-_-) zZ', '(-_-) zZz', '(-_-) zZ'];
-    case 'work': return ['(ò_ó)🦴', '(ò_ó)🦴·', '(ò_ó)🦴··', '(ò_ó)🦴···', '(-_ó)🦴···'];
-    case 'proud': return ['ᕦ(ò‿ó)ᕤ ✨', 'ᕦ(ò‿ó)ᕤ💰', '\\(ò‿ó)/ ✨', 'ᕦ(ò‿ó)ᕤ💰'];
-    default: return ['(ò_ó)', '(ò_ó)', '(-_ó)', '(ò_ó)', '(ó_ò)'];
+    case 'smash': return ['🧔🦴   ≋≋≋', '🧔 🦴  ≋≋≋', '🧔  💥 ≋≋', '🧔🦴   ≋≋', '🧔  💥 ≋', '🧔🦴   ✓'];
+    case 'dig': return ['🧔⛏  ▁▁▁', '🧔 ⛏ ▂▁▁', '🧔⛏  ▄▂▁', '🧔 ⛏ ▆▄▂', '🧔✨ 💎'];
+    case 'guard': return ['🧔🛡    📄', '🧔🛡   📄', '🧔🛡  📄', '🧔🛡 📄', '🧔✋  📄'];
+    case 'map': return ['🧔📜 ·', '🧔📜 ·─·', '🧔📜 ·─·─·', '🧔📜 ·─·─·─·', '🧔📜 ✓'];
+    case 'carry': return ['🧔📦···', '·🧔📦··', '··🧔📦·', '···🧔📦'];
+    case 'check': return ['🧔🔍  ▢', '🧔 🔍 ▢', '🧔  🔍▢', '🧔   ✅'];
+    case 'shrink': return ['🧔🦴 ⬛', '🧔🦴 ◼', '🧔🦴 ▪', '🧔🦴 ·'];
+    case 'send': return ['🧔👉🧒', '🧔👉 🧒', '🧔👉  🧒💨', '🧔👋   💨'];
+    case 'alarm': return ['🧔❗ 📚', '🧔❗ 📚📚', '🧔‼ 📚📚📚', '🧔‼ 📚📚📚'];
+    case 'cold': return ['🧔🔥 ❄❄❄', '🧔💨🔥 ❄❄', '🧔🔥 ❄❄❄', '🧔💨🔥 ❄'];
+    case 'sleep': return ['🛌 z', '🛌 zZ', '🛌 zZz', '🛌 zZ'];
+    case 'work': return ['🧔🦴 ·', '🧔🦴 ··', '🧔🦴 ···', '🧔👀 ···'];
+    case 'proud': return ['🧔💰', '🧔💰✨', '🧔🙌✨', '🧔💰✨'];
+    default: return ['🧔🦴', '🧔🦴', '🧔 🦴', '🧔🦴'];
   }
 }
 

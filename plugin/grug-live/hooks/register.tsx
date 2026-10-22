@@ -2,7 +2,7 @@ import type { Register } from 'claude-code'
 
 import type { Status } from '../types'
 
-const IDLE_FRAMES = ['(ò_ó)', '(ò_ó)', '(-_ó)', '(ò_ó)', '(ó_ò)']
+const IDLE_FRAMES = ['🧔🦴', '🧔🦴', '🧔 🦴', '🧔🦴']
 /** Matches grugart.ts FRAME_MS: grug's next pose every 450 ms. */
 const FRAME_MS = 450
 

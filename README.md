@@ -203,22 +203,22 @@ tip: ask Grep first, then Read with offset/limit · saved ~4%
 
 ### grug below the prompt (desktop app)
 
-The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) that puts one entry in the footer right below the input box, next to the model picker: **grug the caveman, animated, acting out what grugbrain is doing right now**, plus what grug saved, e.g. `ᕦ(ò_ó)ᕤ🦴 ≋≋≋ SMASH NOISE · 57% saved`. Nothing above the input box. The context size joins in once the chat passes 75% of grug's limit; cold cache and too-big chat notices come as a toast.
+The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) that puts one entry in the footer right below the input box, next to the model picker: **grug the caveman, animated, acting out what grugbrain is doing right now**, plus what grug saved, e.g. `🧔🦴   ≋≋≋ SMASH NOISE · 57% saved`. Grug is 🧔, a whole caveman, not just a face; the footer is one line of text, so his tools are emoji. Nothing above the input box. The context size joins in once the chat passes 75% of grug's limit; cold cache and too-big chat notices come as a toast.
 
 | grugbrain just | grug in the footer |
 | --- | --- |
-| trimmed noisy output | `ᕦ(ò_ó)ᕤ🦴 ≋≋≋` → `(ง ò_ó)ง💥 ≋` SMASH NOISE |
-| recalled memory / history | `(ò_ó)⛏ ▂▄▂` → `(ò‿ó)⛏ 💎` DIG MEMORY |
-| held back a re-read | `(ò_ó)🛡 📄` → `(ò_ó)🛡 ✋` NO RE-READ |
-| used the code map | `(ò_ó)📜 ·─·─·` DRAW MAP |
-| saved a handoff / moved the window | `ᕕ(ò_ó)ᕗ📦` CARRY NOTES |
-| ran the check | `(ò_ó)🔍 ▢` → `✅` CHECK WORK |
-| shrank an image | `(ò_ó)🦴 ⬛` → `·` SHRINK PIC |
-| sent a cheap subagent | `(ò_ó)/ ᕕ(•_•)💨` SEND HELPER |
-| context too big / cache went cold | `\(⊙o⊙)/!!` CHAT TOO BIG / `(⊙o⊙)❄` CACHE COLD |
-| nothing, Claude working | `(ò_ó)🦴···` WATCH CLAUDE |
-| nothing for 20+ min | `(-_-) zZz` nap |
-| nothing, money saved | `ᕦ(ò‿ó)ᕤ💰` SAVE $N |
+| trimmed noisy output | `🧔🦴   ≋≋≋` → `🧔  💥 ≋` → `🧔🦴   ✓` SMASH NOISE |
+| recalled memory / history | `🧔⛏  ▄▂▁` → `🧔✨ 💎` DIG MEMORY |
+| held back a re-read | `🧔🛡  📄` → `🧔✋  📄` NO RE-READ |
+| used the code map | `🧔📜 ·─·─·` → `🧔📜 ✓` DRAW MAP |
+| saved a handoff / moved the window | `🧔📦···` → `···🧔📦` CARRY NOTES |
+| ran the check | `🧔🔍  ▢` → `🧔   ✅` CHECK WORK |
+| shrank an image | `🧔🦴 ⬛` → `🧔🦴 ·` SHRINK PIC |
+| sent a cheap subagent | `🧔👉🧒` → `🧔👋   💨` SEND HELPER |
+| context too big / cache went cold | `🧔‼ 📚📚📚` CHAT TOO BIG / `🧔💨🔥 ❄❄` CACHE COLD |
+| nothing, Claude working | `🧔🦴 ···` → `🧔👀 ···` WATCH CLAUDE |
+| nothing for 20+ min | `🛌 zZz` nap |
+| nothing, money saved | `🧔💰✨` SAVE $N |
 
 grug changes pose every 0.45 s; it is a text entry, so it costs no tokens and no process (numbers refresh every 15 s while Claude works, every 2 min when idle). Turn the plugin off: `grug config set appPlugin.enabled false`. After `grug update`, open a new session to see it.
 
