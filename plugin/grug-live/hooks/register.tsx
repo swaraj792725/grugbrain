@@ -18,10 +18,11 @@ const IDLE_REFRESH_MS = 120000
 const FOOTER_MAX = 45
 
 /** The stage frame: the app sizes an interactive Svg to the default 300x150 unless told, so give it the band's
- *  width (cells x an estimate of the app's px per cell; `grug doctor` shows the cells seen) and one strip high. The
+ *  width (cells x 8 px; the app clamps a wider one to the slot, seen 2026-10-23: 106 cells, ~752 px drawn) and one thin strip high. The
  *  drawing slices to fill any frame, cave at the left, so a wrong estimate only shows more or less of the scene. */
 const PX_PER_CELL = 8
-const STAGE_PX = 72
+const STAGE_PX = 48
+const BLEED = -1
 
 /** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Once per session each; failures ignored. */
 let drew = false
@@ -108,7 +109,12 @@ export const register: Register = on => {
       staged = true
       void ping($, `band ${cols} ${e.props.bodyColumns}`)
     }
-    const { Svg } = $.ui.resolve(e)
-    return <Svg source={g.svg} alt={g.say} width={Math.round(cols * PX_PER_CELL)} height={STAGE_PX} isInteractive />
+    const { Svg, Box } = $.ui.resolve(e)
+    // The app pads its band box; a negative margin pulls the strip over that padding so no bezel shows.
+    return (
+      <Box margin={BLEED}>
+        <Svg source={g.svg} alt={g.say} width={Math.round(cols * PX_PER_CELL)} height={STAGE_PX} isInteractive />
+      </Box>
+    )
   })
 }

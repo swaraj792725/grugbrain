@@ -976,7 +976,7 @@ describe('auto-compaction + restore', () => {
     for (const act of GRUG_ACTS) {
       // the stage: grug walks out of the cave and home again, except asleep or frozen by the fire
       expect(grugStage(act).includes('scale(-1 1)')).toBe(act !== 'sleep' && act !== 'cold');
-      expect(grugStage(act)).toContain('viewBox="0 0 2400 72"');
+      expect(grugStage(act)).toContain('viewBox="0 14 2400 54"');
       expect(grugStage(act)).toContain('preserveAspectRatio="xMinYMid slice"');
       expect(grugStage(act)).not.toContain('clip-path');
       expect(grugFrames(act).length).toBeGreaterThan(2);

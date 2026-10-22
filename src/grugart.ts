@@ -322,6 +322,9 @@ export function grugSvg(act: GrugAct): string {
 const STAGE_W = 2400;
 const STAGE_H = 72;
 const TILE = 560;
+/** The frame shows y 14-68 only: the empty top of the sky and the bottom of the ground are cut for a thin strip. */
+const VIEW_Y = 14;
+const VIEW_H = 54;
 const tiles = (f: (dx: number) => string) => Array.from({ length: Math.ceil(STAGE_W / TILE) }, (_, i) => f(i * TILE)).join('');
 /** Where grug's feet stand (stage units); his figure is drawn with feet at y 46.6. */
 const FLOOR = 62;
@@ -430,7 +433,7 @@ export function grugStage(act: GrugAct): string {
       puff(-8) + puff(8);
   }
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${STAGE_W} ${STAGE_H}" width="100%" height="100%" preserveAspectRatio="xMinYMid slice" style="display:block"><title>grug: ${grugSay(act).toLowerCase()}</title>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 ${VIEW_Y} ${STAGE_W} ${VIEW_H}" width="100%" height="100%" preserveAspectRatio="xMinYMid slice" style="display:block"><title>grug: ${grugSay(act).toLowerCase()}</title>` +
     `${backdrop(sky)}${CAVE_BACK}${campfire(act !== 'cold')}${cast}${CAVE_RIM}${act === 'cold' ? snow() : ''}</svg>`
   );
 }
