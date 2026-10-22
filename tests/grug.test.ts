@@ -949,7 +949,7 @@ describe('auto-compaction + restore', () => {
   });
 
   it('grug art: the scene follows what grug did, every act draws a valid animated SVG', async () => {
-    const { GRUG_ACTS, actFor, pickAct, grugSay, grugSvg, grugFrames, grugScene } = await import('../src/grugart.js');
+    const { GRUG_ACTS, actFor, pickAct, grugSay, grugShort, grugSvg, grugFrames, grugScene } = await import('../src/grugart.js');
     expect(actFor('trim')).toBe('smash');
     expect(actFor('auto-recall')).toBe('dig');
     expect(actFor('reread')).toBe('guard');
@@ -973,7 +973,9 @@ describe('auto-compaction + restore', () => {
       const opens = (tags.match(/<[a-zA-Z][^>]*>/g) ?? []).map((t) => t.match(/^<([a-zA-Z]+)/)![1]);
       const closes = (tags.match(/<\/[a-zA-Z]+>/g) ?? []).map((t) => t.slice(2, -1));
       expect(opens.sort()).toEqual(closes.sort());
-      expect(grugFrames(act).length).toBeGreaterThan(0);
+      expect(grugFrames(act).length).toBeGreaterThan(2);
+      expect(grugFrames(act).every((f) => f.length <= 18)).toBe(true);
+      expect(grugShort(act, { netUsd: 412 }).length).toBeLessThanOrEqual(12);
       expect(grugSay(act).length).toBeGreaterThan(0);
     }
     expect(grugScene({ kind: 'graph' })).toMatchObject({ act: 'map' });

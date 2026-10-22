@@ -201,26 +201,26 @@ tip: ask Grep first, then Read with offset/limit · saved ~4%
 - **Always-on panel (2.14):** a second row with a moving pulse while Claude works, a **savings bar**, a **context bar** against the /clear limit, and the latest grug action. It redraws every 2 s (`statusLine.refreshSeconds`, Claude Code `refreshInterval`). Hide it: `statusLine.panel false`.
 - Toggle: `grug config set statusLine.enabled false`. Wrap your own: `statusLine.wrap "<command>"`. Tips off: `statusLine.tips false`. `grug doctor` shows whether it is installed.
 
-### grug above the prompt (desktop app)
+### grug below the prompt (desktop app)
 
-The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) that draws a band right above the input box: **grug the caveman `ᕦ(ò_ó)ᕤ`, animated, doing what grugbrain is doing right now**, next to the savings bar, the context bar and the latest action.
+The desktop Code tab draws no status line, so grug ships a small Claude Code plugin (`grug-live`) that puts one entry in the footer right below the input box, next to the model picker: **grug the caveman, animated, acting out what grugbrain is doing right now**, plus what grug saved, e.g. `ᕦ(ò_ó)ᕤ🦴 ≋≋≋ SMASH NOISE · 57% saved`. Nothing above the input box. The context size joins in once the chat passes 75% of grug's limit; cold cache and too-big chat notices come as a toast.
 
-| grugbrain just | grug says |
+| grugbrain just | grug in the footer |
 | --- | --- |
-| trimmed noisy output | GRUG SMASH NOISY OUTPUT (club swing, `SMASH!`) |
-| recalled memory / history | GRUG DIG MEMORY CAVE (`MEMORY!`) |
-| held back a re-read | GRUG GUARD CAVE (shield up, `NO REREAD!`) |
-| used the code map | GRUG DRAW CODE MAP |
-| saved a handoff / moved the window | GRUG CARRY HANDOFF |
-| ran the check | GRUG CHECK WORK |
-| shrank an image | GRUG SHRINK BIG PICTURE (`SMALLER!`) |
-| sent a cheap subagent | GRUG SEND SMALL FAST GRUG (`GO!`) |
-| context too big / cache went cold | CHAT TOO BIG! / CACHE GO COLD! |
-| nothing, Claude working | GRUG WATCH CLAUDE WORK |
-| nothing for 20+ min | grug nap. zzz |
-| nothing, money saved | GRUG SAVE $N THIS WEEK (`SAVED!`) |
+| trimmed noisy output | `ᕦ(ò_ó)ᕤ🦴 ≋≋≋` → `(ง ò_ó)ง💥 ≋` SMASH NOISE |
+| recalled memory / history | `(ò_ó)⛏ ▂▄▂` → `(ò‿ó)⛏ 💎` DIG MEMORY |
+| held back a re-read | `(ò_ó)🛡 📄` → `(ò_ó)🛡 ✋` NO RE-READ |
+| used the code map | `(ò_ó)📜 ·─·─·` DRAW MAP |
+| saved a handoff / moved the window | `ᕕ(ò_ó)ᕗ📦` CARRY NOTES |
+| ran the check | `(ò_ó)🔍 ▢` → `✅` CHECK WORK |
+| shrank an image | `(ò_ó)🦴 ⬛` → `·` SHRINK PIC |
+| sent a cheap subagent | `(ò_ó)/ ᕕ(•_•)💨` SEND HELPER |
+| context too big / cache went cold | `\(⊙o⊙)/!!` CHAT TOO BIG / `(⊙o⊙)❄` CACHE COLD |
+| nothing, Claude working | `(ò_ó)🦴···` WATCH CLAUDE |
+| nothing for 20+ min | `(-_-) zZz` nap |
+| nothing, money saved | `ᕦ(ò‿ó)ᕤ💰` SAVE $N |
 
-The animation runs in the app itself (an SVG), so it costs nothing while it plays. The terminal gets a one-line text version with a moving face. A link in the band (`what is grug? ↗`) opens this page. Turn the plugin off: `grug config set appPlugin.enabled false`. After `grug update`, open a new session to see it.
+grug changes pose every 0.45 s; it is a text entry, so it costs no tokens and no process (numbers refresh every 15 s while Claude works, every 2 min when idle). Turn the plugin off: `grug config set appPlugin.enabled false`. After `grug update`, open a new session to see it.
 
 ---
 

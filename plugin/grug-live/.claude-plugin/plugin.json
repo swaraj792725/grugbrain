@@ -1,1 +1,1 @@
-{ "name": "grug-live", "version": "1.1.0", "description": "grug the caveman above the prompt: animated, doing what grugbrain is doing, with the savings and context bars.", "types": "./types/index.d.ts" }
+{ "name": "grug-live", "version": "1.2.0", "description": "grug the caveman in the footer below the prompt: animated, acting out what grugbrain is doing, with the saving.", "types": "./types/index.d.ts" }

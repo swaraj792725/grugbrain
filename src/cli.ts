@@ -136,9 +136,9 @@ async function main() {
           /* never loaded */
         }
         const ago = (t?: number) => (t ? `${Math.max(1, Math.round((Date.now() - t) / 60000))} min ago` : 'never');
-        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; band drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}`);
+        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
-        else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not render the band; use `grug dash` or the terminal `claude` to see it');
+        else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not draw plugin status entries; use `grug dash` or the terminal `claude` to see it');
       }
       {
         // slim.json says what grug changed; settings.json says what is really in effect (a Claude data reset wipes it).

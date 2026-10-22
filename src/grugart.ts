@@ -1,5 +1,5 @@
-/** grug the caveman for the grug-live band: one animated SVG scene per thing grug is doing (SMIL, so the
- *  surface animates it with no redraws), a caveman line to say, and text frames for surfaces without SVG. */
+/** grug the caveman for the grug-live footer entry: per thing grug is doing, text frames, a short and a long caveman
+ *  line. grugSvg (an animated SMIL scene) is kept for a surface that draws one; the footer cannot. */
 import type { ActivityKind } from './stats.js';
 
 /** grug's face where only text fits (status line, app summary). */
@@ -85,23 +85,44 @@ export function grugSay(act: GrugAct, s: SceneInput = {}): string {
   }
 }
 
-/** Text frames (cycled once a second) for surfaces that draw no SVG, and for the status entry. */
+/** grug's short line for the footer entry below the prompt (fits beside the model picker). */
+export function grugShort(act: GrugAct, s: SceneInput = {}): string {
+  switch (act) {
+    case 'smash': return 'SMASH NOISE';
+    case 'dig': return 'DIG MEMORY';
+    case 'guard': return 'NO RE-READ';
+    case 'map': return 'DRAW MAP';
+    case 'carry': return 'CARRY NOTES';
+    case 'check': return 'CHECK WORK';
+    case 'shrink': return 'SHRINK PIC';
+    case 'send': return 'SEND HELPER';
+    case 'alarm': return 'CHAT TOO BIG';
+    case 'cold': return 'CACHE COLD';
+    case 'sleep': return 'nap';
+    case 'work': return 'WATCH CLAUDE';
+    case 'proud': return s.netUsd && s.netUsd >= 0.01 ? `SAVE ${usd(s.netUsd)}` : 'grug strong';
+    default: return 'grug watch';
+  }
+}
+
+/** Text frames for the footer entry, cycled every FRAME_MS: grug acts out the scene, a small loop per act. */
+export const FRAME_MS = 450;
 export function grugFrames(act: GrugAct): string[] {
   switch (act) {
-    case 'smash': return ['ᕦ(ò_ó)ᕤ🦴 🪨', '(ง ò_ó)ง🦴💥', 'ᕦ(ò_ó)ᕤ  ·.·'];
-    case 'dig': return ['(ò_ó)⛏ ▂▃', '(ò_ó)⛏ ▃▅', '(ò_ó)⛏ 💎'];
-    case 'guard': return ['(ò_ó)🛡 📄', '(ò_ó)🛡📄', '(ò_ó)🛡  📄'];
-    case 'map': return ['(ò_ó)📜 ·', '(ò_ó)📜 ·─·', '(ò_ó)📜 ·─·─·'];
-    case 'carry': return ['🗿/(ò_ó)\\ ', ' 🗿/(ò_ó)\\', '🗿/(ò_ó)\\ '];
-    case 'check': return ['(ò_ó)🔍 ▢', '(ò_ó) 🔍▢', '(ò_ó)🔍 ✅'];
-    case 'shrink': return ['(ò_ó)🦴 🖼', '(ò_ó)🦴 ▫', '(ò_ó)🦴 🖼'];
-    case 'send': return ['(ò_ó)/ ᕕ(•_•)', '(ò_ó)/   ᕕ(•_•)', '(ò_ó)/     ᕕ(•_•)'];
-    case 'alarm': return ['(⊙_⊙)!', '\\(⊙o⊙)/!!', '(⊙_⊙)!'];
-    case 'cold': return ['(⊙_⊙)❄', '(⊙o⊙)❄!', '(⊙_⊙) ❄'];
-    case 'sleep': return ['(-_-) z', '(-_-)  zZ', '(-_-)   zZz'];
-    case 'work': return ['(ò_ó)🦴', '(ò_ó)🦴.', '(ò_ó)🦴..', '(ò_ó)🦴...'];
-    case 'proud': return ['ᕦ(ò‿ó)ᕤ ✨', 'ᕦ(ò‿ó)ᕤ💰', 'ᕦ(ò‿ó)ᕤ ✨'];
-    default: return ['(ò_ó)', '(ò_ó)', '(-_ó)', '(ò_ó)'];
+    case 'smash': return ['ᕦ(ò_ó)ᕤ🦴 ≋≋≋', '(ง ò_ó)ง 🦴≋≋≋', '(ง ò_ó)ง💥 ≋≋', 'ᕦ(ò_ó)ᕤ🦴 ≋≋', '(ง ò_ó)ง💥 ≋', 'ᕦ(ò_ó)ᕤ🦴 ✓'];
+    case 'dig': return ['(ò_ó)⛏ ▁▁▁', '(ò_ó)⛏ ▁▂▁', '(ò_ó)⛏ ▂▄▂', '(ò_ó)⛏ ▃▆▃', '(ò‿ó)⛏ 💎'];
+    case 'guard': return ['(ò_ó)🛡   📄', '(ò_ó)🛡  📄', '(ò_ó)🛡 📄', '(ò_ó)🛡📄', '(ò_ó)🛡 ✋'];
+    case 'map': return ['(ò_ó)📜 ·', '(ò_ó)📜 ·─·', '(ò_ó)📜 ·─·─·', '(ò_ó)📜 ·─·─·─·', '(ò‿ó)📜 ✓'];
+    case 'carry': return ['ᕕ(ò_ó)ᕗ📦  ', ' ᕕ(ò_ó)ᕗ📦 ', '  ᕕ(ò_ó)ᕗ📦', ' ᕕ(ò_ó)ᕗ📦 '];
+    case 'check': return ['(ò_ó)🔍  ▢', '(ò_ó) 🔍 ▢', '(ò_ó)  🔍▢', '(ò‿ó)   ✅'];
+    case 'shrink': return ['(ò_ó)🦴 ⬛', '(ò_ó)🦴 ◼', '(ò_ó)🦴 ▪', '(ò‿ó)🦴 ·'];
+    case 'send': return ['(ò_ó)/ ᕕ(•_•)', '(ò_ó)/  ᕕ(•_•)', '(ò_ó)/   ᕕ(•_•)', '(ò_ó)/    ᕕ(•_•)💨'];
+    case 'alarm': return ['(⊙_⊙)!', '\\(⊙o⊙)/!!', '(⊙_⊙)!', '\\(⊙o⊙)/!!'];
+    case 'cold': return ['(⊙_⊙)❄', '(⊙o⊙)❄❄', '(⊙_⊙)❄', '(⊙o⊙)❄❄❄'];
+    case 'sleep': return ['(-_-) z', '(-_-) zZ', '(-_-) zZz', '(-_-) zZ'];
+    case 'work': return ['(ò_ó)🦴', '(ò_ó)🦴·', '(ò_ó)🦴··', '(ò_ó)🦴···', '(-_ó)🦴···'];
+    case 'proud': return ['ᕦ(ò‿ó)ᕤ ✨', 'ᕦ(ò‿ó)ᕤ💰', '\\(ò‿ó)/ ✨', 'ᕦ(ò‿ó)ᕤ💰'];
+    default: return ['(ò_ó)', '(ò_ó)', '(-_ó)', '(ò_ó)', '(ó_ò)'];
   }
 }
 
@@ -296,11 +317,11 @@ export function grugSvg(act: GrugAct): string {
 export interface GrugScene {
   act: GrugAct;
   say: string;
-  svg: string;
+  short: string;
   frames: string[];
 }
 
 export function grugScene(s: SceneInput): GrugScene {
   const act = pickAct(s);
-  return { act, say: grugSay(act, s), svg: grugSvg(act), frames: grugFrames(act) };
+  return { act, say: grugSay(act, s), short: grugShort(act, s), frames: grugFrames(act) };
 }
