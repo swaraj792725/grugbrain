@@ -317,8 +317,12 @@ export function grugSvg(act: GrugAct): string {
 
 // ---- stage: the wide band above the prompt --------------------------------------------------------------
 
-const STAGE_W = 560;
+/** The scene is drawn this wide and the frame shows its left part (cave first), so any band width is filled edge to
+ *  edge with no margin; the sky, hills and grass repeat every TILE. */
+const STAGE_W = 2400;
 const STAGE_H = 72;
+const TILE = 560;
+const tiles = (f: (dx: number) => string) => Array.from({ length: Math.ceil(STAGE_W / TILE) }, (_, i) => f(i * TILE)).join('');
 /** Where grug's feet stand (stage units); his figure is drawn with feet at y 46.6. */
 const FLOOR = 62;
 const LIFT = FLOOR - 46.6;
@@ -343,30 +347,30 @@ function backdrop(sky: Sky): string {
   const stops = SKIES[sky].map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('');
   const star = (x: number, y: number, r: number, b: number) =>
     `<circle cx="${x}" cy="${y}" r="${r}" fill="#fff6dd" opacity=".2">${anim('opacity', [0.15, 0.9, 0.15], 3.4, b)}</circle>`;
-  const stars = [[150, 9, 0.7, 0], [196, 20, 0.5, 1.1], [262, 7, 0.6, 2.2], [318, 15, 0.5, 0.6], [372, 6, 0.8, 1.7], [420, 22, 0.5, 2.8], [520, 10, 0.6, 0.3], [88, 14, 0.5, 2.5], [238, 28, 0.4, 1.4]]
-    .map(([x, y, r, b]) => star(x, y, sky === 'night' ? r * 1.4 : r, b)).join('');
+  const stars = tiles((dx) => [[150, 9, 0.7, 0], [196, 20, 0.5, 1.1], [262, 7, 0.6, 2.2], [318, 15, 0.5, 0.6], [372, 6, 0.8, 1.7], [420, 22, 0.5, 2.8], [520, 10, 0.6, 0.3], [88, 14, 0.5, 2.5], [238, 28, 0.4, 1.4]]
+    .map(([x, y, r, b]) => star(x + dx + (dx ? (y * 7) % 40 : 0), y, sky === 'night' ? r * 1.4 : r, b + dx / 700)).join(''));
   const sun = sky === 'night'
     ? `<circle cx="486" cy="20" r="11" fill="#fff3c4" opacity=".14"/><circle cx="486" cy="20" r="7.5" fill="#fff1c2"/><circle cx="489.5" cy="17.5" r="6.6" fill="#151d45" opacity=".92"/>`
     : sky === 'ice'
       ? `<circle cx="480" cy="30" r="9" fill="#e9f6ff" opacity=".55"/>`
       : `<circle cx="474" cy="31" r="30" fill="#ff9a4a" opacity=".22">${anim('r', [26, 32, 26], 6)}</circle><circle cx="474" cy="31" r="13" fill="#ffb347"/><circle cx="474" cy="31" r="9.5" fill="#ffd27a" opacity=".8"/>`;
   const cloud = (y: number, dur: number, begin: number, o: number) =>
-    `<g opacity="${o}">${move([[-120, 0], [STAGE_W + 40, 0]], dur, begin)}<ellipse cx="0" cy="${y}" rx="22" ry="4.2" fill="#f6d1c0"/><ellipse cx="12" cy="${y - 3}" rx="12" ry="4" fill="#f6d1c0"/></g>`;
+    `<g opacity="${o}">${move([[-120, 0], [STAGE_W + 40, 0]], dur * ((STAGE_W + 160) / (TILE + 160)), begin)}<ellipse cx="0" cy="${y}" rx="22" ry="4.2" fill="#f6d1c0"/><ellipse cx="12" cy="${y - 3}" rx="12" ry="4" fill="#f6d1c0"/></g>`;
   const far = sky === 'ice' ? '#3b5d7e' : sky === 'night' ? '#1c2454' : '#4b2c56';
   const near = sky === 'ice' ? '#2a445f' : sky === 'night' ? '#121838' : '#2d1b36';
   return (
     `<defs><linearGradient id="gsky" x1="0" y1="0" x2="0" y2="1">${stops}</linearGradient>` +
     `<radialGradient id="gfire"><stop offset="0" stop-color="#ffb347" stop-opacity=".55"/><stop offset="1" stop-color="#ffb347" stop-opacity="0"/></radialGradient>` +
-    `<clipPath id="gclip"><rect width="${STAGE_W}" height="${STAGE_H}" rx="12"/></clipPath></defs>` +
+    `</defs>` +
     `<rect width="${STAGE_W}" height="${STAGE_H}" fill="url(#gsky)"/>` +
     stars + sun +
-    (sky === 'dusk' ? cloud(16, 70, -20, 0.22) + cloud(26, 95, -70, 0.15) : '') +
-    `<path d="M0 ${FLOOR} L0 44 L40 30 L70 40 L118 22 L160 38 L205 26 L262 42 L300 30 L350 40 L396 24 L440 38 L500 28 L560 40 L560 ${FLOOR} Z" fill="${far}" opacity=".9"/>` +
-    `<path d="M0 ${FLOOR} L0 52 Q70 42 140 52 T290 50 T430 52 T560 48 L560 ${FLOOR} Z" fill="${near}"/>` +
+    (sky === 'dusk' ? cloud(16, 70, -20, 0.22) + cloud(26, 95, -70, 0.15) + cloud(12, 120, -40, 0.12) : '') +
+    tiles((dx) => `<path transform="translate(${dx} 0)" d="M0 ${FLOOR} L0 40 L40 30 L70 40 L118 22 L160 38 L205 26 L262 42 L300 30 L350 40 L396 24 L440 38 L500 28 L560 40 L560 ${FLOOR} Z" fill="${far}" opacity=".9"/>`) +
+    tiles((dx) => `<path transform="translate(${dx} 0)" d="M0 ${FLOOR} L0 48 Q70 42 140 52 T290 50 T430 52 T560 48 L560 ${FLOOR} Z" fill="${near}"/>`) +
     `<rect y="${FLOOR}" width="${STAGE_W}" height="${STAGE_H - FLOOR}" fill="#150d18"/>` +
     `<path d="M0 ${FLOOR} L${STAGE_W} ${FLOOR}" stroke="${sky === 'ice' ? '#dbeefa' : '#5a3b4a'}" stroke-width="${sky === 'ice' ? 1.6 : 0.9}"/>` +
-    [36, 132, 188, 330, 392, 446, 530].map((x) => `<path d="M${x} ${FLOOR} l1.4 -3.4 l1 3 l1.2 -2.6 l.8 3" stroke="#3f2b38" stroke-width=".8" fill="none"/>`).join('') +
-    [[150, 0.9], [366, 1.3], [508, 1]].map(([x, r]) => `<ellipse cx="${x}" cy="${FLOOR + 3}" rx="${r * 3}" ry="${r * 1.3}" fill="#2b1f2b"/>`).join('')
+    tiles((dx) => [36, 132, 188, 330, 392, 446, 530].map((x) => `<path d="M${x + dx} ${FLOOR} l1.4 -3.4 l1 3 l1.2 -2.6 l.8 3" stroke="#3f2b38" stroke-width=".8" fill="none"/>`).join('')) +
+    tiles((dx) => [[150, 0.9], [366, 1.3], [508, 1]].map(([x, r]) => `<ellipse cx="${x + dx}" cy="${FLOOR + 3}" rx="${r * 3}" ry="${r * 1.3}" fill="#2b1f2b"/>`).join(''))
   );
 }
 
@@ -396,8 +400,8 @@ function campfire(lit: boolean): string {
 }
 
 const snow = () =>
-  Array.from({ length: 16 }, (_, i) => {
-    const x = 20 + ((i * 37) % 530);
+  Array.from({ length: 16 * Math.ceil(STAGE_W / TILE) }, (_, i) => {
+    const x = 20 + ((i * 37) % 530) + Math.floor(i / 16) * TILE;
     const dur = 4 + (i % 4);
     return `<circle cx="${x}" cy="-4" r="${0.8 + (i % 3) * 0.4}" fill="#f3fbff" opacity=".85">${move([[0, 0], [((i % 5) - 2) * 6, STAGE_H + 6]], dur, -(i * 0.6) % dur)}</circle>`;
   }).join('');
@@ -426,9 +430,8 @@ export function grugStage(act: GrugAct): string {
       puff(-8) + puff(8);
   }
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${STAGE_W} ${STAGE_H}" width="${STAGE_W}" height="${STAGE_H}"><title>grug: ${grugSay(act).toLowerCase()}</title>` +
-    `<g clip-path="url(#gclip)">${backdrop(sky)}${CAVE_BACK}${campfire(act !== 'cold')}${cast}${CAVE_RIM}${act === 'cold' ? snow() : ''}</g>` +
-    `<rect x=".5" y=".5" width="${STAGE_W - 1}" height="${STAGE_H - 1}" rx="12" fill="none" stroke="#ffffff" stroke-opacity=".08"/></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${STAGE_W} ${STAGE_H}" width="100%" height="100%" preserveAspectRatio="xMinYMid slice" style="display:block"><title>grug: ${grugSay(act).toLowerCase()}</title>` +
+    `${backdrop(sky)}${CAVE_BACK}${campfire(act !== 'cold')}${cast}${CAVE_RIM}${act === 'cold' ? snow() : ''}</svg>`
   );
 }
 

@@ -136,7 +136,7 @@ async function main() {
           /* never loaded */
         }
         const ago = (t?: number) => (t ? `${Math.max(1, Math.round((Date.now() - t) / 60000))} min ago` : 'never');
-        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}; stage above the prompt: ${hb.bandAt ? ago(hb.bandAt) : 'never'}`);
+        console.log(`   plugin loaded by Claude Code: ${ago(hb.sessionAt)}; status drawn: ${hb.renders ? `${ago(hb.renderAt)} (${hb.renders} pings)` : 'never'}; stage above the prompt: ${hb.bandAt ? ago(hb.bandAt) : 'never'}${hb.bandCols ? ` (${hb.bandCols[0]} cells wide)` : ''}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
         else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not draw plugin status entries; use `grug dash` or the terminal `claude` to see it');
       }
@@ -405,6 +405,7 @@ async function main() {
         }
         j[`${kind}At`] = Date.now();
         if (kind === 'render') j.renders = (j.renders || 0) + 1;
+        if (kind === 'band' && Number(process.argv[4]) > 0) j.bandCols = [Number(process.argv[4]), Number(process.argv[5]) || 0];
         fs.writeFileSync(f, JSON.stringify(j));
       } catch {
         /* best effort */

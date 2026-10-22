@@ -17,13 +17,19 @@ const IDLE_REFRESH_MS = 120000
 /** The desktop footer cuts an entry at about 45 chars after the `grug-live` label. */
 const FOOTER_MAX = 45
 
+/** The stage frame: the app sizes an interactive Svg to the default 300x150 unless told, so give it the band's
+ *  width (cells x an estimate of the app's px per cell; `grug doctor` shows the cells seen) and one strip high. The
+ *  drawing slices to fill any frame, cave at the left, so a wrong estimate only shows more or less of the scene. */
+const PX_PER_CELL = 8
+const STAGE_PX = 72
+
 /** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Once per session each; failures ignored. */
 let drew = false
 let staged = false
 async function ping($: any, kind: string) {
   try {
     if (!argv) argv = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).argv
-    await $.process.run([...argv!.slice(0, -1), 'live-ping', kind], { timeoutMs: 4000 })
+    await $.process.run([...argv!.slice(0, -1), 'live-ping', ...kind.split(' ')], { timeoutMs: 4000 })
   } catch {
     /* grug missing: nothing to report */
   }
@@ -97,11 +103,12 @@ export const register: Register = on => {
     const s = await read($, statusAtom)
     const g = s.grug
     if (s.quiet || !g?.svg) return next(e)
+    const cols = e.viewport?.columns ?? e.props.bodyColumns + 5
     if (!staged) {
       staged = true
-      void ping($, 'band')
+      void ping($, `band ${cols} ${e.props.bodyColumns}`)
     }
     const { Svg } = $.ui.resolve(e)
-    return <Svg source={g.svg} alt={g.say} isInteractive />
+    return <Svg source={g.svg} alt={g.say} width={Math.round(cols * PX_PER_CELL)} height={STAGE_PX} isInteractive />
   })
 }
