@@ -102,7 +102,7 @@ export function copyApp(): Step {
 
 export const pluginDir = (): string => path.join(grugHome(), 'plugins', 'grug-live');
 
-/** Copy the grug-live app plugin (band above the prompt) next to the runtime and point it at the installed CLI. */
+/** Copy the grug-live app plugin (grug in the footer below the prompt) next to the runtime and point it at the installed CLI. */
 export function copyPlugin(builtDir: string): boolean {
   const from = [path.join(builtDir, '..', 'plugin', 'grug-live'), path.join(builtDir, 'plugin', 'grug-live')].find((d) => fs.existsSync(path.join(d, 'hooks', 'register.tsx')));
   if (!from) return false;

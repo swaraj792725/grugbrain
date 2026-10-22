@@ -128,7 +128,7 @@ async function main() {
         } catch {
           /* no settings */
         }
-        console.log(`${ok(dirs.includes('grug-live') && fs.existsSync(pluginDir()))} grug-live band above the prompt (app plugin; needs a new session)`);
+        console.log(`${ok(dirs.includes('grug-live') && fs.existsSync(pluginDir()))} grug-live footer entry below the prompt (app plugin; needs a new session)`);
         let hb: any = {};
         try {
           hb = JSON.parse(fs.readFileSync(path.join(paths.home(), 'live-heartbeat.json'), 'utf8'));
