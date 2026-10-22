@@ -22,7 +22,9 @@ const FOOTER_MAX = 45
  *  drawing slices to fill any frame, cave at the left, so a wrong estimate only shows more or less of the scene. */
 const PX_PER_CELL = 8
 const STAGE_PX = 48
-const BLEED = -1
+/** Seen 2026-10-23: -1 cell cleared the ~8 px side padding; ~10 px stayed top and bottom (padding there ~18 px). */
+const BLEED_X = -1
+const BLEED_Y = -2.5
 
 /** Tell grug the plugin really loaded / drew (`grug doctor` reports it). Once per session each; failures ignored. */
 let drew = false
@@ -112,7 +114,7 @@ export const register: Register = on => {
     const { Svg, Box } = $.ui.resolve(e)
     // The app pads its band box; a negative margin pulls the strip over that padding so no bezel shows.
     return (
-      <Box margin={BLEED}>
+      <Box marginX={BLEED_X} marginY={BLEED_Y}>
         <Svg source={g.svg} alt={g.say} width={Math.round(cols * PX_PER_CELL)} height={STAGE_PX} isInteractive />
       </Box>
     )
