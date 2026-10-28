@@ -17,6 +17,8 @@ import { addNote, loadMemory, MemoryDB, projectKey, projectNodes, saveMemory } f
 import { recordActivity, summarize } from './stats.js';
 import { estimateTokens, fmtTokens, fmtUsd } from './tokens.js';
 import { searchHistory } from './history.js';
+import { inbox, replyText, sendToCode, sessionsText, waitReply } from './bridge.js';
+import { APP_MIME, CARD_URI, cardData, cardHtml, cardText } from './chatcard.js';
 import { estimateImageTokens, hasTool, imageSizeOfFile, IMAGE_RE, pdfPageCount, pdfText, PDF_RE, videoDuration, videoFrames, VIDEO_RE } from './media.js';
 
 const SUPPORTED_PROTOCOLS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -32,18 +34,115 @@ const INSTRUCTIONS = `grugbrain saves tokens. Prefer its tools over reading whol
 
 const LEAN_INSTRUCTIONS = `grugbrain: memory of this project's earlier conversations (history, recall) and cheap file outlines (outline).`;
 
+const CHAT_INSTRUCTIONS = `grugbrain links this chat to the user's Claude Code sessions in the desktop app and remembers their projects.
+- grug_status shows grug's card: token savings this week and the open Code sessions. Call it when the user mentions grug, savings, or their Code sessions.
+- ask_code(to, text) sends a message to an open Code session (to = project name from code_sessions) and waits for its reply; the session works on it with its own tools. code_inbox returns replies that came later.
+- At the start of a conversation, call code_inbox once if the user may be waiting on Code work.
+- history / recall search a project's earlier Code conversations and notes.`;
+
 /** Tools listed in Codex / Antigravity by default: their schemas ride on every request and the rest went unused. */
 export const LEAN_TOOLS = ['history', 'recall', 'outline'];
 
-/** `lean` for Codex / Antigravity (GRUG_CLIENT) unless set to full; Claude Code always gets every tool. */
-export function mcpTier(): 'lean' | 'full' {
+/** Tools the desktop chat gets besides its own: memory of the Code conversations. */
+export const CHAT_SHARED = ['history', 'recall', 'remember', 'savings'];
+
+/** The client named in initialize (`claude-ai` = the Claude desktop chat / Cowork; Claude Code names itself). */
+let clientName = '';
+
+/** `chat` for the Claude desktop chat (it has no hooks, so it gets the bridge and the card instead of file tools);
+ *  `lean` for Codex / Antigravity (GRUG_CLIENT) unless set to full; Claude Code always gets every tool. */
+export function mcpTier(): 'lean' | 'full' | 'chat' {
   const client = process.env.GRUG_CLIENT;
+  if (client === 'claude-desktop' || (!client && clientName === 'claude-ai')) return 'chat';
   if (client !== 'codex' && client !== 'antigravity') return 'full';
   return loadConfig().platforms?.[client]?.mcpTools === 'full' ? 'full' : 'lean';
 }
 
 export function toolList(tier = mcpTier()) {
+  if (tier === 'chat') return [...CHAT_TOOLS, ...TOOLS.filter((t) => CHAT_SHARED.includes(t.name))];
   return tier === 'lean' ? TOOLS.filter((t) => LEAN_TOOLS.includes(t.name)) : TOOLS;
+}
+
+const CHAT_TOOLS = [
+  {
+    name: 'grug_status',
+    description: "Show grug's card: this week's token savings (estimate) and the user's open Claude Code sessions that this chat can message.",
+    inputSchema: { type: 'object', properties: {} },
+    _meta: { ui: { resourceUri: CARD_URI } }
+  },
+  {
+    name: 'code_sessions',
+    description: 'List the Claude Code sessions open in the desktop app (project, folder, idle or working) that ask_code can message.',
+    inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'ask_code',
+    description:
+      "Send a message to one of the user's open Claude Code sessions; it starts a turn there (or joins the running one) and its final reply comes back. Waits up to ~50 s for the reply; if the work takes longer, code_inbox returns it later.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Project name, folder path or session id from code_sessions (may be omitted when only one session is open)' },
+        text: { type: 'string', description: 'The message: what to do or ask, with the context the Code session needs' },
+        wait: { type: 'boolean', description: 'Wait for the reply (default true)' }
+      },
+      required: ['text']
+    }
+  },
+  {
+    name: 'code_inbox',
+    description: 'Replies from Claude Code sessions to earlier ask_code messages that have not been shown yet.',
+    inputSchema: { type: 'object', properties: { all: { type: 'boolean', description: 'Also show replies already read in the last day' } } }
+  }
+];
+
+/** Tools that answer later or with structured content: the chat's bridge and card. */
+async function callChatTool(name: string, args: Json): Promise<Json> {
+  const cfg = loadConfig();
+  const text = (t: string, extra: Json = {}) => ({ content: [{ type: 'text', text: t }], ...extra });
+  if (name === 'grug_status') {
+    const d = cardData();
+    return text(cardText(d), { structuredContent: d });
+  }
+  if (!cfg.bridge.enabled) return text('The chat <-> Code bridge is off (grug config set bridge.enabled true).', { isError: true });
+  switch (name) {
+    case 'code_sessions':
+      return text(sessionsText());
+    case 'ask_code': {
+      const r = sendToCode(String(args.to || ''), String(args.text || ''));
+      if ('error' in r) return text(r.error, { isError: true });
+      const where = path.basename(r.msg.cwd);
+      recordActivity({ kind: 'bridge', msg: `Claude chat sent a message to ${where}`, tokens: 0, project: where });
+      if (args.wait === false) return text(`Sent to ${where} (id ${r.msg.id}). Its reply arrives in code_inbox.`);
+      const reply = await waitReply(r.msg.id, Math.max(1, cfg.bridge.waitSec) * 1000);
+      return text(reply ? replyText(reply) : `Sent to ${where} (id ${r.msg.id}); it is still working. Call code_inbox later for the reply.`);
+    }
+    case 'code_inbox': {
+      const rs = inbox(args.all === true);
+      return text(rs.length ? rs.map((r) => replyText(r)).join('\n\n---\n\n') : 'No new replies from Code sessions.');
+    }
+  }
+  throw new Error(`Unknown tool: ${name}`);
+}
+
+/** Which clients started grug's MCP server and whether they draw MCP Apps (`grug doctor` reads it). */
+function noteClient(params: Json): void {
+  try {
+    const name = String(params?.clientInfo?.name || '?');
+    const f = path.join(paths.home(), 'mcp-clients.json');
+    let j: Json = {};
+    try {
+      j = JSON.parse(fs.readFileSync(f, 'utf8'));
+    } catch {
+      /* first */
+    }
+    const ui = !!params?.capabilities?.extensions?.['io.modelcontextprotocol/ui'];
+    j[name] = { version: params?.clientInfo?.version, ui, at: Date.now() };
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    fs.writeFileSync(f, JSON.stringify(j));
+  } catch {
+    /* best effort */
+  }
 }
 
 type Json = any;
@@ -404,7 +503,7 @@ export function callTool(name: string, args: Json): string {
   throw new Error(`Unknown tool: ${name}`);
 }
 
-export function handleMessage(msg: Json): Json | null {
+export function handleMessage(msg: Json): Json | Promise<Json> | null {
   const isRequest = msg && msg.id !== undefined && msg.id !== null;
   const reply = (result: Json) => ({ jsonrpc: '2.0', id: msg.id, result });
   const error = (code: number, message: string) => ({ jsonrpc: '2.0', id: msg.id, error: { code, message } });
@@ -414,11 +513,14 @@ export function handleMessage(msg: Json): Json | null {
   switch (msg.method) {
     case 'initialize': {
       const asked = msg.params?.protocolVersion;
+      clientName = String(msg.params?.clientInfo?.name || '');
+      noteClient(msg.params);
+      const tier = mcpTier();
       return reply({
         protocolVersion: SUPPORTED_PROTOCOLS.includes(asked) ? asked : SUPPORTED_PROTOCOLS[0],
-        capabilities: { tools: { listChanged: false } },
+        capabilities: tier === 'chat' ? { tools: { listChanged: false }, resources: {} } : { tools: { listChanged: false } },
         serverInfo: { name: 'grugbrain', version: VERSION },
-        instructions: mcpTier() === 'lean' ? LEAN_INSTRUCTIONS : INSTRUCTIONS
+        instructions: tier === 'chat' ? CHAT_INSTRUCTIONS : tier === 'lean' ? LEAN_INSTRUCTIONS : INSTRUCTIONS
       });
     }
     case 'ping':
@@ -426,12 +528,20 @@ export function handleMessage(msg: Json): Json | null {
     case 'tools/list':
       return reply({ tools: toolList() });
     case 'resources/list':
-      return reply({ resources: [] });
+      return reply({ resources: mcpTier() === 'chat' ? [{ uri: CARD_URI, name: 'grug', description: "grug's card: savings and open Code sessions", mimeType: APP_MIME }] : [] });
+    case 'resources/read': {
+      if (msg.params?.uri !== CARD_URI) return error(-32602, `Unknown resource: ${msg.params?.uri}`);
+      return reply({ contents: [{ uri: CARD_URI, mimeType: APP_MIME, text: cardHtml() }] });
+    }
     case 'prompts/list':
       return reply({ prompts: [] });
     case 'tools/call': {
       const name = msg.params?.name;
       if (!toolList().some((t) => t.name === name)) return error(-32602, `Unknown tool: ${name}`);
+      if (CHAT_TOOLS.some((t) => t.name === name))
+        return callChatTool(name, msg.params?.arguments || {}).then(reply, (err: any) =>
+          reply({ content: [{ type: 'text', text: `Error: ${err?.message || err}` }], isError: true })
+        );
       try {
         const r = callToolRich(name, msg.params?.arguments || {});
         return reply({ content: [{ type: 'text', text: r.text }, ...r.images.map((i) => ({ type: 'image', data: i.data, mimeType: i.mimeType }))] });
@@ -463,8 +573,12 @@ export function runMcpServer(): void {
         continue;
       }
       const batch = Array.isArray(msg) ? msg : [msg];
-      const out = batch.map((m) => handleMessage(m)).filter(Boolean);
-      if (out.length) send(Array.isArray(msg) ? out : out[0]);
+      const isBatch = Array.isArray(msg);
+      // a chat tool can wait for a Code reply: answer it when ready, keep reading other requests meanwhile
+      void Promise.all(batch.map((m) => handleMessage(m))).then((all) => {
+        const out = all.filter(Boolean);
+        if (out.length) send(isBatch ? out : out[0]);
+      });
     }
   });
   process.stdin.on('end', () => process.exit(0));

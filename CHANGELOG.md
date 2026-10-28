@@ -2,6 +2,12 @@
 
 Grug keep list of what change. Newest on top. Each `## x.y.z` section becomes the GitHub Release notes.
 
+## 2.34.0
+- **Claude chat and Code sessions can talk.** From the chat in the Claude desktop app, ask an open Code session to do something: chat Claude calls `ask_code`, the Code session starts a turn of its own once it is idle (grug-live 1.6.0 checks a mailbox in `~/.grug/bridge` every 5 s), and its final reply comes back into the chat (waits ~50 s; later replies through `code_inbox`). `code_sessions` lists what is open. Terminal: `grug bridge`, `grug bridge send <project> <text>`, `grug bridge inbox`. The message runs under the Code session's own permission mode and says it came from chat. `bridge.enabled`, `bridge.waitSec`.
+- **grug in the chat.** `grug_status` draws grug's card in the desktop chat (an MCP App): his stage, this week's savings, the open Code sessions. The chat now gets its own short tool list (card, bridge, `history`, `recall`, `remember`, `savings`) instead of the file tools it never used.
+- **`grug doctor`** says whether the chat connected to grug, whether it offered to draw the card, and how many Code sessions it can reach.
+- `grug update`, then restart Claude Desktop and open a new Code session.
+
 ## 2.33.0
 - **grug lives above and below the prompt in the desktop app (grug-live 1.5.1).** Above the input: a thin animated stage strip, edge to edge, no text, no bezel: sky, mountains, cave and campfire. grug stays out at his work spot while Claude works and acts out the job (smash, dig, guard, map, carry, check, shrink, send); 90 s after the last reply he walks into his cave and sleeps just inside the mouth, fire down to embers; the next prompt wakes him. Snow and icicles when the cache went cold, an alarm on alerts. The strip is there from the first frame of every new session (grug asleep until the first prompt), including when the app asks for it before the session has started. Below the input: one plain-text footer entry, `SMASH NOISE · 57% saved · $412/wk · ctx 160k`.
 - **`grug doctor` shows the stage per folder:** when each project's session loaded grug, drew the stage, or skipped it and why (survey, quiet, no picture).

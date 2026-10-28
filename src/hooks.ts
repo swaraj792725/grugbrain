@@ -44,6 +44,7 @@ import { startBlocksInContext } from './resume.js';
 import { stripPrivate } from './privacy.js';
 import { dangerReason, dangerText } from './danger.js';
 import { proofCheck } from './proof.js';
+import { recordReplies } from './bridge.js';
 
 export interface HookInput {
   session_id?: string;
@@ -490,6 +491,14 @@ export async function runHook(event: string, input: HookInput): Promise<HookOutp
             recordActivity({ kind: 'verify', msg: 'Asked for proof: the reply said done but nothing ran after the last edit', tokens: -estimateTokens(reason), project: path.basename(cwd) });
             return { decision: 'block', reason, ...(notice ? { systemMessage: notice } : {}) };
           }
+        } catch {
+          /* best-effort */
+        }
+      }
+      // The turn really ends here: its reply answers the chat's messages delivered to this session.
+      if (cfg.bridge.enabled && !input.agent_id && text) {
+        try {
+          if (recordReplies(sid, cwd, text, now)) recordActivity({ kind: 'bridge', msg: 'Sent the reply back to Claude chat', tokens: 0, project: path.basename(cwd) });
         } catch {
           /* best-effort */
         }

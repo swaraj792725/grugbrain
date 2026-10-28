@@ -277,13 +277,25 @@ Long sessions: `grug bench --tasks long-session --runs 3 --yes` runs one session
 
 Grug read it straight: big win where output is noisy (tests, builds, logs), no loss anywhere, no magic where Claude Code already efficient. Most of each small task's cost is Claude Code's own ~35k-token system prompt, already cached. Bench spends real usage, so it asks for `--yes`; use `--runs 3+` for your own numbers.
 
+## grug carry messages (Claude chat ↔ Code sessions)
+
+The chat in the Claude desktop app and the Code tab could not talk to each other. Now they can, through a small mailbox in `~/.grug/bridge`:
+
+- In **chat**, ask for something in a project: "ask my grugbrain session to run the tests". Chat Claude calls `ask_code`; the Code session starts a turn of its own (when it is idle; a busy one takes it right after its current turn), works on it with its own tools, and its final reply comes back into the chat. Replies that take longer than ~50 s arrive through `code_inbox`.
+- `code_sessions` lists the open Code sessions (project, idle or working). `grug_status` draws grug's card in the chat: his stage, this week's savings, the open sessions.
+- In a **terminal**: `grug bridge` (open sessions), `grug bridge send <project> <text>`, `grug bridge inbox`.
+
+Needs: `grug update`, then **restart Claude Desktop** (the chat loads grug's tools at start) and open a new Code session (grug-live 1.6.0 picks up the mailbox). `grug doctor` shows whether the chat connected and how many Code sessions it can reach.
+
+Safety: a message from chat runs in the Code session under that session's own permission mode, labelled as coming from chat. In a session that skips approvals, anything the chat sends runs without asking, including text the chat picked up from a web page or document. Turn the bridge off with `grug config set bridge.enabled false`.
+
 ## where grug work
 
 | app | what grug do |
 |---|---|
 | **Claude Code in a terminal / IDE** | everything: proxy (cache, trim, dedupe, real stats), hooks (memory, read guard, test summaries, terse), MCP tools |
 | **Claude app → Code tab** | hooks (memory, read guard, test summaries, trimming, terse) + real usage measured from session transcripts. The app manages its own API connection, so the proxy isn't in its path |
-| **Claude Desktop** chat | MCP tools (`outline`, `read_symbol`, `repo_map`, `search`, `recall`, `remember`, `project_brief`…) + shared memory. Desktop's own API calls are private, so no proxy, no measured stats. |
+| **Claude Desktop** chat | grug's card (`grug_status`: savings + open Code sessions, drawn in the chat), the chat ↔ Code bridge (`ask_code`, `code_sessions`, `code_inbox`) and memory of your Code conversations (`history`, `recall`, `remember`). Chat has no hooks, so no automatic trimming there; its API calls are private, so no measured stats. |
 | **claude.ai** in browser | nothing. grug cannot reach inside browser. grug honest. |
 | your own app on the Anthropic SDK | set `ANTHROPIC_BASE_URL=http://127.0.0.1:4747` → proxy + stats |
 | **Antigravity** (app, IDE, `agy` CLI) | one grug plugin in `~/.gemini/config/plugins/grugbrain`: hooks (start context + code map, prompt recall, re-read guard, edit/type guards, verify gate, handoff, facts, meter), MCP tools + shared memory, short rules, the workflow skills. Noisy commands (tests, builds, installs) run through `grug exec`, which shortens their output (errors kept); you still approve the command (`platforms.antigravity.rewrite ask`, or `allow` / `off`). Checked live in `agy` 1.0.12; measured with Gemini 3.8 Flash on a two-prompt task with noisy tests (3 runs each): −31% input tokens, same results |
@@ -361,6 +373,8 @@ grug compress <text | ->        strip filler from text you'll reuse (e.g. system
 grug config                     show config
 grug config set <key> <value>   e.g. terse full · readGuard.maxBytes 100000 · memory.briefTokens 500
 grug savings                    one-line summary
+grug bridge [send <to> <text> | inbox]
+                                Claude chat <-> Code sessions: open sessions, send one a message, read replies
 grug statusline                 status line text (called by Claude Code, reads stdin)
 ```
 
@@ -497,6 +511,7 @@ Maintainer: `npm run release:patch` (or `release:minor`), add a `## x.y.z` secti
 - Claude Code already cache well. There grug's cache autopilot mostly idle; real wins are trim, read guard, memory, terse, advice. Dashboard split "cache saved (all)" from "where grug added cache" so grug not steal credit.
 - Memory notes come from rules, not an LLM. Good at "what files, what asked, how it ended, what you told it to remember". Not perfect summaries. Zero extra API cost.
 - Trim and read-guard savings are estimates (chars ÷ ~3.6). Cache savings and spend are real numbers from the API.
+- Claude chat cannot be woken: a Code reply reaches chat only while `ask_code` waits (~50 s) or when chat calls `code_inbox`. The card shows only when chat Claude calls `grug_status`.
 - grug never switch your main chat model. Only read-only search subagents (`Explore`) go one tier down, and only when Claude did not pick a model (turn off: `routing.lightAgents ""`). For the main chat grug give advice: `/model opusplan` (Opus plans, Sonnet edits) or `/model sonnet`.
 
 ---
