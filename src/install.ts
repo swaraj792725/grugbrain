@@ -20,6 +20,7 @@ import { stripPluginSlim } from './pluginslim.js';
 import { effectiveWindow, updateFloor } from './floor.js';
 import { copySkills, installPlatforms, uninstallPlatforms } from './platforms.js';
 import { grugStage } from './grugart.js';
+import { bridgeDir } from './bridge.js';
 
 export const MARK = '--from=grugbrain';
 const LEGACY_KEYS = ['token-diet', 'claude-token-saver'];
@@ -110,7 +111,7 @@ export function copyPlugin(builtDir: string): boolean {
   const to = pluginDir();
   fs.rmSync(to, { recursive: true, force: true });
   fs.cpSync(from, to, { recursive: true });
-  fs.writeFileSync(path.join(to, 'grug.json'), JSON.stringify({ argv: [process.execPath, installedCli(), 'app-status'] }) + '\n');
+  fs.writeFileSync(path.join(to, 'grug.json'), JSON.stringify({ argv: [process.execPath, installedCli(), 'app-status'], bridge: bridgeDir() }) + '\n');
   // grug asleep in his cave: the band draws it the moment a session opens, before the first status arrives
   fs.writeFileSync(path.join(to, 'stage-sleep.svg'), grugStage('sleep'));
   return true;
@@ -263,7 +264,8 @@ export function installDesktop(): Step {
   if (step) return step;
   value.mcpServers = value.mcpServers || {};
   for (const k of LEGACY_KEYS) delete value.mcpServers[k];
-  value.mcpServers.grugbrain = { command: process.execPath, args: [installedCli(), 'mcp'] };
+  // GRUG_CLIENT: the chat gets the chat tools (bridge to Code sessions, grug's card), not file tools
+  value.mcpServers.grugbrain = { command: process.execPath, args: [installedCli(), 'mcp'], env: { GRUG_CLIENT: 'claude-desktop' } };
   const bak = backupFile(file);
   writeJsonAtomic(file, value);
   return { target: 'claude-desktop', ok: true, message: `MCP server added to ${file}${bak ? ` (backup: ${path.basename(bak)})` : ''}. Restart Claude Desktop.` };

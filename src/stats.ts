@@ -65,6 +65,7 @@ export type ActivityKind =
   | 'outline'
   | 'fallback'
   | 'install'
+  | 'bridge'
   | 'error';
 
 export interface Activity {

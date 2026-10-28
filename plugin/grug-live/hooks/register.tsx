@@ -108,9 +108,90 @@ async function refresh($: any) {
   }
 }
 
+/** Claude chat <-> this Code session (grug's MCP server in the chat writes the mailbox, see src/bridge.ts).
+ *  A message for this session starts a turn of its own once the session is idle; the Stop hook sends that turn's
+ *  final reply back. Delivered only when idle, so the reply that goes back is the one that answers it. */
+const BRIDGE_POLL_MS = 5000
+const HEARTBEAT_MS = 15000
+let bridge = ''
+let sid = ''
+let cwd = ''
+let beatAt = 0
+let beatBusy = false
+let polling = false
+const seen = new Set<string>()
+
+async function heartbeat($: any, force = false) {
+  if (!bridge || !sid) return
+  const now = Date.now()
+  if (!force && now - beatAt < HEARTBEAT_MS && beatBusy === busy) return
+  beatAt = now
+  beatBusy = busy
+  try {
+    await $.fs.write(`${bridge}/sessions/${sid}.json`, JSON.stringify({ sid, cwd, busy, seen: now }))
+  } catch {
+    /* read-only home: the chat just does not see this session */
+  }
+}
+
+/** Messages from the chat for this session, oldest first, that nobody took yet. */
+export async function pending($: any): Promise<{ id: string; text: string; from: string; at: number; sid: string }[]> {
+  let names: string[] = []
+  try {
+    names = (await $.fs.list(`${bridge}/inbox`)).filter((f: any) => f.kind === 'file' && f.name.endsWith('.json')).map((f: any) => f.name)
+  } catch {
+    return []
+  }
+  const out = []
+  for (const n of names) {
+    if (seen.has(n)) continue
+    seen.add(n)
+    try {
+      const m = JSON.parse(await $.fs.read(`${bridge}/inbox/${n}`))
+      if (m.sid !== sid || (await $.fs.exists(`${bridge}/delivered/${m.id}.json`))) continue
+      out.push(m)
+    } catch {
+      seen.delete(n) // half written: look again next poll
+    }
+  }
+  return out.sort((a, b) => a.at - b.at)
+}
+
+/** Same words as bridge.ts framed(): who sent it and that the answer goes back. */
+export function framed(m: { id: string; text: string; from: string }): string {
+  return `[Message from Claude ${m.from} (desktop app) via grugbrain, id ${m.id}]\n${m.text}\n\n(Your final reply this turn is sent back to the ${m.from}.)`
+}
+
+async function pollBridge($: any) {
+  if (!bridge || !sid || polling) return
+  polling = true
+  try {
+    await heartbeat($)
+    if (busy) return
+    const ms = await pending($)
+    if (!ms.length) return
+    // several at once go in one turn; its reply answers all of them
+    for (const m of ms) await $.fs.write(`${bridge}/delivered/${m.id}.json`, JSON.stringify({ id: m.id, sid, at: Date.now(), mode: 'turn' }))
+    $.ui.toast(`grug: message from Claude ${ms[0].from}`)
+    busy = true
+    await $.prompt.submit({ text: ms.map(framed).join('\n\n') })
+  } catch {
+    /* the next poll tries again with what is left */
+  } finally {
+    polling = false
+  }
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     void ping($, 'session')
+    cwd = e.cwd
+    try {
+      bridge = JSON.parse(await $.fs.read(`${$.plugin.root}/grug.json`)).bridge ?? ''
+      sid = await $.session.id()
+    } catch {
+      bridge = ''
+    }
     await loadSleep($)
     if (sleepSvg && !status.grug) await update($, statusAtom, () => ({ ...status, grug: { ...SLEEP_SCENE, svg: sleepSvg } }))
     await refresh($)
@@ -119,6 +200,10 @@ export const register: Register = on => {
       const every = act === 'sleep' || act === 'cold' ? ASLEEP_REFRESH_MS : IDLE_REFRESH_MS
       if (busy || Date.now() - lastRefresh >= every) void refresh($)
     })
+    if (bridge) {
+      await heartbeat($, true)
+      $.clock.every(BRIDGE_POLL_MS, () => void pollBridge($))
+    }
     return next(e)
   })
 
@@ -126,12 +211,14 @@ export const register: Register = on => {
     busy = true
     fresh = false
     refresh($).catch(() => {})
+    heartbeat($).catch(() => {})
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     busy = false
     await refresh($)
+    void pollBridge($)
     return next(e)
   })
 

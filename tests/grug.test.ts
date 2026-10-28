@@ -19,7 +19,7 @@ import { buildBrief, recall } from '../src/memory/brief.js';
 import { exportVault } from '../src/memory/vault.js';
 import { renderGraphHtml } from '../src/memory/graphhtml.js';
 import { findSymbol, handleMessage } from '../src/mcp.js';
-import { installClaudeCode, installDesktop, uninstall, MARK } from '../src/install.js';
+import { claudeDesktopConfigPath, installClaudeCode, installDesktop, uninstall, MARK } from '../src/install.js';
 import { readActivity, readRequests, summarize } from '../src/stats.js';
 import { runHook } from '../src/hooks.js';
 import { costOf } from '../src/tokens.js';
@@ -923,6 +923,7 @@ describe('auto-compaction + restore', () => {
     expect(copyPlugin(path.join(process.cwd(), 'dist'))).toBe(true);
     expect(fs.existsSync(path.join(pluginDir(), 'hooks', 'register.tsx'))).toBe(true);
     expect(JSON.parse(fs.readFileSync(path.join(pluginDir(), 'grug.json'), 'utf8')).argv.slice(1)).toEqual([installedCli(), 'app-status']);
+    expect(JSON.parse(fs.readFileSync(path.join(pluginDir(), 'grug.json'), 'utf8')).bridge).toBe(path.join(tmp, '.grug', 'bridge'));
     expect(fs.readFileSync(path.join(pluginDir(), 'stage-sleep.svg'), 'utf8')).toContain('rotate(-90 30 26)');
     applyTuningNow();
     let s = JSON.parse(fs.readFileSync(settings, 'utf8'));
@@ -4463,5 +4464,93 @@ describe('<private> text', () => {
 
     await runHook('user-prompt', { session_id: 'priv1', cwd: proj, prompt: 'remember the key <private>hunter2-secret</private> for later' });
     expect(JSON.stringify(readBuffer('priv1'))).not.toContain('hunter2');
+  });
+});
+
+describe('chat <-> Code bridge', () => {
+  it('sends to a named live session, the stop hook answers it, the chat reads it once', async () => {
+    const b = await import('../src/bridge.js');
+    const now = Date.now();
+    expect('error' in b.sendToCode('shop', 'hi')).toBe(true); // nothing open
+    b.heartbeat({ sid: 'sess-aaaaaaaa', cwd: path.join(tmp, 'shop'), busy: false, seen: now });
+    b.heartbeat({ sid: 'sess-bbbbbbbb', cwd: path.join(tmp, 'blog'), busy: true, seen: now });
+    b.heartbeat({ sid: 'sess-old', cwd: path.join(tmp, 'gone'), seen: now - b.LIVE_MS - 1 });
+    expect(b.liveSessions(now).map((s) => s.sid).sort()).toEqual(['sess-aaaaaaaa', 'sess-bbbbbbbb']);
+    expect(b.resolveSession('SHOP')?.sid).toBe('sess-aaaaaaaa');
+    expect(b.resolveSession('sess-bbbb')?.sid).toBe('sess-bbbbbbbb');
+    expect(b.resolveSession('')).toBeNull(); // two open: must name one
+    const miss = b.sendToCode('nope', 'hi');
+    expect('error' in miss && miss.error).toMatch(/shop.*blog|blog.*shop/);
+    const r = b.sendToCode('shop', 'run the tests');
+    if (!('msg' in r)) throw new Error('not sent');
+    expect(b.pendingFor('sess-aaaaaaaa').map((m) => m.id)).toEqual([r.msg.id]);
+    expect(b.framed(r.msg)).toContain('run the tests');
+    // the plugin takes it (what grug-live does), the session's turn ends: the Stop hook writes the reply
+    b.markDelivered(r.msg, 'turn');
+    expect(b.pendingFor('sess-aaaaaaaa')).toEqual([]);
+    const cwd = path.join(tmp, 'shop');
+    fs.mkdirSync(cwd, { recursive: true });
+    await runHook('stop', { session_id: 'sess-aaaaaaaa', cwd, last_assistant_message: 'All 12 tests pass.' });
+    const reply = await b.waitReply(r.msg.id, 1000, 10);
+    expect(reply?.text).toBe('All 12 tests pass.');
+    expect(reply?.asked).toBe('run the tests');
+    expect(b.inbox()).toEqual([]); // waitReply marked it read
+    expect(b.inbox(true)).toHaveLength(1);
+    expect(b.outstanding()).toEqual([]);
+    // a later turn of the same session does not answer again
+    await runHook('stop', { session_id: 'sess-aaaaaaaa', cwd, last_assistant_message: 'something else' });
+    expect(b.replyFor(r.msg.id)?.text).toBe('All 12 tests pass.');
+    expect(readActivity().some((a) => a.kind === 'bridge')).toBe(true);
+  });
+
+  it('old files are cleaned up after two days', async () => {
+    const b = await import('../src/bridge.js');
+    b.heartbeat({ sid: 's1', cwd: tmp, seen: Date.now() });
+    const f = path.join(b.bridgeDir(), 'sessions', 's1.json');
+    const old = (Date.now() - 3 * 24 * 3600_000) / 1000;
+    fs.utimesSync(f, old, old);
+    b.cleanup();
+    expect(fs.existsSync(f)).toBe(false);
+  });
+
+  it('the desktop chat gets the chat tools, the card resource, and ask_code waits for the reply', async () => {
+    const b = await import('../src/bridge.js');
+    const { CARD_URI, APP_MIME } = await import('../src/chatcard.js');
+    try {
+      const init: any = handleMessage({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', clientInfo: { name: 'claude-ai', version: '1' }, capabilities: { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [APP_MIME] } } } } });
+      expect(init.result.capabilities.resources).toEqual({});
+      expect(init.result.instructions).toMatch(/ask_code/);
+      expect(JSON.parse(fs.readFileSync(path.join(paths.home(), 'mcp-clients.json'), 'utf8'))['claude-ai'].ui).toBe(true);
+      const names = (handleMessage({ jsonrpc: '2.0', id: 2, method: 'tools/list' }) as any).result.tools.map((t: any) => t.name);
+      expect(names).toEqual(expect.arrayContaining(['grug_status', 'code_sessions', 'ask_code', 'code_inbox', 'history', 'recall']));
+      expect(names).not.toContain('read_lines');
+      const status: any = await handleMessage({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'grug_status', arguments: {} } });
+      expect(status.result.structuredContent.sessions).toEqual([]);
+      const res: any = handleMessage({ jsonrpc: '2.0', id: 4, method: 'resources/read', params: { uri: CARD_URI } });
+      expect(res.result.contents[0].mimeType).toBe(APP_MIME);
+      expect(res.result.contents[0].text).toContain('ui/initialize');
+      expect(res.result.contents[0].text).not.toMatch(/<script src/);
+      // ask_code: a session answers while the chat waits
+      saveConfig({ ...loadConfig(), bridge: { enabled: true, waitSec: 3 } });
+      b.heartbeat({ sid: 'cs1', cwd: path.join(tmp, 'shop'), seen: Date.now() });
+      const pending = handleMessage({ jsonrpc: '2.0', id: 5, method: 'tools/call', params: { name: 'ask_code', arguments: { to: 'shop', text: 'how many tests?' } } });
+      setTimeout(() => {
+        const [m] = b.pendingFor('cs1');
+        b.markDelivered(m, 'turn');
+        b.recordReplies('cs1', path.join(tmp, 'shop'), '42 tests.');
+      }, 50);
+      const out: any = await pending;
+      expect(out.result.content[0].text).toContain('42 tests.');
+      const off: any = await handleMessage({ jsonrpc: '2.0', id: 6, method: 'tools/call', params: { name: 'ask_code', arguments: { to: 'zzz', text: 'x' } } });
+      expect(off.result.isError).toBe(true);
+    } finally {
+      handleMessage({ jsonrpc: '2.0', id: 9, method: 'initialize', params: { protocolVersion: '2025-06-18' } }); // back to Claude Code's tier
+    }
+  });
+
+  it('install points the chat at its tier and the plugin at the mailbox', () => {
+    fs.mkdirSync(path.dirname(claudeDesktopConfigPath()), { recursive: true });
+    expect(installDesktop().ok).toBe(true);
+    expect(JSON.parse(fs.readFileSync(claudeDesktopConfigPath(), 'utf8')).mcpServers.grugbrain.env).toEqual({ GRUG_CLIENT: 'claude-desktop' });
   });
 });

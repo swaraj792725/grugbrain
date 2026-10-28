@@ -28,7 +28,7 @@ export function actFor(kind: ActivityKind | string | undefined): GrugAct | undef
       return 'check';
     case 'media':
       return 'shrink';
-    case 'subagent': case 'routing':
+    case 'subagent': case 'routing': case 'bridge':
       return 'send';
     case 'context-alert':
       return 'alarm';

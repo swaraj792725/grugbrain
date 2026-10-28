@@ -217,6 +217,12 @@ export interface GrugConfig {
   safety: {
     riskyCommands: boolean;
   };
+  /** Claude desktop chat <-> Code sessions mailbox (grug MCP tools in chat, grug-live plugin in Code). */
+  bridge: {
+    enabled: boolean;
+    /** How long the chat's ask_code waits for the Code session's reply before returning (seconds). */
+    waitSec: number;
+  };
   batching: {
     /** One sentence at session/subagent start. */
     rule: boolean;
@@ -350,6 +356,10 @@ export function defaultConfig(): GrugConfig {
     },
     safety: {
       riskyCommands: true
+    },
+    bridge: {
+      enabled: true,
+      waitSec: 50
     },
     batching: {
       rule: true,

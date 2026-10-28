@@ -80,6 +80,8 @@ const HELP = `
 
   grug config [path | get <k> | set <k> <v>]
   grug savings                    one-line spend/savings summary
+  grug bridge [send <to> <text> | inbox]
+                                  Claude chat <-> Code sessions: open sessions, send one a message, read replies
 
   grug exec -- '<command>'        run a command, print its output shortened (errors kept)
 
@@ -141,6 +143,20 @@ async function main() {
           console.log(`   ${path.basename(dir)}: loaded ${c.sessionAt ? ago(c.sessionAt) : 'earlier'}, stage ${c.bandAt ? ago(c.bandAt) : 'never'}${c.skipAt ? `, skipped ${ago(c.skipAt)} (${c.skip})` : ''}`);
         if (!hb.sessionAt) console.log('   → never loaded: start a NEW session after install/update (existing ones keep the old plugin list)');
         else if (!hb.renders) console.log('   → loaded but never drawn: this Claude Code surface (the desktop Code tab may be one) does not draw plugin status entries; use `grug dash` or the terminal `claude` to see it');
+      }
+      {
+        // Claude desktop chat: grug's MCP server notes each client that starts it (mcp.ts noteClient).
+        const { liveSessions } = await import('./bridge.js');
+        let clients: any = {};
+        try {
+          clients = JSON.parse(fs.readFileSync(path.join(paths.home(), 'mcp-clients.json'), 'utf8'));
+        } catch {
+          /* never started */
+        }
+        const chat = clients['claude-ai'];
+        const on = loadConfig().bridge.enabled;
+        console.log(`${ok(!!chat)} Claude chat (desktop app): ${chat ? `grug's tools connected ${Math.max(1, Math.round((Date.now() - chat.at) / 60000))} min ago, card ${chat.ui ? 'can draw' : 'not offered by the app (text only)'}` : 'never connected: restart Claude Desktop after install/update'}`);
+        console.log(`   chat <-> Code bridge: ${on ? `on, ${liveSessions().length} Code session(s) reachable now` : 'off (grug config set bridge.enabled true)'}`);
       }
       {
         // slim.json says what grug changed; settings.json says what is really in effect (a Claude data reset wipes it).
@@ -719,6 +735,25 @@ grug install sets up every app it finds; grug platforms --apply redoes just this
       }
       console.log(`Updating ${info.current} → ${info.latest} …\n`);
       process.exit(installRelease(info));
+    }
+
+    case 'bridge': {
+      const b = await import('./bridge.js');
+      if (pos[1] === 'send') {
+        const r = b.sendToCode(pos[2] || '', pos.slice(3).join(' '), 'terminal');
+        if ('error' in r) throw new Error(r.error);
+        console.log(`sent to ${path.basename(r.msg.cwd)} (id ${r.msg.id}); waiting up to ${loadConfig().bridge.waitSec} s for the reply…`);
+        const reply = await b.waitReply(r.msg.id, loadConfig().bridge.waitSec * 1000);
+        console.log(reply ? b.replyText(reply) : 'still working: `grug bridge inbox` shows the reply later');
+      } else if (pos[1] === 'inbox') {
+        const rs = b.inbox(flags.has('--all'));
+        console.log(rs.length ? rs.map((r) => b.replyText(r)).join('\n\n') : 'no new replies');
+      } else {
+        console.log(`bridge ${loadConfig().bridge.enabled ? 'on' : 'off'} · ${b.bridgeDir()}\n${b.sessionsText()}`);
+        const out = b.outstanding();
+        if (out.length) console.log(`${out.length} message(s) waiting for a reply (${out.filter((o) => o.delivered).length} taken)`);
+      }
+      break;
     }
 
     case 'savings': {

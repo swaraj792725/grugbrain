@@ -112,3 +112,49 @@ test('the band asked for before session.start still draws grug asleep; a survey 
   await new Promise(r => setTimeout(r, 20))
   expect(pings).toContain('skip survey')
 })
+
+test('a message from Claude chat starts a turn once the session is idle, and is taken once', async ($, on) => {
+  const files = new Map<string, string>()
+  const submitted: string[] = []
+  const toasts: string[] = []
+  const clock = mock.clock(on)
+  const B = '/home/.grug/bridge'
+  on('session.start', ($, e) => ({ cwd: e.cwd }))
+  on('session.id', async () => ({ value: 'sess-1' }) as any)
+  on('fs.read', async ($, e) => {
+    if (e.path.endsWith('grug.json')) return { value: JSON.stringify({ argv: ['node', 'cli.js', 'app-status'], bridge: B }) } as any
+    return { value: files.get(e.path) ?? '' } as any
+  })
+  on('fs.write', async ($, e) => {
+    files.set(e.path, e.text)
+    return { value: undefined } as any
+  })
+  on('fs.exists', async ($, e) => ({ value: files.has(e.path) }) as any)
+  on('fs.list', async ($, e) => ({
+    value: [...files.keys()].filter(f => f.startsWith(e.path + '/')).map(f => ({ name: f.slice(e.path.length + 1), kind: 'file', size: 1, mtimeMs: 0, isLink: false }))
+  }) as any)
+  on('process.run', async () => ({ value: { exitCode: 0, stdout: '{}', stderr: '' } }) as any)
+  on('ui.status', () => ({ value: undefined }) as any)
+  on('ui.toast', ($, e) => {
+    toasts.push(e.text)
+    return { value: undefined } as any
+  })
+  on('prompt.submit', async ($, e) => {
+    submitted.push(e.text)
+    return { text: e.text } as any
+  })
+  await $.session.start({ cwd: '/work/shop', surface: 'desktop', isInteractive: true } as any)
+  expect(JSON.parse(files.get(`${B}/sessions/sess-1.json`)!)).toMatchObject({ sid: 'sess-1', cwd: '/work/shop', busy: false })
+  files.set(`${B}/inbox/m1.json`, JSON.stringify({ id: 'm1', sid: 'sess-1', cwd: '/work/shop', text: 'run the tests', from: 'chat', at: 1 }))
+  files.set(`${B}/inbox/m2.json`, JSON.stringify({ id: 'm2', sid: 'other', cwd: '/x', text: 'not mine', from: 'chat', at: 2 }))
+  await clock.advance(5000)
+  expect(submitted).toHaveLength(1)
+  expect(submitted[0]).toContain('run the tests')
+  expect(submitted[0]).toContain('id m1')
+  expect(submitted[0]).not.toContain('not mine')
+  expect(files.has(`${B}/delivered/m1.json`)).toBe(true)
+  expect(files.has(`${B}/delivered/m2.json`)).toBe(false)
+  expect(toasts).toContain('grug: message from Claude chat')
+  await clock.advance(20000)
+  expect(submitted).toHaveLength(1)
+})
